@@ -269,6 +269,28 @@ static int secure_directory_open(const char *path, uint64_t expected_device,
     return fd;
 }
 
+/* Metadata-only final-component lookup; all ancestors are securely opened. */
+int apfs_entry_info(const char *path, uint64_t expected_device, APFSDirectoryEntry *info) {
+    if (!path || !info || path[0] != '/' || strlen(path) >= PATH_MAX) { errno = EINVAL; return -1; }
+    char parent[PATH_MAX]; memcpy(parent, path, strlen(path) + 1);
+    char *slash = strrchr(parent, '/');
+    if (!slash || !slash[1]) { errno = EINVAL; return -1; }
+    char name[NAME_MAX+1];
+    if (strlen(slash+1) > NAME_MAX) { errno = ENAMETOOLONG; return -1; }
+    strcpy(name,slash+1);
+    if (slash == parent) slash[1] = 0; else *slash = 0;
+    (void)apfs_deny_dataless_materialization();
+    struct stat st;
+    int fd = secure_directory_open(parent, expected_device, 1, &st);
+    if (fd < 0) return -1;
+    if (fstatat(fd,name,&st,AT_SYMLINK_NOFOLLOW) < 0) return close_preserving_error(fd,errno);
+    memset(info,0,sizeof(*info));
+    info->device_id = (uint64_t)(uint32_t)st.st_dev; info->file_id = (uint64_t)st.st_ino; info->has_file_id = 1;
+    info->object_type = S_ISDIR(st.st_mode) ? APFS_OBJECT_DIRECTORY : S_ISREG(st.st_mode) ? APFS_OBJECT_FILE : S_ISLNK(st.st_mode) ? APFS_OBJECT_SYMLINK : APFS_OBJECT_OTHER;
+    info->is_mount_point = info->device_id != expected_device;
+    return close(fd);
+}
+
 int apfs_directory_info(const char *path, uint64_t expected_device,
                         int enforce_device, APFSDirectoryInfo *info) {
     if (!info) { errno = EINVAL; return -1; }

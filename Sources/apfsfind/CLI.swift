@@ -68,6 +68,7 @@ enum CLI {
         var files = 10_000
         var workers = 4
         var entries = 100_000
+        var delta = 10_000
         var ephemeral = false
         var rebuildIndex = false
         var cacheDirectory: String?
@@ -75,24 +76,26 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.2.0 — macOS filename search with snapshot recovery
+    apfsfind v0.3.0 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
                     [--ephemeral] [--rebuild-index] [--cache-dir PATH]
       apfsfind bench [--files 10000] [--latency-ms 20]
       apfsfind persistence-bench [--entries 100000] [--cache-dir PATH]
+      apfsfind hybrid-bench [--entries 100000] [--delta 10000] [--cache-dir PATH]
 
     The default command is serve and the default root is $HOME.
     --latency-ms must be between 1 and 1000. No log files are saved.
     Snapshots default to ~/Library/Application Support/apfsfind/indexes/.
     Cache directories are 0700; snapshots contain sensitive filename metadata (0600).
     --ephemeral disables snapshot reads and writes. --rebuild-index forces a scan.
-    Snapshots are written after cold startup, on changed exit, or by :checkpoint.
+    Snapshots are written after cold startup, on changed exit, or during compaction.
+    Compaction runs at thresholds or by :compact; :checkpoint may write only state.
     Startup waits for replay and recovery to finish; Ctrl+C cancels it.
     Benchmark uses only a temporary directory created by this process.
 
-    Interactive commands: :stats  :verify  :rebuild  :checkpoint  :quit
+    Interactive commands: :stats  :verify  :rebuild  :checkpoint  :compact  :quit
     Ordinary text searches filenames, case-insensitively (up to 50 paths).
     """
 
@@ -100,7 +103,7 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard ["serve", "bench", "persistence-bench"].contains(first) else {
+            guard ["serve", "bench", "persistence-bench", "hybrid-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
@@ -126,10 +129,13 @@ enum CLI {
                 guard options.command != "bench", !value.isEmpty else { throw CLIError.usage("--cache-dir requires a path and is not accepted by bench.") }
                 options.cacheDirectory = NSString(string: value).expandingTildeInPath
             case "--entries":
-                guard options.command == "persistence-bench", let number = Int(value), (102...1_000_000).contains(number) else {
-                    throw CLIError.usage("--entries must be in 102...1000000 and is only accepted by persistence-bench.")
+                guard ["persistence-bench", "hybrid-bench"].contains(options.command), let number = Int(value), (102...1_000_000).contains(number) else {
+                    throw CLIError.usage("--entries must be in 102...1000000 for persistence-bench or hybrid-bench.")
                 }
                 options.entries = number
+            case "--delta":
+                guard options.command=="hybrid-bench",let n=Int(value),(1...100000).contains(n) else{throw CLIError.usage("--delta must be 1...100000 for hybrid-bench")}
+                options.delta=n
             case "--root":
                 guard options.command == "serve", !value.isEmpty else {
                     throw CLIError.usage("--root is only accepted by serve; benchmark always owns its temporary directory.")
@@ -157,6 +163,21 @@ enum CLI {
     }
 
     static func run(arguments: [String]) throws -> Int32 {
+        // Internal read-only subprocess probe for allocator-independent benchmark
+        // RSS. It does not start a watcher or change the base/state files.
+        if arguments.first == "_mmap-probe" {
+            guard arguments.count==3 else{throw CLIError.usage("Invalid mmap probe arguments")}
+            let root=try PathCanonicalizer.canonicalRoot(arguments[1]),volume=try VolumeIdentity.discover(root:root)
+            let store=try SnapshotStore(directory:arguments[2],identity:volume),before=Metrics.processUsage().residentBytes
+            let started=ProcessInfo.processInfo.systemUptime,reader=try store.reader(expectedIdentity:volume)
+            guard let base=reader.mappedBase else{throw CLIError.startupFailed("Probe requires v2")}
+            let hybrid=HybridIndex(base:base)
+            var report=hybrid.hybridStats();report["rss_before"]=before;report["rss_after"]=Metrics.processUsage().residentBytes
+            report["load_ms"]=(ProcessInfo.processInfo.systemUptime-started)*1000
+            report["full_scans"]=0;report["startup_mode"]="mmap_probe"
+            print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self))
+            return 0
+        }
         let options = try parse(arguments)
         if options.help { print(usage); return 0 }
         if options.command == "bench" {
@@ -165,6 +186,9 @@ enum CLI {
         if options.command == "persistence-bench" {
             return try PersistenceBenchmarkRunner(entries: options.entries, cacheDirectory: options.cacheDirectory,
                 latencyMilliseconds: options.latencyMilliseconds).run()
+        }
+        if options.command=="hybrid-bench" {
+            return try HybridBenchmarkRunner(entries:options.entries,deltaCount:options.delta,cacheDirectory:options.cacheDirectory).run()
         }
         return try serve(options)
     }
@@ -202,6 +226,8 @@ enum CLI {
             switch query {
             case ":quit": return 0
             case ":stats": print(coordinator.stats().description)
+            case ":compact":
+                print(coordinator.compact() ? "Compaction requested." : "Compaction already running, disabled or stopping.")
             case ":checkpoint":
                 print(coordinator.checkpoint() ? "Checkpoint requested." : "Checkpoint already running, disabled or stopping.")
             case ":verify":
@@ -213,7 +239,7 @@ enum CLI {
                 coordinator.rebuild()
                 print("Rebuild requested; searches continue while the replacement index is built.")
             default:
-                if query.hasPrefix(":") { print("Unknown command. Use :stats, :verify, :rebuild, :checkpoint or :quit."); continue }
+                if query.hasPrefix(":") { print("Unknown command. Use :stats, :verify, :rebuild, :checkpoint, :compact or :quit."); continue }
                 let result = coordinator.index.search(query, limit: 50)
                 for hit in result.hits { print(hit.path) }
                 print(String(format: "%d results · %.3f ms · generation %llu", result.hits.count,

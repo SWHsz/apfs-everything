@@ -165,6 +165,15 @@ public final class FileIndex: @unchecked Sendable {
         }
     }
 
+    func exportTreeChildren(_ id:Int32,generation:UInt64) throws->[Int32] {
+        try lock.withReadLock {
+            guard storage.generation==generation else{throw SnapshotError.generationChanged}
+            return (storage.childrenByParent[id] ?? []).filter{!storage.entries[Int($0)].isDeleted}.sorted {
+                let a=storage.entries[Int($0)],b=storage.entries[Int($1)]
+                return MMapBaseIndex.less((a.foldedName,a.name,a.kind.snapshotCode),(b.foldedName,b.name,b.kind.snapshotCode))
+            }
+        }
+    }
     /// The reader has already validated parent-before-child and basename bytes.
     /// Build all runtime maps once, without apply/upsert/normalization recursion.
     public static func restore(from reader: SnapshotReader, cancellation: CancellationToken = .init()) throws -> FileIndex {

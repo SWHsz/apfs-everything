@@ -10,7 +10,9 @@ public final class SnapshotReader: @unchecked Sendable {
     public let loadMilliseconds: Double
     public let mmapMilliseconds: Double
     public let residentAfterMmap: UInt64
-    private let mapping: UnsafeMutableRawPointer
+    private let mapping: UnsafeMutableRawPointer?
+    public private(set) var mappedBase: MMapBaseIndex?
+    public var formatVersion: UInt32 { mappedBase == nil ? 1 : 2 }
     private let length: Int
 
     public convenience init(path: String, expectedIdentity: VolumeIdentity) throws {
@@ -21,6 +23,15 @@ public final class SnapshotReader: @unchecked Sendable {
 
     /// Takes ownership of the descriptor, including on validation failure.
     public init(fileDescriptor fd: Int32, expectedIdentity identity: VolumeIdentity) throws {
+        var version: UInt32 = 0
+        _ = pread(fd, &version, 4, 8)
+        if UInt32(littleEndian: version) == 2 {
+            let base = try MMapBaseIndex(fileDescriptor: fd, identity: identity)
+            mappedBase = base; mapping = nil; length = 0; header = base.header; root = base.root
+            mmapMilliseconds = base.mmapMilliseconds; residentAfterMmap = base.residentAfterMmap
+            loadMilliseconds = base.validationMilliseconds + base.mmapMilliseconds
+            return
+        }
         defer { Darwin.close(fd) }
         let start = ProcessInfo.processInfo.systemUptime
         var metadata = stat()
@@ -93,16 +104,21 @@ public final class SnapshotReader: @unchecked Sendable {
             throw error
         }
     }
-    deinit { munmap(mapping, length) }
+    deinit { if let mapping { munmap(mapping, length) } }
 
     public func record(at ordinal: Int) -> SnapshotRecord {
+        if let base = mappedBase {
+            let r = base.record(at: UInt32(ordinal))
+            return .init(parentID:r.parent,nameOffset:r.nameOffset,nameLength:r.nameLength,kind:r.kind,flags:r.flags,fileID:r.fileID)
+        }
         precondition(ordinal >= 0 && ordinal < Int(header.recordCount))
-        return try! Self.decodeRecord(UnsafeRawBufferPointer(start: mapping, count: length), header: header, ordinal: ordinal)
+        return try! Self.decodeRecord(UnsafeRawBufferPointer(start: mapping!, count: length), header: header, ordinal: ordinal)
     }
     public func name(at ordinal: Int) -> String {
+        if let base = mappedBase { return base.name(at: UInt32(ordinal)) }
         let record = record(at: ordinal)
         let first = Int(header.nameBlobOffset) + Int(record.nameOffset)
-        let bytes = UnsafeRawBufferPointer(start: mapping.advanced(by: first), count: Int(record.nameLength))
+        let bytes = UnsafeRawBufferPointer(start: mapping!.advanced(by: first), count: Int(record.nameLength))
         return String(decoding: bytes, as: UTF8.self)
     }
 

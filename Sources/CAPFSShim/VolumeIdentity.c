@@ -35,6 +35,7 @@ int apfs_volume_info(const char *root, APFSVolumeInfo *info) {
 
 int apfs_open_cache_directory(const char *path, int create) {
     if (!path || path[0] != '/' || strlen(path) >= PATH_MAX) { errno = EINVAL; return -1; }
+    if (apfs_prepare_root_path(path) < 0) return -1;
     int fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) return -1;
     char components[PATH_MAX];

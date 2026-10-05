@@ -1,12 +1,11 @@
-# apfsfind v0.2.0
+# apfsfind v0.3.0
 
-macOS 本地文件名搜索工具。使用 getattrlistbulk() 扫描目录，通过 FSEvents 在内存中维护创建、删除和重命名。搜索大小写不敏感，按文件名子串匹配，exact、prefix、substring 依次排序，最多返回 50 个路径。
+macOS 本地文件名搜索 CLI，Swift 6 / macOS 14+，无第三方 package。
+首次用 `getattrlistbulk()` 扫描；后续从只读 mmap 基础索引恢复，通过 FSEvents 维护内存变化层。
+按大小写不敏感文件名子串搜索，exact、prefix、substring 依次排序，同级按路径排序。
+默认最多显示 50 条结果。实测、格式布局和已知限制见 [STATUS.md](STATUS.md)。
 
-Sprint 2 增加紧凑磁盘快照和跨重启增量恢复：第一次扫描，后续优先加载快照并 replay。完整运行时索引仍恢复到 RAM，查询仍是线性遍历。本机验证与格式布局见 [STATUS.md](STATUS.md)。
-
-## 构建和使用
-
-需要 macOS 14+、Swift 6 和 macOS SDK；Swift Package Manager，无第三方 package 依赖。
+## 使用
 
 ~~~bash
 swift build -c release
@@ -14,105 +13,104 @@ swift test
 .build/release/apfsfind serve --root "$HOME"
 ~~~
 
-默认命令是 serve，默认目录是 $HOME。也可通过 SwiftPM 启动：
+输入文字搜索；输入 `:quit` 或 Ctrl+C 退出。默认命令 `serve`，默认 root 为 `$HOME`。
+大目录扫描和 replay 没有固定 10 秒期限；启动进度、错误输出 stderr，搜索、stats 输出 stdout。
 
-~~~bash
-swift run -c release apfsfind serve --root /Users/yourname/projects --workers 4 --latency-ms 20
-~~~
-
-输入普通文字搜索。启动进度、checkpoint 完成/失败输出 stderr；搜索结果、stats 和 benchmark 输出 stdout。程序不写日志文件，不联网。
-
-| 参数 | 含义 |
+| 参数 | 用途 |
 | --- | --- |
-| --root PATH | 指定本地扫描目录，默认 $HOME |
-| --workers N | 扫描 worker 数，1–16，默认 4 |
-| --latency-ms N | FSEvents latency，1–1000 ms，默认 20 |
-| --ephemeral | 不读写快照，保持纯 RAM 模式 |
-| --rebuild-index | 忽略旧快照，全量扫描，成功恢复后覆盖快照 |
-| --cache-dir PATH | 指定独立缓存目录；默认见下文 |
+| `--root PATH` | 本地扫描目录 |
+| `--workers N` | 初始扫描 1–16 workers，默认 4 |
+| `--latency-ms N` | FSEvents latency 1–1000 ms，默认 20 |
+| `--ephemeral` | 使用原 RAM FileIndex，不读写缓存 |
+| `--rebuild-index` | 忽略旧基础索引，全量重建 |
+| `--cache-dir PATH` | **精确缓存目录**，默认 `~/Library/Application Support/apfsfind/indexes` |
+
+已有缓存目录必须归当前用户所有、权限已经为 0700，且路径没有任意 symlink。
+不满足时拒绝，程序不修改已有目录权限。程序新建的缓存目录为 0700。
+缓存不能等于扫描 root 或成为其上级目录；缓存子树从扫描、事件更新和 verify 中排除。
+macOS 自带的 `/tmp`、`/var` 别名经过验证后支持，网络卷和 autofs 拒绝。
 
 ~~~bash
+.build/release/apfsfind serve --root /Users/yourname/projects --cache-dir /tmp/apfsfind-private-cache
 .build/release/apfsfind serve --root "$HOME" --ephemeral
 .build/release/apfsfind serve --root "$HOME" --rebuild-index
-.build/release/apfsfind serve --root "$HOME" --cache-dir "$HOME/Library/Caches/apfsfind-test"
 ~~~
 
-| 交互命令 | 行为 |
+| 命令 | 行为 |
 | --- | --- |
-| :stats | 索引/事件计数、generation、cursor、状态、CPU/RSS、snapshot 大小/耗时、startup_mode |
-| :verify | fresh scan 与内存 path set 比较，报告 missing/extra；不修改索引 |
-| :checkpoint | 异步保存快照；已有任务时不重复启动；成功显示 bytes、records、duration |
-| :rebuild | 后台重建并 replay，期间查询旧索引；恢复成功后保存快照 |
-| :quit | 停止事件流，若 generation 变化则保存一次快照后退出 |
+| `:stats` | base/overlay、generation/cursor、恢复、合并、查询分阶段、CPU/RSS |
+| `:verify` | fresh scan 比较 path set，报告 missing/extra；需要目录暂时静止 |
+| `:checkpoint` | namespace 变化则合并；只有 cursor 变化则写 state；均未变化则无 I/O |
+| `:compact` | 强制请求后台合并，重复请求不会重复启动 |
+| `:rebuild` | 后台全量扫描，重新捕获设备 fence、replay、映射新基础索引 |
+| `:quit` / EOF | 停止事件交付，完成收到的更新，保存尚未持久化的变化 |
 
-启动没有固定 10 秒截止时间，等待 HistoryDone 和必要恢复，期间显示进度。启动时 Ctrl+C 取消扫描/恢复；live 时第一次 Ctrl+C 正常退出并保存变化，第二次取消退出 checkpoint，保留已有快照。EOF 同样正常退出。
+启动时 Ctrl+C 取消扫描；live 后第一次 Ctrl+C 正常保存退出，第二次取消尚未发布的写入。
+已提交的原子发布不能被事后撤回；被取消的临时文件不会替换原基础索引。
 
-## 持久化与恢复
-
-默认位置：
+## 运行结构
 
 ~~~text
-~/Library/Application Support/apfsfind/indexes/
-  <SHA256(canonical root UTF8 + NUL + volume UUID bytes)>.apfsidx
-  <same filename>.lock
+readonly mmap v2 base
+  + base tombstone bitmap
+  + directory-only path -> base/delta ref
+  + RAM delta paths / children
+  -> HybridIndex
 ~~~
 
-快照包含敏感的文件名元数据，包括 root、basename、父关系和基础类型。目录为 0700，快照和零字节协调 lock 文件为 0600。Reader 检查 owner、普通文件类型和权限；缓存路径和最终文件拒绝任意符号链接。仅识别并验证 macOS 自带的 root-owned /var、/tmp 到 /private 的别名，以支持 mktemp 路径。缓存不能等于或包含扫描 root。
+默认 warm 启动不调用 `FileIndex.restore()`，不为全部文件保存完整 path、foldedName 或 FileEntry。
+内存中的目录路径用于父目录定位；文件通过目录引用和 child table 二分定位。
+原 `FileIndex` 保留给 ephemeral、冷扫描/失效恢复的临时构建、旧格式测试和对照基准。
 
-本工具的缓存子树会从扫描、reconciliation、verify 和普通事件更新中排除，避免默认扫描 HOME 时把自己的快照纳入索引。ephemeral 模式不创建缓存，也不排除该子树。
+查询短锁捕获强引用 base、COW 位图、当前 live delta 和 generation 后释放锁。
+base 扫描、排序和结果路径生成均在锁外；只为选出的候选生成完整 base 路径。
+查询保持捕获时的一致状态，合并切换后旧查询仍可安全完成；返回的 generation 表明对应状态。
+当前仍是线性子串搜索，没有 trigram、SIMD 或复杂倒排索引。
 
-~~~mermaid
-flowchart TD
-    Root[Canonical root 与卷身份] --> Valid{合法快照?}
-    Valid -->|是| Mmap[mmap 校验并 bulk restore 到 RAM]
-    Valid -->|否或强制重建| Scan[捕获 per-device E0 后全量扫描]
-    Mmap --> Replay[从快照 cursor replay]
-    Scan --> ReplayCold[从 E0 replay]
-    Replay --> Gate[处理 HistoryDone 与队列]
-    ReplayCold --> Gate
-    Gate --> Live[Live 查询与内存更新]
-    Replay -->|丢事件或历史失效| Rebuild[Dirty / 后台 full rebuild]
-    Rebuild --> ReplayCold
-    Live --> Capture[首次 cold / 恢复后、显式命令或变化退出]
-    Capture --> Write[捕获 G/C/V、分块导出、CRC32、fsync、原子 rename]
+普通 create/remove 提示先以安全的 metadata lookup 核对实际类型/inode，不制造 ghost。
+rename、复合事件、风暴走实际目录 diff；纯文件内容事件不执行 metadata lookup 或目录枚举。
+重复历史 create 经过元数据确认后从风暴计数排除；不会仅凭旧 event ID 丢弃事件。
+所有 cursor 在 batch 更新完成后推进，更新尽量幂等。
+
+## 缓存与恢复
+
+~~~text
+<root + volume UUID 的 SHA256>.apfsidx         immutable namespace base
+<同名>.apfsidx.state                         128-byte durable cursor
+<同名>.apfsidx.lock                          zero-byte publisher lock
 ~~~
 
-快照是显式 little-endian binary v1：192 字节 header、24 字节固定 record table、连续 UTF-8 basename blob。仅 root 保存完整路径；不保存 tombstone、foldedName、Swift 对象、dictionary、查询缓存，也不使用 Codable、JSON、压缩或数据库。
+缓存文件为 0600，包含文件名元数据。snapshot v2 使用显式 little-endian 的 256-byte header、
+40-byte record、原名/折叠名 blob、child ordinal table 和 footer CRC；仅 root 保存完整路径。
+reader 校验 owner/type/mode、大小、CRC、所有 section、UTF-8/fold、父子/子树/排序及卷/root/history 身份。
+有效 v1 会显示 `startup_mode=format_migration_rebuild`，执行一次扫描写 v2，后续直接映射。
+损坏或身份不匹配的快照走 `rebuild_fallback`。
 
-Reader 使用一次 mmap，校验大小、CRC32、offset/length、parent-before-child、UTF-8 名称和身份。恢复一次预分配并正向构建 FileEntry、path/directory map、children 和 foldedName；不逐条调用普通 upsert。快照不合法时不会发布其内容，回退 full scan。
+state 只有 UUID、generation、length、payload CRC、volume/history 完全匹配时生效。
+损坏/旧 state 被忽略并退回 header cursor，基础索引保持可用。
+内存 namespace 还未持久化时，state 不能越过那些变化；内容事件可以只推进 state。
 
-事件流使用 FSEventStreamCreateRelativeToDevice，cursor 与卷的 FSEvents history UUID 绑定。保留 FileEvents、NoDefer、UseCFTypes、WatchRoot、FullHistory。FullHistory 的首块重叠事件会幂等处理，不能仅按旧 ID 丢弃。history UUID 变化、EventIdsWrapped、掉事件、root-level MustScanSubDirs 或无法恢复的 reconciliation 进入 dirty/rebuilding，重建前重新捕获 E0，replay 至 live 后发布新快照。
+冷启动：设备 E0 → 全量扫描 → 发布 v2 → 映射 → 从 E0 replay → HistoryDone → live。
+warm：校验并映射 v2 → 目录映射/空 overlay → 从匹配 state 或 header cursor replay → live。
+FSEvents 使用 per-device stream，绑定 history UUID。时间参数保持目标 SDK 要求的 **1970 epoch**；
+通过可注入 CF 时钟在 API 边界转换，本机已经实测验证。
 
-每个 batch 在 patch/reconcile 完成后，由同一 writer 推进 lastProcessedEventID。content-only 可以推进 cursor，但不改变 generation，也不执行文件 stat/内容读取。
+普通在线更新不写索引、state、WAL 或日志文件。
+后台 compaction 达到阈值并安静一段时间后，捕获 base/overlay/G/C/epoch，继续处理并缓冲事件，
+在后台合并生成 v2、fsync、只读映射并校验，然后短暂在 writer 上确认身份/epoch、原子发布和切换，
+重放缓冲事件。缓冲的 namespace 仍留在 overlay，header cursor 保持捕获时的保守值。
+掉事件、overflow、取消、身份/epoch 改变或写入/校验失败保留原 final 与当前内存状态，退避后重试。
+发布阶段 rename/目录 fsync 在 writer barrier 中；完整生成和校验在后台。
 
-checkpoint 在 writer barrier 捕获 generation G、cursor C 和 identity V。每次短锁导出 4096 条必要字段，流式写临时文件和 CRC，不持全局索引锁执行磁盘 I/O。G 改变或恢复 epoch 改变则 abort，删除 tmp，保留旧 final；可手动或退出时重试。发布使用 0600 tmp、fsync、rename 和目录 fsync。并发 publisher 使用 advisory lock；成功后一个 final，无无限历史副本，写入期间最多 old + one new tmp 的数据占用。
-
-普通在线 patch/reconciliation 不写持久索引，没有应用级 WAL，没有周期或按事件数量触发的 checkpoint。cold 首次进入 live、完整失效恢复后、显式 :checkpoint，以及 generation 变化的正常退出会写快照。系统自己的 FSEvents journal 由 macOS 管理。
-
-## 事件维护与扫描边界
-
-内存索引使用 ContiguousArray<FileEntry>、path/directory 映射、parent/children、tombstone 和 generation；查询使用 rwlock。普通 create/remove 走 patch，rename/compound 由目录实际状态 reconciliation，不依赖 rename 配对。目录 I/O 在索引锁外，batch 一次短锁应用；新/替换目录扫描子树，删除目录删除整棵子树。
-
-checkpoint 的 durable cursor 不能越过尚未完成的 diff，因此 coordinator 强制完成歧义目录检查，不依赖 mtime gate 的延迟复查。DirectoryReconciler 的 mtime gate API 和测试仍保留。
-
-| 配置 | 默认值 |
+| 默认 compaction 策略 | 值 |
 | --- | --- |
-| directPatchBatchLimit | 256 events |
-| dirtyParentLimit | 64 directories |
-| microBatchWindowMilliseconds | 5 ms |
-| fullRebuildMinInterval | 30 s |
-| rebuildDebounceMilliseconds | 100 ms |
-| maxPendingEvents | 100000 |
-| maxConsecutiveRebuildFailures | 8 |
+| live overlay / estimated bytes | 50,000 / 64 MiB |
+| base tombstone count / ratio | 50,000 / 5% |
+| overlay/base ratio | 5% |
+| quiet window / estimated memory safety trigger | 2 s / 128 MiB |
 
-live 风暴按 parent 聚合，过多 dirty roots 升级后台 rebuild。replay 的历史重叠可覆盖很多 parent，直接对这些事件范围做 reconciliation，避免“重建 → replay 同一块 → 再重建”的循环。掉事件/溢出仍走完整恢复。失败重建有退避，连续失败后暂停自动重试，:rebuild 可恢复。
-
-- 不访问 raw disk，不需要 root/helper，不修改 SIP，不读取文件内容；会读取本工具自己的索引快照。
-- 目录打开使用 O_RDONLY、O_DIRECTORY、O_CLOEXEC、O_NOFOLLOW；枚举使用 getattrlistbulk()、FSOPT_NOFOLLOW，C shim 验证 packed buffer。
-- root 做有界 metadata-only canonicalization；不递归跟随子目录 symlink，symlink 本身会被索引。
-- 默认不跨 device，不进入下级挂载、network filesystem、DMG、autofs 或 automount trigger。指定 / 仍受限制，不代表完整系统盘覆盖。
-- 每个扫描线程 best-effort 禁止 dataless materialization；SDK 缺少常量时安全降级。另有目录 dataless 元数据跳过检查，不通过读取内容触发 iCloud 下载。
-- 消失文件视为 race；不可读子目录计数并继续，root 无法打开则明确失败。不会绕过 TCC/POSIX 权限；需要完整 HOME 覆盖时，由用户为实际运行的终端/宿主配置权限。
+`CompactionPolicy` 可注入较低阈值用于测试。delta 删除立即回收记录，整数槽复用；合并清空位图与 overlay。
+存储持续不可写时不能保证阈值内存上限，错误/重试状态会显示在 stats。
 
 ## 测试与测量
 
@@ -120,27 +118,25 @@ live 风暴按 parent 聚合，过多 dirty roots 升级后台 rebuild。replay 
 swift build -c release
 swift test
 swift run -c release apfsfind bench --files 1000 --latency-ms 20
-swift run -c release apfsfind persistence-bench --entries 100000 --cache-dir /private/tmp
+swift run -c release apfsfind persistence-bench --entries 100000 --cache-dir "$(mktemp -d)"
+swift run -c release apfsfind hybrid-bench --entries 100000 --delta 10000 --cache-dir "$(mktemp -d)"
+swift run -c release apfsfind hybrid-bench --entries 1000000 --delta 50000 --cache-dir "$(mktemp -d)"
 ~~~
 
-本机 FSEvents 集成测试默认运行，只操作拥有的临时 root/cache。原 benchmark 仍是纯 RAM；每种 create/delete/两种 rename 各 100 个真实可见延迟样本，另有 10000 content writes 和 create/delete storm、CPU、verify。
+所有 benchmark 创建并清理自己的 UUID 临时子目录；`--cache-dir` 在 benchmark 中是这些子目录的父目录，
+不会覆盖用户正常缓存。shell 的 `mktemp` 父目录可以测量后自行删除。benchmark 只把结果输出 stdout。
+`bench` 是旧 RAM 后端对照；`persistence-bench` 走真实文件/default hybrid 冷/warm/退出恢复。
+`hybrid-bench` 用合成 base 测 mmap、查询、并发 namespace patch、合并与二十轮每轮 10,000 次创建/删除，
+另用真实小目录测 FSEvents 搜索可见性。合成百万条目的 patch 延迟不冒充百万真实文件的 FSEvents 延迟。
+独立只读子进程报告 mmap RSS，避免同进程冷构建分配器保留内存影响判断。
 
-persistence-bench 创建独占临时 root；--cache-dir 指定一个已存在的父目录，benchmark 在其中创建自己的 UUID 缓存子目录，完成后只清理该子目录。默认也在系统临时目录。--entries 支持 102–1000000，包含 root 和 100 个分组目录。
+真实 FSEvents 测试默认运行。受限 runner 可显式设置 `APFSFIND_SKIP_FSEVENTS_TESTS=1`；
+CI 默认完整 `swift build -c release` 与 `swift test`，不默认跳过。
 
-新 benchmark 分别报告 scan/build/replay、snapshot write/size/table/blob、load/validate/mmap/restore、time to live、事件数、RSS、warm verify、在线 inode/mtime/size 不变以及退出 checkpoint/下一次 warm 结果。等待基于状态、事件处理和实际索引条件，不通过固定 sleep 判断恢复完成。FSEvents flush 只能排空已发布事件，不能强迫 kernel 立即发布所有文件活动。
+## 边界
 
-两种 benchmark 均输出人类 summary，最后一行单行 JSON；不写结果文件。性能数字是同一进程的 generator、查询与维护合计，不能单独归因于维护 CPU。
-
-## 当前限制与下一 Sprint
-
-v0.2 解决 warm startup 和持久恢复，但完整运行时 namespace 仍恢复到 RAM。完整路径、Swift 对象与映射仍占内存，查询为 O(entries)，运行期 tombstone 会累积，rebuild 需要额外索引空间。
-
-verify 是 fresh scan，不是原子文件系统 snapshot；请等待目录静止后比较。FSEvents 合并、TCC、权限和持续变化会影响恢复耗时；history UUID 不可用的卷目前拒绝启动。时间 fence 使用 SDK 的 per-device conservative API，外部磁盘/时钟异常依赖失效恢复，未实测所有场景。
-
-下一 Sprint 才实现 mmap immutable base + RAM delta overlay、base tombstone bitmap、base/delta query merge、后台 compaction 和低 RAM directory map。本轮没有 GUI、全文索引、raw APFS 解析、APFS snapshot 解析、searchfs()、Endpoint Security、网络/telemetry、自动更新或数据库。
-
-v0.2.1 adds a 128-byte atomic `.state` cursor sidecar. Content-only changes can
-advance this fence without rewriting the namespace snapshot. A stale/corrupt
-state falls back to the snapshot fence. An existing `--cache-dir` must already
-be owned by you with mode 0700; apfsfind will reject other permissions without
-changing them. A newly created cache has mode 0700.
+扫描只读取目录项和元数据，不读文件内容；不跟随子目录 symlink，默认不跨设备，
+best-effort 关闭线程级 dataless materialization，检查本地卷/autofs 和不可遍历 dataless 目录。
+无需 root，不访问 raw disk，不关闭 SIP，不建立网络连接，不写运行日志或 telemetry。
+本版单 root/单卷；TCC/权限排除继续计数，不绕过权限。macOS 14、Intel、真实 iCloud dataless、
+掉电耐久和真实 journal purge 未专项实机验证。不是 Everything 的完整克隆。

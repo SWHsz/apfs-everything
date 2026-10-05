@@ -51,7 +51,10 @@ public final class SnapshotStore: @unchecked Sendable {
         var key = Data(identity.root.utf8); key.append(0); key.append(contentsOf: identity.volumeUUID.bytes)
         filename = SHA256.hash(data: key).map { String(format: "%02x", $0) }.joined() + ".apfsidx"
         let fd = apfs_open_cache_directory(normalized, 1)
-        guard fd >= 0 else { throw SnapshotError.io("open cache (no symlinks)", errno) }
+        guard fd >= 0 else {
+            if errno == EPERM {throw SnapshotError.unsafePath(normalized+": existing cache must be owned by the current user with mode 0700; permissions were not changed")}
+            throw SnapshotError.io("open local cache (no symlinks)",errno)
+        }
         let lock = openat(fd, filename + ".lock", O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
         guard lock >= 0 else { let code = errno; close(fd); throw SnapshotError.io("open lock", code) }
         var metadata = stat()
@@ -127,7 +130,9 @@ public final class SnapshotStore: @unchecked Sendable {
     }
 
     func publish<T>(name: String? = nil, write: (Int32) throws -> T, beforePublish: () throws -> Void,
-                    fault: ((SnapshotFailurePoint) throws -> Void)? = nil) throws -> T {
+                    fault: ((SnapshotFailurePoint) throws -> Void)? = nil,
+                    validate: ((Int32) throws -> Void)? = nil,
+                    commit: ((() throws -> Void) throws -> Void)? = nil) throws -> T {
         let final = name ?? filename
         guard final == filename || final == filename + ".state" else { throw SnapshotError.unsafePath(final) }
         guard activityLock.withLock({ if publishing { return false }; publishing = true; return true }) else {
@@ -151,6 +156,13 @@ public final class SnapshotStore: @unchecked Sendable {
             guard fsync(fd) == 0 else { throw SnapshotError.io("fsync tmp", errno) }
             let closing = close(fd); fd = -1
             guard closing == 0 else { throw SnapshotError.io("close tmp", errno) }
+            if let validate {
+                let readerFD = openat(directoryFD, temporary, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+                guard readerFD >= 0 else { throw SnapshotError.io("open staged base", errno) }
+                // validate takes ownership, including on failure.
+                try validate(readerFD)
+            }
+            func publishFinal() throws {
             try beforePublish()
             try fault?(.beforeRename)
             if try hasSafeFinal(final) {
@@ -163,6 +175,8 @@ public final class SnapshotStore: @unchecked Sendable {
             try fault?(.directorySync)
             guard fsync(directoryFD) == 0 else { throw SnapshotError.io("fsync cache directory", errno) }
             if linkedBackup { _ = unlinkat(directoryFD, backup, 0) }
+            }
+            if let commit { try commit(publishFinal) } else { try publishFinal() }
             return result
         } catch {
             if renamed {

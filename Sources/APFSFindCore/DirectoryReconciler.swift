@@ -41,11 +41,11 @@ public final class DirectoryReconciler {
     }
 
     private let scanner: BulkScanner
-    private let index: FileIndex
+    private let index: any NamespaceIndex
     private let metrics: Metrics
     private let rootDeviceID: UInt64
     private var stamps: [String: DirectoryStamp] = [:]
-    public init(scanner: BulkScanner, index: FileIndex, rootDeviceID: UInt64, metrics: Metrics) {
+    public init(scanner: BulkScanner, index: any NamespaceIndex, rootDeviceID: UInt64, metrics: Metrics) {
         self.scanner = scanner; self.index = index
         self.rootDeviceID = rootDeviceID; self.metrics = metrics
     }

@@ -88,3 +88,36 @@ final class CursorStateTests: XCTestCase {
         XCTAssertEqual(id, 99)
     }
 }
+
+private final class FenceCounter: @unchecked Sendable {
+    let lock=NSLock()
+    var calls=0
+    func capture(_ v:VolumeIdentity)->UInt64 {lock.withLock{calls+=1};return v.currentEventID()}
+    var count:Int {lock.withLock{calls}}
+}
+extension CursorStateTests {
+    func testInjectedFenceIsUsedBeforeColdScanAndRecoveryScan() throws {
+        try requireFSEvents()
+        let tree=try TemporaryTree(),counter=FenceCounter()
+        let c=try UpdateCoordinator(root:tree.root,configuration:.init(fullRebuildMinInterval:0,rebuildDebounceMilliseconds:0),
+            fenceProvider:{counter.capture($0)})
+        defer{c.stop()}
+        try c.start();XCTAssertTrue(c.waitUntilLive());XCTAssertEqual(counter.count,1)
+        c.rebuild()
+        waitFor("recovery fence",timeout:5){counter.count>=2}
+        waitFor("recovery live",timeout:5){c.currentState == .live && c.metrics.snapshot()["full_rebuilds",default:0]>0}
+    }
+}
+
+extension CursorStateTests {
+    func testPersistentCoordinatorForwardsFenceAndWarmUsesStoredCursor() throws {
+        try requireFSEvents()
+        let tree=try TemporaryTree(),cache=try TemporaryTree(cache:true),counter=FenceCounter()
+        let cold=try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,fenceProvider:{counter.capture($0)})
+        try cold.start();XCTAssertTrue(cold.waitUntilLive());XCTAssertEqual(counter.count,1);cold.stop()
+        let warm=try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,fenceProvider:{counter.capture($0)})
+        defer{warm.stop(saveCheckpoint:false)}
+        try warm.start();XCTAssertTrue(warm.waitUntilLive());XCTAssertEqual(counter.count,1)
+        XCTAssertEqual(warm.stats().dictionary["startup_mode"] as? String,"warm_snapshot")
+    }
+}

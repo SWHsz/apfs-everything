@@ -3,7 +3,7 @@ import Foundation
 
 public enum SnapshotError: Error, Sendable, CustomStringConvertible {
     case invalid(String), identity(String), unsafePath(String), io(String, Int32)
-    case generationChanged, cancelled, busy
+    case generationChanged, cancelled, busy, formatMigration
     public var description: String {
         switch self {
         case .invalid(let reason): return "Invalid snapshot: \(reason)"
@@ -12,6 +12,7 @@ public enum SnapshotError: Error, Sendable, CustomStringConvertible {
         case .io(let operation, let code): return "Snapshot \(operation): \(String(cString: strerror(code))) (\(code))"
         case .generationChanged: return "Checkpoint aborted: namespace generation changed"
         case .cancelled: return "Checkpoint cancelled"
+        case .formatMigration: return "Validated v1 snapshot requires a v2 scan rebuild"
         case .busy: return "Checkpoint already running"
         }
     }
@@ -148,4 +149,10 @@ public struct SnapshotWriteResult: Sendable {
 
 public enum SnapshotFailurePoint: Sendable {
     case afterHeader, beforeFileSync, beforeRename, afterRename, directorySync
+}
+
+public struct CompactionTicket: Sendable {
+    let id: UUID
+    public let snapshot: HybridCapture
+    public let checkpoint: CheckpointCapture
 }

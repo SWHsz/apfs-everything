@@ -276,7 +276,7 @@ struct BenchmarkRunner {
             deleteConverged && deleteDrained && deleteVerification.isConsistent
         print("Provisional acceptance: \(accepted ? "PASS" : "FAIL") (100 samples per latency workload; p95 < 500 ms; 2 s hard timeout; both storms verified)")
         let report: [String: Any] = [
-            "version": "0.2.0", "files": files, "latency_ms": latencyMilliseconds,
+            "version": "0.3.0", "index_backend":"ram_reference", "files": files, "latency_ms": latencyMilliseconds,
             "visibility_timeout_ms": visibilityTimeout * 1000,
             "storm_timeout_ms": stormTimeout * 1000, "initial_scan_and_replay_ms": initialMilliseconds,
             "create": creates.dictionary, "delete": deletes.dictionary,

@@ -71,6 +71,7 @@ int apfs_bulk_reader_next(APFSBulkReader *reader,
 int apfs_bulk_reader_close(APFSBulkReader *reader);
 
 /* Metadata only; secure component walk has the same boundaries as enumeration. */
+int apfs_entry_info(const char *path, uint64_t expected_device, APFSDirectoryEntry *info);
 int apfs_directory_info(const char *path, uint64_t expected_device,
                         int enforce_device, APFSDirectoryInfo *info);
 

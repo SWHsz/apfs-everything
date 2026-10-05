@@ -1,3 +1,5 @@
+import CAPFSShim
+import Darwin
 import Foundation
 import CoreServices
 
@@ -32,9 +34,13 @@ public struct CoordinatorStats {
 /// FileIndex's rwlock, and rebuilds enumerate on a separate background queue.
 public final class UpdateCoordinator: @unchecked Sendable {
     public let root: String
-    public let index: FileIndex
+    public let index: any NamespaceIndex
     public let metrics = Metrics()
     public let configuration: APFSFindConfiguration
+    private var baseInstaller: (@Sendable (FileIndex, UInt64, VolumeIdentity) throws -> Void)?
+    private var compactionID: UUID?
+    private var compactionEvents: [FileSystemEvent] = []
+    private var compactionOverflow = false
     private let writer = DispatchQueue(label: "apfsfind.writer")
     private let builder = DispatchQueue(label: "apfsfind.rebuild", qos: .utility)
     private let buildGroup = DispatchGroup()
@@ -71,15 +77,18 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var liveHandler: (@Sendable () -> Void)?
     private var recoveryHandler: (@Sendable (String) -> Void)?
     private let identityProvider: @Sendable (String) throws -> VolumeIdentity
+    private let fenceProvider: @Sendable (VolumeIdentity) -> UInt64
 
     public init(root: String, configuration: APFSFindConfiguration = .init(),
-                excludedRoots: [String] = [],
-                identityProvider: @escaping @Sendable (String) throws -> VolumeIdentity = { try VolumeIdentity.discover(root: $0) }) throws {
+                excludedRoots: [String] = [], index: (any NamespaceIndex)? = nil,
+                identityProvider: @escaping @Sendable (String) throws -> VolumeIdentity = { try VolumeIdentity.discover(root: $0) },
+                fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() }) throws {
         self.root = try PathCanonicalizer.canonicalRoot(root)
-        self.index = FileIndex(root: self.root)
+        self.index = index ?? FileIndex(root: self.root)
         self.configuration = configuration
         self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots)
         self.identityProvider = identityProvider
+        self.fenceProvider = fenceProvider
     }
     public var currentState: IndexState { stateLock.withLock { state } }
     public var installedSnapshotGeneration: UInt64? { stateLock.withLock { restoredGeneration } }
@@ -111,16 +120,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
     }
 
+    public func setBaseInstaller(_ handler: @escaping @Sendable (FileIndex, UInt64, VolumeIdentity) throws -> Void) {
+        writer.sync { baseInstaller = handler }
+    }
     public func setLifecycleHandlers(live: @escaping @Sendable () -> Void,
                                      recovery: @escaping @Sendable (String) -> Void) {
         writer.sync { liveHandler = live; recoveryHandler = recovery }
     }
 
-    public func start(restored: FileIndex? = nil, cursor: UInt64? = nil,
+    public func start(restored: (any NamespaceIndex)? = nil, cursor: UInt64? = nil,
                       identity supplied: VolumeIdentity? = nil,
                       progress: (@Sendable (String) -> Void)? = nil) throws {
         let identity = try supplied ?? identityProvider(root)
-        let e0 = cursor ?? identity.currentEventID()
+        let e0 = cursor ?? fenceProvider(identity)
         writer.sync { volumeIdentity = identity; lastProcessedEventID = e0; rootDevice = identity.deviceID }
         if let restored {
             index.installSnapshot(restored)
@@ -161,6 +173,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             metrics.set("initial_index_building", to: 0)
             guard !cancellation.isCancelled else { setState(.stopped); return }
             index.replace(with: initial)
+            try baseInstaller?(initial, e0, identity)
             rootDevice = result.rootDeviceID
             reconciler = DirectoryReconciler(scanner: scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
             let s = index.stats()
@@ -238,6 +251,12 @@ public final class UpdateCoordinator: @unchecked Sendable {
             return result
         }
         guard !cancellation.isCancelled else { return }
+        if compactionID != nil {
+            let room = max(0, configuration.maxPendingEvents - compactionEvents.count)
+            compactionEvents.append(contentsOf: events.prefix(room))
+            if events.count > room || overflow { compactionOverflow = true }
+            metrics.maximum("compaction_buffered_events", compactionEvents.count)
+        }
         if !events.isEmpty { metrics.set("last_batch_size", to: events.count) }
         metrics.set("active_batch_size", to: events.count)
         defer {
@@ -264,7 +283,32 @@ public final class UpdateCoordinator: @unchecked Sendable {
            inboxLock.withLock({ inbox.isEmpty && !inboxOverflow }) { setState(.live) }
     }
 
-    private func nearestIndexedParent(_ path: String, in target: FileIndex) -> String {
+    /// FileEvents/FullHistory can repeat Created even when the durable base
+    /// already contains it. Validate metadata before excluding it from storms;
+    /// neither the event's hint nor basename/type equality is authoritative.
+    private func isAuthoritativeDuplicateCreate(_ path:String, kind:EntryKind, in target:any NamespaceIndex)->Bool {
+        guard let existing=target.entry(at:path),existing.kind==kind else{return false}
+        metrics.record("namespace_metadata_lookups")
+        if path==root,kind == .directory,let identity=volumeIdentity {
+            var info=APFSDirectoryInfo()
+            return apfs_directory_info(path,rootDevice,1,&info)==0 && info.file_id==identity.rootFileID
+        }
+        var info=APFSDirectoryEntry()
+        guard apfs_entry_info(path,rootDevice,&info)==0 else{return false}
+        let actualKind:EntryKind = info.object_type==1 ? .file:info.object_type==2 ? .directory:info.object_type==3 ? .symlink:.other
+        return existing == NamespaceEntry(path:path,kind:actualKind,deviceID:info.device_id,fileID:info.file_id,isMountPoint:info.is_mount_point != 0)
+    }
+    private func authoritativePatch(_ path:String, into patches:inout [IndexMutation], dirty:(String)->Void) {
+        metrics.record("namespace_metadata_lookups")
+        var info=APFSDirectoryEntry()
+        if apfs_entry_info(path,rootDevice,&info)==0 {
+            let kind:EntryKind = info.object_type==1 ? .file : info.object_type==2 ? .directory : info.object_type==3 ? .symlink : .other
+            if kind == .directory {dirty(PathCanonicalizer.parent(of:path));return}
+            patches.append(.upsert(.init(path:path,kind:kind,deviceID:info.device_id,fileID:info.file_id,isMountPoint:info.is_mount_point != 0)))
+        } else if errno == ENOENT {patches.append(.remove(path))}
+        else {dirty(PathCanonicalizer.parent(of:path))}
+    }
+    private func nearestIndexedParent(_ path: String, in target: any NamespaceIndex) -> String {
         if path == root { return root }
         var parent = PathCanonicalizer.parent(of: path)
         while parent != root && target.entry(at: parent)?.kind != .directory {
@@ -274,7 +318,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         return parent
     }
 
-    internal func process(_ events: [FileSystemEvent], into target: FileIndex, using reconciler: DirectoryReconciler,
+    internal func process(_ events: [FileSystemEvent], into target: any NamespaceIndex, using reconciler: DirectoryReconciler,
                          countMetrics: Bool, mayRebuild: Bool) {
         var namespace: [(FileSystemEvent, EventClassification)] = []
         for event in events {
@@ -290,9 +334,18 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 if countMetrics { metrics.record("dropped_invalidated_events") }
                 if mayRebuild { requestRebuild(invalidated: true, reason: "stream_invalidated") }
             case .simpleCreate(let kind):
+                if target is HybridIndex, let path=PathCanonicalizer.normalize(event.path),
+                   isAuthoritativeDuplicateCreate(path, kind:kind, in:target) {
+                    if countMetrics {
+                        metrics.record("duplicate_create_events")
+                        let content=UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemInodeMetaMod | kFSEventStreamEventFlagItemXattrMod | kFSEventStreamEventFlagItemFinderInfoMod | kFSEventStreamEventFlagItemChangeOwner)
+                        if event.flags & content != 0 {metrics.record("ignored_content_events")}
+                    }
+                    continue
+                }
                 // Remove harmless overlapping history before storm accounting.
                 // FullHistory can repeat an entire chunk on warm startup.
-                if let path = PathCanonicalizer.normalize(event.path),
+                if !(target is HybridIndex), let path = PathCanonicalizer.normalize(event.path),
                    let existing = target.entry(at: path), existing.kind == kind,
                    kind != .directory || path == root {
                     if countMetrics {
@@ -333,7 +386,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 // fseventsd may retain Created across successive Modified events
                 // even after FlushSync. A known same-kind file needs no namespace
                 // update, and a late root Created duplicates the initial scan.
-                if let existing = target.entry(at: path), existing.kind == kind,
+                if !(target is HybridIndex), let existing = target.entry(at: path), existing.kind == kind,
                    kind != .directory || path == root {
                     if countMetrics {
                         metrics.record("duplicate_create_events")
@@ -347,10 +400,12 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 if path != root, kind != .directory,
                    let parentEntry = target.entry(at: immediateParent), parentEntry.kind == .directory,
                    !parentEntry.isMountPoint, parentEntry.deviceID == rootDevice {
-                    direct.append(.upsert(NamespaceEntry(path: path, kind: kind, deviceID: rootDevice)))
+                    if target is HybridIndex { authoritativePatch(path, into: &direct, dirty: { mark($0) }) }
+                    else { direct.append(.upsert(NamespaceEntry(path: path, kind: kind, deviceID: rootDevice))) }
                 } else { mark(parent) }
             case .simpleRemove:
                 if path == root { if mayRebuild { requestRebuild(invalidated: true, reason: "root_removed") } }
+                else if target is HybridIndex { authoritativePatch(path, into: &direct, dirty: { mark($0) }) }
                 else { direct.append(.remove(path)) }
             case .subtreeDirty:
                 mark(target.entry(at: path)?.kind == .directory ? path : parent, subtree: true)
@@ -434,7 +489,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if countMetrics { metrics.record("direct_patches", by: patches.count) }
     }
 
-    private func repairDirectories(_ paths: [String], into target: FileIndex,
+    private func repairDirectories(_ paths: [String], into target: any NamespaceIndex,
                                    using reconciler: DirectoryReconciler, mayRebuild: Bool) {
         var pending = PathCanonicalizer.minimalRoots(paths)
         var seen = Set<String>()
@@ -500,11 +555,12 @@ public final class UpdateCoordinator: @unchecked Sendable {
             guard let self else { return }
             let result = Result {
                 let identity = try self.identityProvider(self.root)
-                let e0 = identity.currentEventID()
+                let e0 = self.fenceProvider(identity)
                 self.metrics.record("full_scans")
                 let scan = try self.makeScanner().scan(cancellation: self.cancellation)
                 self.metrics.set("rebuild_index_entries", to: 0)
                 let fresh = self.makePrivateIndex(scan.entries, counter: "rebuild_index_entries")
+                guard try self.identityProvider(self.root)==identity else{throw SnapshotError.identity("root changed during recovery scan")}
                 return PreparedIndex(index: fresh, rootDeviceID: scan.rootDeviceID, cancelled: scan.cancelled,
                     identity: identity, fence: e0)
             }
@@ -627,6 +683,46 @@ public final class UpdateCoordinator: @unchecked Sendable {
                   index.captureSnapshotMetadata().generation == capture.metadata.generation else {
                 throw SnapshotError.generationChanged
             }
+        }
+    }
+    public func installRecoveredBase(_ capture:CheckpointCapture,base:MMapBaseIndex,map:[String:EntryRef],publish:()throws->Void) throws {
+        try writer.sync {
+            guard currentState == .live,persistenceEpoch==capture.epoch,volumeIdentity==capture.identity,
+                  try identityProvider(root)==capture.identity,
+                  index.stats().generation==capture.metadata.generation,let h=index as? HybridIndex else{throw SnapshotError.generationChanged}
+            try publish();h.install(base:base,directoryMap:map)
+        }
+    }
+    public func beginCompaction() throws -> CompactionTicket {
+        try writer.sync {
+            guard currentState == .live, !building, !rebuildScheduled, compactionID == nil,
+                  let volumeIdentity, let hybrid = index as? HybridIndex, let snapshot = hybrid.capture() else {
+                throw SnapshotError.busy
+            }
+            let id = UUID(); compactionID = id; compactionEvents = []; compactionOverflow = false
+            return .init(id:id, snapshot:snapshot, checkpoint:.init(metadata:index.captureSnapshotMetadata(),
+                cursor:lastProcessedEventID, identity:volumeIdentity, epoch:persistenceEpoch))
+        }
+    }
+    public func abortCompaction(_ ticket:CompactionTicket) {
+        writer.sync { if compactionID == ticket.id { compactionID=nil; compactionEvents=[]; compactionOverflow=false } }
+    }
+    public func finishCompaction(_ ticket:CompactionTicket, base:MMapBaseIndex, directories:[String:EntryRef],
+                                 publish:()throws->Void) throws {
+        try writer.sync {
+            guard compactionID == ticket.id, !compactionOverflow, !cancellation.isCancelled,
+                  currentState == .live, persistenceEpoch == ticket.checkpoint.epoch,
+                  volumeIdentity == ticket.checkpoint.identity,
+                  try identityProvider(root) == ticket.checkpoint.identity,
+                  let hybrid=index as? HybridIndex, let reconciler else { throw SnapshotError.generationChanged }
+            let visibleGeneration=index.stats().generation
+            try publish()
+            hybrid.install(base:base,directoryMap:directories,generation:ticket.snapshot.generation)
+            let buffered=compactionEvents
+            compactionID=nil;compactionEvents=[];compactionOverflow=false
+            process(buffered,into:index,using:reconciler,countMetrics:false,mayRebuild:true)
+            hybrid.ensureGeneration(atLeast:visibleGeneration)
+            metrics.set("compaction_replayed_events",to:buffered.count)
         }
     }
     /// Stop delivery, then finish every received batch before an exit checkpoint.
