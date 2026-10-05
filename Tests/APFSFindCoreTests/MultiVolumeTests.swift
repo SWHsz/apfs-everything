@@ -15,13 +15,29 @@ final class MemoryVolumeSelection: VolumeSelectionStore, @unchecked Sendable {
   func load() -> Set<UUID> { lock.withLock { selected } }
   func save(_ ids: Set<UUID>) { lock.withLock { selected = ids } }
 }
+final class ParallelSearchProbe: @unchecked Sendable {
+  private let condition = NSCondition()
+  private var arrived = 0, timedOut = false
+  func enter() {
+    condition.lock(); defer { condition.unlock() }
+    arrived += 1; condition.broadcast()
+    let deadline = Date().addingTimeInterval(3)
+    while arrived < 2 {
+      if !condition.wait(until: deadline) { timedOut = true; break }
+    }
+  }
+  var overlapped: Bool {
+    condition.lock(); defer { condition.unlock() }; return arrived == 2 && !timedOut
+  }
+}
 final class FakeVolumeSession: VolumeSearching, @unchecked Sendable {
   let volume: VolumeDescriptor
   let index = FileIndex(root: "/fixture")
   let lock = NSLock(); var offline = false
   let delay: Double
-  init(_ volume: VolumeDescriptor, delay: Double = 0) {
-    self.volume = volume; self.delay = delay
+  let probe: ParallelSearchProbe?
+  init(_ volume: VolumeDescriptor, delay: Double = 0, probe: ParallelSearchProbe? = nil) {
+    self.volume = volume; self.delay = delay; self.probe = probe
     index.apply((0..<100).map { .upsert(.init(path: "/fixture/match-\($0)", kind: .file)) })
     index.apply([.upsert(.init(path: "/fixture/match", kind: .file))])
   }
@@ -33,6 +49,7 @@ final class FakeVolumeSession: VolumeSearching, @unchecked Sendable {
           indexedEntries: index.stats().liveEntries, snapshotBytes: 0, unreadableDirectories: 0, pendingReplayEvents: 0)
   }
   func search(_ request: SearchRequest) -> SearchResult {
+    probe?.enter()
     let end = ProcessInfo.processInfo.systemUptime + delay
     while ProcessInfo.processInfo.systemUptime < end && !request.cancellation.isCancelled { Thread.sleep(forTimeInterval: 0.001) }
     return index.search(request)
@@ -45,13 +62,14 @@ final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
     let a = VolumeDescriptor(volumeUUID: UUID(), displayName: "A", mountPath: "/", isSystemVolume: true)
     let b = VolumeDescriptor(volumeUUID: UUID(), displayName: "B", mountPath: "/Volumes/B")
     let provider = FakeVolumeProvider([a, b]), store = MemoryVolumeSelection([b.volumeUUID])
-    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, factory: { v, _ in FakeVolumeSession(v, delay: 0.05) })
+    let probe = ParallelSearchProbe()
+    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, factory: { v, _ in FakeVolumeSession(v, probe: probe) })
     await c.start()
     let result = await c.search(.init(id: 1, query: "match", limit: 50))
     XCTAssertEqual(result.hits.count, 50); XCTAssertEqual(result.searchedVolumes, 2)
     XCTAssertEqual(result.hits.prefix(2).map(\.matchRank), [.exact, .exact])
     XCTAssertEqual(Set(result.hits.prefix(2).map(\.volumeUUID)).count, 2)
-    XCTAssertLessThan(result.latencyMilliseconds, 95)
+    XCTAssertTrue(probe.overlapped, "Both queries must enter before either is allowed to return")
     await c.stop()
   }
   func testOfflineRemountSelectionAndPartialFailure() async {
