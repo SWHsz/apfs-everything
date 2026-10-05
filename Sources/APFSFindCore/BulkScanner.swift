@@ -176,12 +176,15 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
             metrics.record("scanner_boundaries")
             return false
         case ENODATA:
+            metrics.record("scanner_unreadable_directories")
             metrics.record("scanner_dataless_skips")
             return true
         case EACCES, EPERM:
+            metrics.record("scanner_unreadable_directories")
             metrics.record("scanner_permission_denied")
             return true
         default:
+            metrics.record("scanner_unreadable_directories")
             metrics.record("scanner_errors")
             return true
         }
@@ -221,7 +224,8 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                     } catch let error as ScannerError {
                         work.complete(entries: [], directories: [], unreadable: recordFailure(error.code))
                     } catch {
-                        metrics.record("scanner_errors")
+                        metrics.record("scanner_unreadable_directories")
+            metrics.record("scanner_errors")
                         work.complete(entries: [], directories: [], unreadable: true)
                     }
                 }

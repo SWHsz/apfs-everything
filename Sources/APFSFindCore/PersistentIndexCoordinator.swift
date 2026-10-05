@@ -201,6 +201,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       if self.compact() { _ = self.group.wait(timeout: .now() + 3600) }
     }
   }
+  public var snapshotBytes: UInt64 { lock.withLock { snapshotHeader?.fileLength ?? 0 } }
   public func readinessSnapshot() -> IndexReadinessSnapshot { core.readinessSnapshot(startupMode: lock.withLock { mode }) }
   public func readinessStream() -> AsyncStream<IndexReadinessSnapshot> { core.readinessStream() }
   public func search(_ request: SearchRequest) -> SearchResult { core.search(request) }

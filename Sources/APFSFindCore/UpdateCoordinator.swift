@@ -176,7 +176,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let current = stateLock.withLock { readiness }
         let available = [.baseReady, .catchingUp, .live, .rebuildingUsingOldBase].contains(current)
         return .init(state: current, searchAvailable: available, resultsMayBeStale: current != .live,
-                     startupMode: startupMode, indexedEntries: available ? index.stats().liveEntries : 0,
+                     startupMode: startupMode, indexedEntries: available ? index.stats().liveEntries : status.scannerEntries,
                      replayReceived: status.receivedEvents, replayProcessed: status.processedEvents,
                      replayPending: status.pendingEvents, error: status.lastError)
     }
@@ -213,6 +213,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public func start(restored: (any NamespaceIndex)? = nil, cursor: UInt64? = nil,
                       identity supplied: VolumeIdentity? = nil,
                       progress: (@Sendable (String) -> Void)? = nil) throws {
+        guard !cancellation.isCancelled else { throw CocoaError(.userCancelled) }
         let identity = try supplied ?? identityProvider(root)
         let e0 = cursor ?? fenceProvider(identity)
         writer.sync { volumeIdentity = identity; lastProcessedEventID = e0; replayFloor = e0; rootDevice = identity.deviceID }
@@ -231,17 +232,22 @@ public final class UpdateCoordinator: @unchecked Sendable {
             initialReplayStarted = ProcessInfo.processInfo.systemUptime
             replayResources = .capture()
             try startWatcher(since: e0)
+            if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
             return
         }
+        metrics.set("maintenance_queued", to: 1)
         setReadiness(.scanning)
         let lease = try maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .coldScan, priority: root == "/" ? 1 : 0, cancellation: cancellation)
         defer { lease.release() }
+        metrics.set("maintenance_queued", to: 0)
+        setReadiness(.scanning)
         // Capture before any directory enumeration: replay closes the initial scan gap.
         progress?("[info] Initial scan: \(root) (\(configuration.workerCount) workers)")
         let progressQueue = DispatchQueue(label: "apfsfind.scan-progress")
         let timer = DispatchSource.makeTimerSource(queue: progressQueue)
         timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
-        timer.setEventHandler { [metrics] in
+        timer.setEventHandler { [weak self, metrics] in
+            if let self { self.observation.send(self.readinessSnapshot()) }
             let counts = metrics.snapshot()
             if counts["initial_index_building", default: 0] != 0 {
                 progress?("[info] Building memory index: \(counts["initial_index_entries", default: 0])/\(counts["scanner_entries", default: 0]) entries")
@@ -306,6 +312,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     private func startWatcher(since id: UInt64) throws {
+        guard !cancellation.isCancelled else { throw CocoaError(.userCancelled) }
         if let replayStarter {
             try replayStarter(id, { [weak self] in self?.enqueue($0) }); return
         }
@@ -361,6 +368,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         defer {
             metrics.record("fsevents_processed", by: events.count)
             metrics.set("active_batch_size", to: 0)
+            observation.send(readinessSnapshot())
         }
         if finished { stateLock.withLock { historyDone = true } }
         if building {

@@ -70,6 +70,7 @@ enum CLI {
         var entries = 100_000
         var delta = 10_000
         var idleSeconds = 60.0
+        var volumes = 2
         var ephemeral = false
         var rebuildIndex = false
         var cacheDirectory: String?
@@ -87,6 +88,10 @@ enum CLI {
       apfsfind hybrid-bench [--entries 100000] [--delta 10000] [--cache-dir PATH]
       apfsfind real-disk-bench --root PATH [--cache-dir /private/tmp/apfsfind-real-cache-UUID]
                              [--idle-seconds 60]
+
+    Additional benchmarks:
+      apfsfind usability-bench --root PATH [--cache-dir EXISTING_TEST_CACHE] [--idle-seconds 60]
+      apfsfind multivolume-bench --entries-per-volume 100000 --volumes 2
 
     The default command is serve and the default root is $HOME.
     --latency-ms must be between 1 and 1000. No log files are saved.
@@ -108,7 +113,7 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench"].contains(first) else {
+            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
@@ -133,6 +138,10 @@ enum CLI {
             case "--cache-dir":
                 guard options.command != "bench", !value.isEmpty else { throw CLIError.usage("--cache-dir requires a path and is not accepted by bench.") }
                 options.cacheDirectory = NSString(string: value).expandingTildeInPath
+            case "--volumes":
+                guard options.command == "multivolume-bench", let n = Int(value), (1...8).contains(n) else { throw CLIError.usage("--volumes requires 1...8") }; options.volumes = n
+            case "--entries-per-volume":
+                guard options.command == "multivolume-bench", let n = Int(value), (100...1_000_000).contains(n) else { throw CLIError.usage("--entries-per-volume requires 100...1000000") }; options.entries = n
             case "--entries":
                 guard ["persistence-bench", "hybrid-bench"].contains(options.command), let number = Int(value), (102...1_000_000).contains(number) else {
                     throw CLIError.usage("--entries must be in 102...1000000 for persistence-bench or hybrid-bench.")
@@ -142,12 +151,12 @@ enum CLI {
                 guard options.command=="hybrid-bench",let n=Int(value),(1...100000).contains(n) else{throw CLIError.usage("--delta must be 1...100000 for hybrid-bench")}
                 options.delta=n
             case "--root":
-                guard ["serve", "real-disk-bench"].contains(options.command), !value.isEmpty else {
+                guard ["serve", "real-disk-bench", "usability-bench"].contains(options.command), !value.isEmpty else {
                     throw CLIError.usage("--root is accepted by serve and real-disk-bench.")
                 }
                 options.root = NSString(string: value).expandingTildeInPath
             case "--idle-seconds":
-                guard options.command == "real-disk-bench", let n = Double(value), n.isFinite, (0...3600).contains(n) else {
+                guard ["real-disk-bench", "usability-bench"].contains(options.command), let n = Double(value), n.isFinite, (0...3600).contains(n) else {
                     throw CLIError.usage("--idle-seconds requires 0...3600 for real-disk-bench.")
                 }
                 options.idleSeconds = n
@@ -188,11 +197,14 @@ enum CLI {
             print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self))
             return 0
         }
+        if arguments.first == "_usability-worker" { return try UsabilityBenchmarkRunner.worker(Array(arguments.dropFirst())) }
         if arguments.first == "_real-disk-worker" {
             return try RealDiskBenchmarkRunner.worker(Array(arguments.dropFirst()))
         }
         let options = try parse(arguments)
         if options.help { print(usage); return 0 }
+        if options.command == "multivolume-bench" { return try MultiVolumeBenchmarkRunner(entries: options.entries, volumeCount: options.volumes).run() }
+        if options.command == "usability-bench" { return try UsabilityBenchmarkRunner(root: options.root, cacheDirectory: options.cacheDirectory, idleSeconds: options.idleSeconds).run() }
         if options.command == "bench" {
             return try BenchmarkRunner(files: options.files, latencyMilliseconds: options.latencyMilliseconds).run()
         }
