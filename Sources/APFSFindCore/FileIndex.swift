@@ -212,14 +212,20 @@ public final class FileIndex: @unchecked Sendable {
 
     /// A linear filename substring scan with bounded result storage.
     public func search(_ query: String, limit: Int = 50) -> SearchResult {
+        return search(.init(query: query, limit: limit))
+    }
+    public func search(_ request: SearchRequest) -> SearchResult {
         let start = DispatchTime.now().uptimeNanoseconds
-        let foldedQuery = FileEntry.fold(query)
+        let foldedQuery = FileEntry.fold(request.query)
+        let limit = request.limit
         return lock.withReadLock {
             let limit = max(0, limit)
             var ranked: [(rank: Int, path: String, kind: EntryKind)] = []
             if !foldedQuery.isEmpty, limit > 0 {
                 ranked.reserveCapacity(min(limit, storage.liveEntries))
-                for entry in storage.entries where !entry.isDeleted && entry.foldedName.contains(foldedQuery) {
+                for (ordinal, entry) in storage.entries.enumerated() {
+                    if ordinal % 4096 == 0, request.cancellation.isCancelled { break }
+                    guard !entry.isDeleted && entry.foldedName.contains(foldedQuery) else { continue }
                     let rank = entry.foldedName == foldedQuery ? 0 : (entry.foldedName.hasPrefix(foldedQuery) ? 1 : 2)
                     let candidate = (rank: rank, path: entry.path, kind: entry.kind)
                     if ranked.count == limit, let last = ranked.last,
@@ -235,15 +241,15 @@ public final class FileIndex: @unchecked Sendable {
                     if ranked.count > limit { ranked.removeLast() }
                 }
             }
-            return SearchResult(hits: ranked.map { SearchHit(path: $0.path, kind: $0.kind) },
+            return SearchResult(hits: ranked.map { SearchHit(path: $0.path, kind: $0.kind, matchRank: MatchRank(rawValue: $0.rank)!) },
                                 latencyMilliseconds: Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000,
-                                generation: storage.generation)
+                                generation: storage.generation, cancelled: request.cancellation.isCancelled)
         }
     }
 
     private func precedes(_ lhs: (rank: Int, path: String, kind: EntryKind),
                           _ rhs: (rank: Int, path: String, kind: EntryKind)) -> Bool {
-        lhs.rank == rhs.rank ? lhs.path < rhs.path : lhs.rank < rhs.rank
+        SearchOrdering.less(lhs.rank, lhs.path, rhs.rank, rhs.path)
     }
 
     /// Inserts missing ancestors before the child, including parents discovered out of order.

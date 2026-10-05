@@ -77,7 +77,7 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.3.1 — macOS filename search with snapshot recovery
+    apfsfind v0.4.0 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
@@ -93,9 +93,9 @@ enum CLI {
     Snapshots default to ~/Library/Application Support/apfsfind/indexes/.
     Cache directories are 0700; snapshots contain sensitive filename metadata (0600).
     --ephemeral disables snapshot reads and writes. --rebuild-index forces a scan.
-    Snapshots are written after cold startup, on changed exit, or during compaction.
+    Snapshots are written after cold startup or explicit/threshold compaction.
     Compaction runs at thresholds or by :compact; :checkpoint may write only state.
-    Startup waits for replay and recovery to finish; Ctrl+C cancels it.
+    Search opens when the base is ready; catch-up results may be stale. :quit uses fast exit.
     Real-disk benchmark reads the requested root; mutations use a separate owned UUID directory.
     Its cache is a new UUID child of /private/tmp and is cleaned up after both child processes exit.
     Other benchmarks use only a temporary directory created by this process.
@@ -226,7 +226,7 @@ enum CLI {
             latencyMilliseconds: options.latencyMilliseconds, workerCount: options.workers),
             ephemeral: options.ephemeral, rebuildIndex: options.rebuildIndex, cacheDirectory: options.cacheDirectory)
         let shutdown = ShutdownSignal { coordinator.interrupt() }
-        defer { coordinator.stop(); withExtendedLifetime(shutdown) {} }
+        defer { coordinator.stop(policy: .fast); withExtendedLifetime(shutdown) {} }
         TerminalOutput.info("Starting filename search in \(options.root)")
         try coordinator.start { TerminalOutput.info($0) }
         if shutdown.isCancelled { throw CLIError.interrupted }
@@ -258,7 +258,8 @@ enum CLI {
                 print("Rebuild requested; searches continue while the replacement index is built.")
             default:
                 if query.hasPrefix(":") { print("Unknown command. Use :stats, :verify, :rebuild, :checkpoint, :compact or :quit."); continue }
-                let result = coordinator.index.search(query, limit: 50)
+                let result = coordinator.search(query, limit: 50)
+                if result.freshness != .live { TerminalOutput.info("Index is updating; results may be stale.") }
                 for hit in result.hits { print(hit.path) }
                 print(String(format: "%d results · %.3f ms · generation %llu", result.hits.count,
                              result.latencyMilliseconds, UInt64(result.generation)))
@@ -271,7 +272,8 @@ enum CLI {
     /// has no arbitrary deadline; benchmarks retain their bounded startup wait.
     private static func waitForStartup(_ coordinator: UpdateCoordinator, shutdown: ShutdownSignal) throws {
         let started = ProcessInfo.processInfo.systemUptime
-        while !coordinator.waitUntilLive(timeout: 1) {
+        while !coordinator.readinessSnapshot().searchAvailable {
+            Thread.sleep(forTimeInterval: 0.05)
             if shutdown.isCancelled { throw CLIError.interrupted }
             let status = coordinator.startupStatus()
             if status.state == .failed || status.state == .stopped {

@@ -13,6 +13,7 @@ public protocol NamespaceIndex: AnyObject, Sendable {
   func replace(with replacement: FileIndex)
   func installSnapshot(_ replacement: any NamespaceIndex)
   func search(_ query: String, limit: Int) -> SearchResult
+  func search(_ request: SearchRequest) -> SearchResult
 }
 extension FileIndex: NamespaceIndex {
   public func installSnapshot(_ replacement: any NamespaceIndex) {

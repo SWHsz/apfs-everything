@@ -37,15 +37,24 @@ extension MMapBaseIndex {
     }
     return aa.count < bb.count
   }
+  private func nameLess(_ a: UInt32, _ b: UInt32) -> Bool {
+    let x = foldedBytes(at: a), y = foldedBytes(at: b)
+    if x.elementsEqual(y) { return pathLess(a, b) }
+    return x.lexicographicallyPrecedes(y)
+  }
   /// Bounded top-k ordinals; full paths are reconstructed only after selection.
-  public func searchBase(_ query: [UInt8], limit: Int, deleted: (UInt32) -> Bool) -> [Candidate] {
+  public func searchBase(_ query: [UInt8], limit: Int, cancellation: SearchCancellationToken? = nil, scanned: ((Int) -> Void)? = nil, deleted: (UInt32) -> Bool) -> [Candidate] {
     guard !query.isEmpty, limit > 0 else { return [] }
     var hits: [Candidate] = []
     hits.reserveCapacity(limit)
     func less(_ a: Candidate, _ b: Candidate) -> Bool {
-      a.rank == b.rank ? pathLess(a.id, b.id) : a.rank < b.rank
+      a.rank == b.rank ? nameLess(a.id, b.id) : a.rank < b.rank
     }
+    var visited = 0
+    defer { scanned?(visited) }
     for ordinal in 1..<count {
+      if ordinal % 4096 == 1, cancellation?.isCancelled == true { break }
+      visited += 1
       let id = UInt32(ordinal)
       if deleted(id) { continue }
       let bytes = foldedBytes(at: id)

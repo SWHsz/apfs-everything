@@ -343,6 +343,12 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       + c.delta.values.map(\.entry)
   }
   public func snapshotPaths() -> Set<String> { Set(snapshotEntries().map(\.path)) }
+  public func compactionTrigger(_ policy: CompactionPolicy) -> (threshold: Bool, safety: Bool) {
+    var immediate = policy; immediate.quietSeconds = 0
+    let threshold = shouldCompact(immediate)
+    let safety = lock.withLock { overlayBytes >= policy.safetyByteLimit }
+    return (threshold, safety)
+  }
   public func shouldCompact(_ policy: CompactionPolicy) -> Bool {
     lock.withLock {
       guard let b = base, dead > 0 || !delta.isEmpty else { return false }
@@ -382,13 +388,18 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     }
   }
   public func search(_ query: String, limit: Int = 50) -> SearchResult {
+    return search(.init(query: query, limit: limit))
+  }
+  public func search(_ request: SearchRequest) -> SearchResult {
+    metrics.record("search_requests")
     let start = ProcessInfo.processInfo.systemUptime
-    let q = FileEntry.fold(query)
+    let limit = request.limit
+    let q = FileEntry.fold(request.query)
     let bytes = Array(q.utf8)
     lock.lock()
     if let b = bootstrap {
       lock.unlock()
-      return b.search(query, limit: limit)
+      return b.search(request)
     }
     guard let base else {
       lock.unlock()
@@ -401,8 +412,9 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     lock.unlock()
     defer { lock.withLock { activeQueries -= 1 } }
     let baseStart = ProcessInfo.processInfo.systemUptime
+    var scanned = 0
     let winners = base.searchBase(
-      bytes, limit: max(0, limit), deleted: { bitmap[Int($0) / 64] & (1 << (Int($0) % 64)) != 0 })
+      bytes, limit: max(0, limit), cancellation: request.cancellation, scanned: { scanned = $0 }, deleted: { bitmap[Int($0) / 64] & (1 << (Int($0) % 64)) != 0 })
     let baseMS = (ProcessInfo.processInfo.systemUptime - baseStart) * 1000
     let overlayStart = ProcessInfo.processInfo.systemUptime
     var extra: [(Int, String, EntryKind)] = []
@@ -411,12 +423,14 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       if rootName.contains(q) {
         extra.append((rootName == q ? 0 : (rootName.hasPrefix(q) ? 1 : 2), root, .directory))
       }
-      for d in live where d.foldedName.contains(q) {
+      for (ordinal, d) in live.enumerated() {
+        if ordinal % 4096 == 0, request.cancellation.isCancelled { break }
+        guard d.foldedName.contains(q) else { continue }
         let candidate = (
           d.foldedName == q ? 0 : (d.foldedName.hasPrefix(q) ? 1 : 2), d.entry.path, d.entry.kind
         )
         func less(_ a: (Int, String, EntryKind), _ b: (Int, String, EntryKind)) -> Bool {
-          a.0 == b.0 ? a.1 < b.1 : a.0 < b.0
+          SearchOrdering.less(a.0, a.1, b.0, b.1)
         }
         if extra.count == limit, let last = extra.last, !less(candidate, last) { continue }
         var lo = 0
@@ -428,19 +442,26 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
         extra.insert(candidate, at: lo)
         if extra.count > limit { extra.removeLast() }
       }
-      extra.sort { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
+      extra.sort { SearchOrdering.less($0.0, $0.1, $1.0, $1.1) }
     }
     let overlayMS = (ProcessInfo.processInfo.systemUptime - overlayStart) * 1000
     let pathStart = ProcessInfo.processInfo.systemUptime
     var all =
-      winners.map { ($0.rank, base.reconstructPath($0.id), base.record(at: $0.id).kind) }
+      winners.compactMap { candidate -> (Int, String, EntryKind)? in
+        guard !request.cancellation.isCancelled else { return nil }
+        return (candidate.rank, base.reconstructPath(candidate.id), base.record(at: candidate.id).kind)
+      }
       + Array(extra.prefix(max(0, limit)))
-    all.sort { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
+    all.sort { SearchOrdering.less($0.0, $0.1, $1.0, $1.1) }
     var seen = Set<String>()
     let hits = all.filter { seen.insert($0.1).inserted }.prefix(max(0, limit)).map {
-      SearchHit(path: $0.1, kind: $0.2)
+      SearchHit(path: $0.1, kind: $0.2, matchRank: MatchRank(rawValue: $0.0)!)
     }
-    metrics.set("query_base_records_scanned", to: bytes.isEmpty || limit <= 0 ? 0 : base.count - 1)
+    metrics.set("query_base_records_scanned", to: scanned)
+    if request.cancellation.isCancelled {
+      metrics.record("search_cancelled")
+      metrics.set("search_records_scanned_before_cancel", to: scanned)
+    } else { metrics.maximum("search_latest_completed_id", Int(clamping: request.id)) }
     metrics.set("query_delta_records_scanned", to: bytes.isEmpty || limit <= 0 ? 0 : live.count)
     metrics.set("query_base_scan_us", to: Int(baseMS * 1000))
     metrics.set("query_overlay_scan_us", to: Int(overlayMS * 1000))
@@ -450,6 +471,6 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     metrics.set("query_retries", to: 0)
     return .init(
       hits: hits, latencyMilliseconds: (ProcessInfo.processInfo.systemUptime - start) * 1000,
-      generation: g)
+      generation: g, cancelled: request.cancellation.isCancelled)
   }
 }

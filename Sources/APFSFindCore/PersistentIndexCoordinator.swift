@@ -20,7 +20,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private let rebuildIndex: Bool
   private let compactionPolicy: CompactionPolicy
   private let compactionFault: (@Sendable (SnapshotFailurePoint) throws -> Void)?
-  private var compactionTimer: DispatchSourceTimer?
+  private lazy var compactionScheduler = CompactionScheduler(metrics: metrics)
+  private var startupBegan = ProcessInfo.processInfo.systemUptime
+  private let maintenanceScheduler: MaintenanceScheduler
   private var compacting = false
   private var retryAfter: TimeInterval = 0
   private var consecutiveFailures = 0
@@ -59,6 +61,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     identityProvider: @escaping @Sendable (String) throws -> VolumeIdentity = {
       try VolumeIdentity.discover(root: $0)
     },
+    maintenanceScheduler: MaintenanceScheduler = .shared,
+    replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)? = nil,
     fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() }
   ) throws {
     persistenceEnabled = !ephemeral
@@ -66,6 +70,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     self.compactionPolicy = compactionPolicy
     self.compactionFault = compactionFault
     self.identityProvider = identityProvider
+    self.maintenanceScheduler = maintenanceScheduler
     let cache = cacheDirectory ?? SnapshotStore.defaultDirectory
     self.cacheDirectory = try SnapshotStore.normalizedDirectory(cache)
     let canonical = try PathCanonicalizer.canonicalRoot(root)
@@ -74,10 +79,11 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     core = try UpdateCoordinator(
       root: canonical, configuration: configuration,
       excludedRoots: ephemeral ? [] : [self.cacheDirectory], index: runtime,
-      identityProvider: identityProvider, fenceProvider:fenceProvider)
+      identityProvider: identityProvider, fenceProvider:fenceProvider, maintenanceScheduler: maintenanceScheduler, replayStarter: replayStarter)
     core.setLifecycleHandlers(
       live: { [weak self] in self?.becameLive() },
       recovery: { [weak self] reason in self?.beganRecovery(reason) })
+    core.setMutationHandler { [weak self] in self?.namespaceChanged() }
     if !ephemeral {
       core.setBaseInstaller { [weak self] initial, cursor, identity in
         guard let self, let hybrid = self.index as? HybridIndex else { return }
@@ -99,6 +105,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   }
 
   public func start(progress: (@Sendable (String) -> Void)? = nil) throws {
+    startupBegan = ProcessInfo.processInfo.systemUptime
+    core.markOpening()
     lock.withLock { self.progress = progress }
     let volume = try identityProvider(root)
     lock.withLock { identity = volume }
@@ -182,25 +190,21 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       lock.withLock { replayStarted = ProcessInfo.processInfo.systemUptime }
       progress?("[info] startup_mode=\(lock.withLock { mode.rawValue })")
     }
-    if persistenceEnabled {
-      let timer = DispatchSource.makeTimerSource(queue: queue)
-      timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
-      timer.setEventHandler { [weak self] in
-        self?.metrics.record("compaction_timer_wakeups")
-        guard let self, self.currentState == .live, let h = self.index as? HybridIndex else {
-          return
-        }
-        let ready = self.lock.withLock {
-          !self.active && !self.shuttingDown
-            && ProcessInfo.processInfo.systemUptime >= self.retryAfter
-        }
-        let recovery = self.lock.withLock { self.automaticCheckpointNeeded }
-        if ready && (recovery || h.shouldCompact(self.compactionPolicy)) { _ = self.compact() }
-      }
-      compactionTimer = timer
-      timer.resume()
+  }
+  private func namespaceChanged() {
+    guard persistenceEnabled, currentState == .live, let hybrid = index as? HybridIndex else { return }
+    let trigger = hybrid.compactionTrigger(compactionPolicy)
+    guard trigger.threshold else { return }
+    let delay = lock.withLock { max(trigger.safety ? 0 : compactionPolicy.quietSeconds, retryAfter - ProcessInfo.processInfo.systemUptime) }
+    compactionScheduler.schedule(delay: delay, safety: trigger.safety) { [weak self] in
+      guard let self, !self.lock.withLock({ self.shuttingDown }) else { return }
+      if self.compact() { _ = self.group.wait(timeout: .now() + 3600) }
     }
   }
+  public func readinessSnapshot() -> IndexReadinessSnapshot { core.readinessSnapshot(startupMode: lock.withLock { mode }) }
+  public func readinessStream() -> AsyncStream<IndexReadinessSnapshot> { core.readinessStream() }
+  public func search(_ request: SearchRequest) -> SearchResult { core.search(request) }
+  public func search(_ query: String, limit: Int = 50) -> SearchResult { search(.init(query: query, limit: limit)) }
 
   private func recordSnapshot(
     _ result: SnapshotWriteResult, cache: SnapshotStore, identity: VolumeIdentity
@@ -238,6 +242,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         warmReplayMeasured = true
       }
     }
+    namespaceChanged()
     // Never call writer.sync from the lifecycle hook itself.
     queue.async { [weak self] in
       guard let self else { return }
@@ -270,6 +275,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     defer {
       lock.withLock { active = false }
       group.leave()
+      namespaceChanged()
     }
     do {
       let capture = try core.captureCheckpoint()
@@ -292,6 +298,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         }
         return
       }
+      let lease = try maintenanceScheduler.acquireBlocking(volumeID: capture.identity.volumeUUID, kind: .compaction, cancellation: checkpointCancellation)
+      defer { lease.release() }
       let result: SnapshotWriteResult
       if let hybrid = index as? HybridIndex, hybrid.mappedBase != nil {
         let ticket = try core.beginCompaction()
@@ -391,16 +399,19 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       core.stop()
     }
   }
-  public func stop(saveCheckpoint: Bool = true) {
+  // Legacy explicit persistence callers retain their full checkpoint behavior.
+  public func stop(saveCheckpoint: Bool = true) { stop(policy: saveCheckpoint ? .forceCompact : .fast, saveCheckpoint: saveCheckpoint) }
+  public func stop(policy: ShutdownPolicy) { stop(policy: policy, saveCheckpoint: true) }
+  private func stop(policy: ShutdownPolicy, saveCheckpoint: Bool) {
     let first = lock.withLock {
       if shuttingDown { return false }
       shuttingDown = true
       return true
     }
     guard first else { return }
-    compactionTimer?.cancel()
-    compactionTimer = nil
-    if saveCheckpoint && persistenceEnabled && !checkpointCancellation.isCancelled {
+    compactionScheduler.stop()
+    if policy == .fast { checkpointCancellation.cancel() }
+    if saveCheckpoint && persistenceEnabled {
       core.quiesceForExit()
       group.wait()
       let capture = try? core.captureCheckpoint()
@@ -408,7 +419,10 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         lastCheckpointGeneration != index.stats().generation
           || (capture?.cursor ?? 0) > durableCursor
       }
-      if currentState == .live && changed {
+      let sameBase = lock.withLock { snapshotHeader?.indexGeneration == index.stats().generation }
+      let threshold = (index as? HybridIndex)?.compactionTrigger(compactionPolicy).threshold ?? false
+      let mayCompact = policy == .forceCompact || (policy == .compactIfThresholdReached && threshold)
+      if currentState == .live && changed && (sameBase || mayCompact) {
         emit("[info] Saving index snapshot...")
         // An exit is quiesced, so the writer cannot change G during export.
         lock.withLock {
@@ -416,7 +430,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           group.enter()
         }
         performCheckpoint()
-      }
+      } else if changed { metrics.record("fast_exit_unpersisted_namespace") }
     } else {
       checkpointCancellation.cancel()
     }
@@ -458,6 +472,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
     values.merge(snapshot, uniquingKeysWith: { _, new in new })
     values["resource_stages"] = metrics.resourceSnapshot()
+    values["search_ready_ms"] = metrics.snapshot()["search_ready_ms", default: 0]
+    values["compaction_scheduler_state"] = compactionScheduler.currentState.rawValue
+    values["compaction_timer_wakeups"] = 0
     if let hybrid = index as? HybridIndex {
       values.merge(hybrid.hybridStats(), uniquingKeysWith: { _, new in new })
     }

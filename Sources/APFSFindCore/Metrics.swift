@@ -4,9 +4,19 @@ import Darwin
 public final class CancellationToken: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
+    private var handlers: [UUID: @Sendable () -> Void] = [:]
     public init() {}
     public var isCancelled: Bool { lock.withLock { cancelled } }
-    public func cancel() { lock.withLock { cancelled = true } }
+    @discardableResult public func onCancel(_ handler: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        let invoke = lock.withLock { if cancelled { return true }; handlers[id] = handler; return false }
+        if invoke { handler() }; return id
+    }
+    public func removeCancellationHandler(_ id: UUID) { _ = lock.withLock { handlers.removeValue(forKey: id) } }
+    public func cancel() {
+        let callbacks = lock.withLock { cancelled = true; let copy = Array(handlers.values); handlers = [:]; return copy }
+        callbacks.forEach { $0() }
+    }
 }
 
 public struct APFSFindConfiguration: Sendable {

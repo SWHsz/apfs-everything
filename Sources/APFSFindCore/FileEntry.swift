@@ -68,10 +68,12 @@ public struct FileEntry: Sendable {
 public struct SearchHit: Sendable, Equatable {
   public let path: String
   public let kind: EntryKind
+  public let matchRank: MatchRank
 
-  public init(path: String, kind: EntryKind) {
+  public init(path: String, kind: EntryKind, matchRank: MatchRank = .substring) {
     self.path = path
     self.kind = kind
+    self.matchRank = matchRank
   }
 }
 
@@ -79,6 +81,13 @@ public struct SearchResult: Sendable {
   public let hits: [SearchHit]
   public let latencyMilliseconds: Double
   public let generation: UInt64
+  public let freshness: SearchFreshness
+  public let cancelled: Bool
+  public init(hits: [SearchHit], latencyMilliseconds: Double, generation: UInt64,
+              freshness: SearchFreshness = .live, cancelled: Bool = false) {
+    self.hits = hits; self.latencyMilliseconds = latencyMilliseconds; self.generation = generation
+    self.freshness = freshness; self.cancelled = cancelled
+  }
 }
 
 public struct IndexStats: Sendable {

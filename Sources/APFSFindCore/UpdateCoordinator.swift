@@ -71,10 +71,18 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private let builder = DispatchQueue(label: "apfsfind.rebuild", qos: .utility)
     private let buildGroup = DispatchGroup()
     private let watcher = FSEventsWatcher()
+    private let replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)?
     private let cancellation = CancellationToken()
     private let debugEvents = ProcessInfo.processInfo.environment["APFSFIND_DEBUG_EVENTS"] == "1"
     private let stateLock = NSLock()
     private var state: IndexState = .scanning
+    private var readiness: IndexReadiness = .opening
+    private var baseAvailable = false
+    private var startupBegan = ProcessInfo.processInfo.systemUptime
+    private var replayFloor: UInt64 = 0
+    private let observation = SnapshotObservation<IndexReadinessSnapshot>()
+    private var mutationHandler: (@Sendable () -> Void)?
+    public let maintenanceScheduler: MaintenanceScheduler
     private var historyDone = false
     private var errorDescription: String?
     private var recoveryReason: String?
@@ -110,13 +118,17 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public init(root: String, configuration: APFSFindConfiguration = .init(),
                 excludedRoots: [String] = [], index: (any NamespaceIndex)? = nil,
                 identityProvider: @escaping @Sendable (String) throws -> VolumeIdentity = { try VolumeIdentity.discover(root: $0) },
-                fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() }) throws {
+                fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() },
+                maintenanceScheduler: MaintenanceScheduler = .shared,
+                replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)? = nil) throws {
         self.root = try PathCanonicalizer.canonicalRoot(root)
         self.index = index ?? FileIndex(root: self.root)
         self.configuration = configuration
         self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots + BulkScanner.maintenanceExclusions(root: self.root))
         self.identityProvider = identityProvider
         self.fenceProvider = fenceProvider
+        self.maintenanceScheduler = maintenanceScheduler
+        self.replayStarter = replayStarter
     }
     public var currentState: IndexState { stateLock.withLock { state } }
     public var installedSnapshotGeneration: UInt64? { stateLock.withLock { restoredGeneration } }
@@ -140,7 +152,16 @@ public final class UpdateCoordinator: @unchecked Sendable {
             if let error { errorDescription = error }
             return changed
         }
+        switch value {
+        case .live: setReadiness(.live)
+        case .replaying: setReadiness(.catchingUp)
+        case .dirty, .rebuilding: setReadiness(baseAvailable ? .rebuildingUsingOldBase : .scanning)
+        case .failed: setReadiness(.failed)
+        case .stopped: setReadiness(.stopped)
+        case .scanning: setReadiness(.scanning)
+        }
         if value == .live, transitioned {
+            metrics.set("time_to_live_ms", to: Int((ProcessInfo.processInfo.systemUptime - startupBegan) * 1000))
             if let started = initialReplayStarted, metrics.snapshot()["initial_replay_ms"] == nil {
                 metrics.set("initial_replay_ms", to: Int((ProcessInfo.processInfo.systemUptime - started) * 1000))
                 if let replayResources { metrics.recordResources("startup_replay", since: replayResources) }
@@ -149,6 +170,38 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
     }
 
+    public func markOpening() { startupBegan = ProcessInfo.processInfo.systemUptime; setReadiness(.opening) }
+    public func readinessSnapshot(startupMode: StartupMode? = nil) -> IndexReadinessSnapshot {
+        let status = startupStatus()
+        let current = stateLock.withLock { readiness }
+        let available = [.baseReady, .catchingUp, .live, .rebuildingUsingOldBase].contains(current)
+        return .init(state: current, searchAvailable: available, resultsMayBeStale: current != .live,
+                     startupMode: startupMode, indexedEntries: available ? index.stats().liveEntries : 0,
+                     replayReceived: status.receivedEvents, replayProcessed: status.processedEvents,
+                     replayPending: status.pendingEvents, error: status.lastError)
+    }
+    public func readinessStream() -> AsyncStream<IndexReadinessSnapshot> { observation.stream(initial: readinessSnapshot()) }
+    private func setReadiness(_ value: IndexReadiness) {
+        stateLock.withLock { readiness = value }
+        if value == .baseReady { metrics.set("search_ready_ms", to: Int((ProcessInfo.processInfo.systemUptime - startupBegan) * 1000)) }
+        observation.send(readinessSnapshot())
+    }
+    public func setMutationHandler(_ handler: @escaping @Sendable () -> Void) { writer.sync { mutationHandler = handler } }
+    public func search(_ request: SearchRequest) -> SearchResult {
+        let status = readinessSnapshot()
+        guard status.searchAvailable else { return .init(hits: [], latencyMilliseconds: 0, generation: index.stats().generation, freshness: status.freshness, cancelled: request.cancellation.isCancelled) }
+        let result = index.search(request)
+        return .init(hits: result.hits, latencyMilliseconds: result.latencyMilliseconds, generation: result.generation,
+                     freshness: status.freshness, cancelled: result.cancelled)
+    }
+    public func reconcileParent(of path: String) {
+        guard PathCanonicalizer.isWithin(path, root: root) else { return }
+        writer.async { [weak self] in
+            guard let self, let reconciler = self.reconciler, !self.cancellation.isCancelled else { return }
+            self.repairDirectories([PathCanonicalizer.parent(of: path)], into: self.index, using: reconciler, mayRebuild: true)
+            self.mutationHandler?()
+        }
+    }
     public func setBaseInstaller(_ handler: @escaping @Sendable (FileIndex, UInt64, VolumeIdentity) throws -> Void) {
         writer.sync { baseInstaller = handler }
     }
@@ -162,7 +215,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                       progress: (@Sendable (String) -> Void)? = nil) throws {
         let identity = try supplied ?? identityProvider(root)
         let e0 = cursor ?? fenceProvider(identity)
-        writer.sync { volumeIdentity = identity; lastProcessedEventID = e0; rootDevice = identity.deviceID }
+        writer.sync { volumeIdentity = identity; lastProcessedEventID = e0; replayFloor = e0; rootDevice = identity.deviceID }
+        metrics.set("replay_floor_event_id", to: Int(clamping: e0))
         if let restored {
             index.installSnapshot(restored)
             let generation = index.stats().generation
@@ -172,12 +226,16 @@ public final class UpdateCoordinator: @unchecked Sendable {
             index.apply(excludedRoots.map { .remove($0) })
             reconciler = DirectoryReconciler(scanner: makeScanner(), index: index,
                 rootDeviceID: rootDevice, metrics: metrics)
+            baseAvailable = true; setReadiness(.baseReady)
             setState(.replaying)
             initialReplayStarted = ProcessInfo.processInfo.systemUptime
             replayResources = .capture()
             try startWatcher(since: e0)
             return
         }
+        setReadiness(.scanning)
+        let lease = try maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .coldScan, priority: root == "/" ? 1 : 0, cancellation: cancellation)
+        defer { lease.release() }
         // Capture before any directory enumeration: replay closes the initial scan gap.
         progress?("[info] Initial scan: \(root) (\(configuration.workerCount) workers)")
         let progressQueue = DispatchQueue(label: "apfsfind.scan-progress")
@@ -217,9 +275,11 @@ public final class UpdateCoordinator: @unchecked Sendable {
             progress?(String(format: "[info] Scan complete: %d files, %d directories, %d unreadable; scan %.1f ms, index %.1f ms; replay from %llu",
                 s.files, s.directories, result.unreadableDirectories, result.elapsedMilliseconds,
                 (ProcessInfo.processInfo.systemUptime - buildStart) * 1000, e0))
+            baseAvailable = true; setReadiness(.baseReady)
             setState(.replaying)
             initialReplayStarted = ProcessInfo.processInfo.systemUptime
             replayResources = .capture()
+            lease.release()
             try startWatcher(since: e0)
             if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
         } catch {
@@ -246,6 +306,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     private func startWatcher(since id: UInt64) throws {
+        if let replayStarter {
+            try replayStarter(id, { [weak self] in self?.enqueue($0) }); return
+        }
         try watcher.start(root: root, since: id, latencyMilliseconds: configuration.latencyMilliseconds,
                           identity: volumeIdentity) { [weak self] events in
             self?.enqueue(events)
@@ -309,7 +372,33 @@ public final class UpdateCoordinator: @unchecked Sendable {
             metrics.record("queue_overflows")
             requestRebuild(invalidated: true, reason: "queue_overflow")
         }
-        if let reconciler { process(events, into: index, using: reconciler, countMetrics: true, mayRebuild: true) }
+        let before = index.stats().generation
+        let replaying = currentState == .replaying
+        let filtered = events.filter { event in
+            guard replaying else { return true }
+            metrics.record("replay_events_received")
+            let classification = EventClassifier.classify(event)
+            let ordinary: Bool
+            switch classification { case .simpleCreate, .simpleRemove, .contentOnly: ordinary = true
+            case .ambiguous:
+                let renameOnly = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile | kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemIsSymlink)
+                ordinary = event.flags & UInt32(kFSEventStreamEventFlagItemRenamed) != 0 && event.flags & ~renameOnly == 0
+            default: ordinary = false }
+            if ordinary, event.id > 0, event.id != UInt64.max, event.id <= replayFloor {
+                metrics.record("replay_overlap_events_skipped"); return false
+            }
+            metrics.record(ordinary ? "replay_events_applied" : "replay_special_events_applied")
+            return true
+        }
+        let counters = metrics.snapshot()
+        if let reconciler { process(filtered, into: index, using: reconciler, countMetrics: true, mayRebuild: true) }
+        if replaying {
+            let after = metrics.snapshot()
+            for (target, source) in [("replay_metadata_lookups", "namespace_metadata_lookups"), ("replay_directory_reconciles", "directory_reconciles"), ("replay_subtree_reconciles", "subtree_reconciles")] {
+                metrics.record(target, by: after[source, default: 0] - counters[source, default: 0])
+            }
+        }
+        if before != index.stats().generation { mutationHandler?() }
         // Include content-only IDs, but never advance a durable cursor ahead of
         // the namespace mutations corresponding to this batch.
         if let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
@@ -596,6 +685,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             guard let self else { return }
             let result = Result {
                 let identity = try self.identityProvider(self.root)
+                let lease = try self.maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .rebuild, cancellation: self.cancellation)
+                defer { lease.release() }
                 let e0 = self.fenceProvider(identity)
                 self.metrics.record("full_scans")
                 let scan = try self.makeScanner().scan(cancellation: self.cancellation)
@@ -643,6 +734,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 stateLock.withLock { historyDone = false }
                 volumeIdentity = scan.identity
                 lastProcessedEventID = scan.fence
+                replayFloor = scan.fence
                 setState(.replaying)
                 try startWatcher(since: scan.fence)
             } else { setState(stateLock.withLock { historyDone } ? .live : .replaying) }
