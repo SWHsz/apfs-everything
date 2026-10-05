@@ -165,6 +165,8 @@ stdout 最后一行为 JSON；进度输出 stderr。查询结果数量为最多 
 I/O 使用 `proc_pid_rusage` 实际计数，压缩内存使用 `TASK_VM_INFO`；SDK 未提供的 logical reads 不会估算。
 v2 的 folded-name 去重只统计潜在收益，不修改格式。卷根的系统 `.fseventsd` 事件日志排除在扫描和维护范围之外；
 用户普通目录下同名文件夹仍会索引。详细结果见 [STATUS.md](STATUS.md)。
+特殊节点（如 Unix socket）的通知随系统版本不同；macOS 15 CI 在观测窗口内没有交付其创建事件，
+不保证这类节点的自动实时维护，可用 `:rebuild` 重新扫描。
 
 可选挂载烟测（默认跳过，不需要 root）：
 ```bash

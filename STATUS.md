@@ -29,6 +29,10 @@ FSEvents 时间基准仍为目标 SDK 文档所写的 **1970**；没有改为 20
 实盘验证另外发现并修复：本机 Unix socket 创建给出 `0x8000 / ItemXattrMod`，没有 Created 或对象类型。
 原分类将其忽略，导致 fresh verify 的两个持久 missing。现仅对已知对象类型的内容标记使用 content-only；
 无类型元数据标记交给普通父目录 reconciliation。真实 bind/unlink 回归通过，文件内容写入仍不触发 namespace 工作。
+macOS 15 的 [诊断 CI](https://github.com/SWHsz/apfs-everything/actions/runs/37317045458)
+只记录到 HistoryDone 和 root Created，2 秒窗口内没有任何 socket 事件，entry=nil。
+因此不声称该平台会自动维护 socket：跨 SDK 回归改为真实 bind/unlink + 注入本机捕获的 XattrMod hint，
+验证分类和实际目录元数据；普通文件的九项 watcher 测试仍使用真实事件，integration/ASan 仍必需通过。
 测试使用 owned `/private/tmp` 短路径并检查 sockaddr_un 容量；初次测试路径过长的 setup 失败已修正。
 第一轮系统盘 raw verify 为 compaction 后 missing=4/extra=0、清理后 missing=2/extra=4，
 其余差异是活动 Codex cache / 临时文件；没有过滤或改写失败为通过，cache/workload 目录均已清理。

@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift test --filter SnapshotAtomicityTests
-      - run: APFSFIND_DEBUG_EVENTS=1 swift test --skip-build --filter LiveUpdateIntegrationTests
+      - run: swift test --skip-build --filter LiveUpdateIntegrationTests
       - run: swift test --skip-build --filter HybridRecoveryTests
       - run: swift test --skip-build --filter PersistentRecoveryTests
       - run: swift test --skip-build --filter HybridIndexTests
