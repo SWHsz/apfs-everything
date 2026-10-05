@@ -1,9 +1,36 @@
 name: macOS
 on: [push, pull_request]
 jobs:
-  test:
+  deterministic:
+    runs-on: macos-15
+    env:
+      APFSFIND_SKIP_FSEVENTS_TESTS: '1'
+      SWIFT_BACKTRACE: enable=yes
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version; sw_vers; xcodebuild -version
+      - run: swift build -c release
+      - run: swift test
+      - name: Crash reports
+        if: failure()
+        run: cat ~/Library/Logs/DiagnosticReports/*apfs* 2>/dev/null || true
+  integration:
+    runs-on: macos-15
+    env:
+      SWIFT_BACKTRACE: enable=yes
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --filter SnapshotAtomicityTests
+      - run: swift test --skip-build --filter LiveUpdateIntegrationTests
+      - run: swift test --skip-build --filter HybridRecoveryTests
+      - run: swift test --skip-build --filter PersistentRecoveryTests
+      - run: swift test --skip-build --filter HybridIndexTests
+      - run: swift test --skip-build
+      - name: Crash reports
+        if: failure()
+        run: cat ~/Library/Logs/DiagnosticReports/*apfs* 2>/dev/null || true
+  address-sanitizer:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - run: swift build -c release
-      - run: swift test
+      - run: swift test --sanitize=address
