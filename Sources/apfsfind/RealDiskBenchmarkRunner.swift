@@ -292,12 +292,15 @@ struct RealDiskBenchmarkRunner {
 
     private static func verification(_ c: PersistentIndexCoordinator) throws -> [String: Any] {
         var last: [String: Any] = [:]
+        var attempts: [[String: Any]] = []
         for attempt in 1...3 {
             guard c.core.flushEvents(timeout: 120) else { throw RealDiskBenchmarkError.failed("Verify flush") }
             let start = ProcessResourceSample.capture(), v = try c.verify()
             last = ["missing": v.missing.count, "extra": v.extra.count, "attempt": attempt,
                     "missing_sample": Array(v.missing.prefix(10)), "extra_sample": Array(v.extra.prefix(10)),
                     "resources": ProcessResourceSample.capture().delta(since: start)]
+            attempts.append(last)
+            last["attempts"] = attempts
             if v.isConsistent { return last }
         }
         // The entire root can change during a metadata scan. Preserve raw

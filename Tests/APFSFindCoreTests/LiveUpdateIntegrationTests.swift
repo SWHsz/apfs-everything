@@ -33,6 +33,9 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         XCTAssertEqual(bound, 0)
         guard bound == 0 else { return }
         waitFor("socket visible") { coordinator.index.entry(at: path)?.kind == .other }
+        if coordinator.index.entry(at: path)?.kind != .other {
+            print("[socket diagnostic] entry=\(String(describing: coordinator.index.entry(at: path))) metrics=\(coordinator.metrics.snapshot())")
+        }
         XCTAssertEqual(unlink(path), 0)
         waitFor("socket removed") { coordinator.index.entry(at: path) == nil }
         XCTAssertTrue(coordinator.flushEvents())
