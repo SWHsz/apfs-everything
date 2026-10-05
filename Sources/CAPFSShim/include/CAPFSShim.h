@@ -42,6 +42,21 @@ typedef struct APFSVolumeInfo {
 } APFSVolumeInfo;
 
 int apfs_volume_info(const char *root, APFSVolumeInfo *info);
+typedef struct APFSProcessResources {
+    uint64_t disk_bytes_read;
+    uint64_t disk_bytes_written;
+    uint64_t logical_bytes_written;
+    uint64_t physical_footprint;
+    uint64_t peak_physical_footprint;
+    uint64_t idle_wakeups;
+    uint64_t interrupt_wakeups;
+    uint64_t pageins;
+    uint64_t compressed_bytes;
+    uint64_t peak_compressed_bytes;
+    int memory_info_valid;
+} APFSProcessResources;
+/* Actual per-process counters from the SDK's rusage_info_v4, no estimates. */
+int apfs_process_resources(APFSProcessResources *output);
 /* Incremental IEEE CRC32, pass 0 for the first chunk. */
 uint32_t apfs_crc32(uint32_t previous, const void *bytes, size_t length);
 /* Component-wise O_NOFOLLOW cache directory walk. Creates only when requested. */

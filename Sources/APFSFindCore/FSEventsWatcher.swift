@@ -25,8 +25,9 @@ private final class EventCallbackBox: @unchecked Sendable {
 public final class FSEventsWatcher: @unchecked Sendable {
     private let lock = NSLock()
     private let callbackQueue = DispatchQueue(label: "apfsfind.fsevents")
+    private let callbackQueueKey = DispatchSpecificKey<Int>()
     private var stream: FSEventStreamRef?
-    public init() {}
+    public init() { callbackQueue.setSpecific(key: callbackQueueKey, value: 1) }
     public func start(root: String, since id: UInt64, latencyMilliseconds: Double,
                       identity supplied: VolumeIdentity? = nil,
                       handler: @escaping @Sendable ([FileSystemEvent]) -> Void) throws {
@@ -83,6 +84,11 @@ public final class FSEventsWatcher: @unchecked Sendable {
     }
 
     public func flush() {
+        // A callback cannot synchronously drain its own dispatch queue.
+        if DispatchQueue.getSpecific(key: callbackQueueKey) == 1 {
+            DispatchQueue.global(qos: .utility).async { self.flush() }
+            return
+        }
         lock.withLock {
             if let stream {
                 FSEventStreamFlushSync(stream)
@@ -93,6 +99,11 @@ public final class FSEventsWatcher: @unchecked Sendable {
         }
     }
     public func stop() {
+        // Complete callback-initiated shutdown after that callback returns.
+        if DispatchQueue.getSpecific(key: callbackQueueKey) == 1 {
+            DispatchQueue.global(qos: .utility).async { self.stop() }
+            return
+        }
         lock.withLock {
             guard let stream else { return }
             FSEventStreamStop(stream)

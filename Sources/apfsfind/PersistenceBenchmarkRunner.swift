@@ -109,7 +109,7 @@ struct PersistenceBenchmarkRunner {
             nextStats["startup_mode"] as? String == "warm_snapshot" && (nextStats["full_scans"] as? Int ?? 0) == 0
         next.stop(saveCheckpoint: false)
         let report: [String: Any] = [
-            "version": "0.3.0", "warm_fraction_of_cold":warmLiveMS/coldLiveMS, "warm_under_25_percent":warmLiveMS<coldLiveMS*0.25, "entries": entries, "cold_time_to_live_ms": coldLiveMS,
+            "version": "0.3.1", "warm_fraction_of_cold":warmLiveMS/coldLiveMS, "warm_under_25_percent":warmLiveMS<coldLiveMS*0.25, "entries": entries, "cold_time_to_live_ms": coldLiveMS,
             "cold": coldStats, "warm": warmStats, "warm_time_to_live_ms": warmLiveMS,
             "record_table_bytes": header.recordTableLength, "name_blob_bytes": header.nameBlobLength,
             "snapshot_bytes": header.fileLength, "bytes_per_entry": Double(header.fileLength) / Double(header.recordCount),

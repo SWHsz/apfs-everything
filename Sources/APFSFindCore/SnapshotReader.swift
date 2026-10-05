@@ -10,6 +10,7 @@ public final class SnapshotReader: @unchecked Sendable {
     public let loadMilliseconds: Double
     public let mmapMilliseconds: Double
     public let residentAfterMmap: UInt64
+    public internal(set) var openMilliseconds: Double = 0
     private let mapping: UnsafeMutableRawPointer?
     public private(set) var mappedBase: MMapBaseIndex?
     public var formatVersion: UInt32 { mappedBase == nil ? 1 : 2 }

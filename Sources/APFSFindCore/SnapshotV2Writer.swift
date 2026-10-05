@@ -50,9 +50,11 @@ public enum SnapshotV2Writer {
     store: SnapshotStore,
     cancellation: CancellationToken = .init(), beforePublish: @escaping () throws -> Void = {},
     fault: ((SnapshotFailurePoint) throws -> Void)? = nil,
-    install: ((MMapBaseIndex, [String: EntryRef], () throws -> Void) throws -> Void)? = nil
+    install: ((MMapBaseIndex, [String: EntryRef], () throws -> Void) throws -> Void)? = nil,
+    resourceMetrics: Metrics? = nil, resourceStage: String = "snapshot"
   ) throws -> SnapshotWriteResult {
     let started = ProcessInfo.processInfo.systemUptime
+    let resourceStart = ProcessResourceSample.capture()
     var peak = Metrics.processUsage().residentBytes
     var refs: [EntryRef] = []
     var records: [BaseRecord] = []
@@ -197,9 +199,13 @@ public enum SnapshotV2Writer {
         try beforePublish()
       }, fault: fault,
       validate: { fd in
+        resourceMetrics?.set(resourceStage + ".rss_before_mmap", to: Int(Metrics.processUsage().residentBytes))
         let b = try MMapBaseIndex(fileDescriptor: fd, identity: identity)
+        resourceMetrics?.set(resourceStage + ".rss_after_mmap", to: Int(b.residentAfterMmap))
+        resourceMetrics?.set(resourceStage + ".rss_after_validation", to: Int(b.residentAfterValidation))
         prepared = b
         directoryMap = b.directoryMap()
+        resourceMetrics?.set(resourceStage + ".rss_after_directory_map", to: Int(Metrics.processUsage().residentBytes))
         peak = max(peak, Metrics.processUsage().residentBytes)
       },
       commit: install.map { handler in
@@ -207,7 +213,8 @@ public enum SnapshotV2Writer {
           guard let base = prepared else { throw SnapshotError.invalid("no staged mapping") }
           try handler(base, directoryMap, publish)
         }
-      })
+      }, resourceMetrics: resourceMetrics, resourceStage: resourceStage)
+    resourceMetrics?.recordResources(resourceStage + ".total", since: resourceStart)
     return .init(
       header: h, durationMilliseconds: (ProcessInfo.processInfo.systemUptime - started) * 1000,
       peakResidentBytes: peak)

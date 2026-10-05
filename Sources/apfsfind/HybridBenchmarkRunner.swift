@@ -69,7 +69,7 @@ struct HybridBenchmarkRunner {
     let after = Metrics.processUsage().residentBytes
     base = nil
     var report: [String: Any] = [
-      "version": "0.3.0", "synthetic_base_entries": entries, "initial_write_ms": buildMS,
+      "version": "0.3.1", "synthetic_base_entries": entries, "initial_write_ms": buildMS,
       "base_bytes": initial.header.fileLength,
       "base_bytes_per_entry": Double(initial.header.fileLength) / Double(entries),
       "warm_load_ms": warmMS, "mmap_ms": map.mmapMilliseconds,

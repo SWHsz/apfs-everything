@@ -4,6 +4,19 @@ import XCTest
 @testable import APFSFindCore
 
 final class LiveUpdateIntegrationTests: XCTestCase {
+    func testStopRequestedInsideCallbackDoesNotSyncOntoItsOwnQueue() throws {
+        try requireFSEvents()
+        let tree = try TemporaryTree(), identity = try VolumeIdentity.discover(root: tree.root)
+        let watcher = FSEventsWatcher(), called = DispatchSemaphore(value: 0)
+        defer { watcher.stop() }
+        try watcher.start(root: tree.root, since: identity.currentEventID(), latencyMilliseconds: 1,
+                          identity: identity) { [weak watcher] _ in
+            watcher?.stop()
+            called.signal()
+        }
+        XCTAssertEqual(called.wait(timeout: .now() + 5), .success)
+        watcher.stop()
+    }
     func testWatcherImmediateTeardownDrainsCallbacksAndReleasesContext() throws {
         try requireFSEvents()
         let tree = try TemporaryTree()
@@ -89,6 +102,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())
         XCTAssertTrue(coordinator.flushEvents())
+        coordinator.measureContentEvents(at: tree.path("content"))
         let before = coordinator.index.stats(), metrics = coordinator.metrics.snapshot()
         let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: tree.path("content")))
         for _ in 0..<1000 { try handle.seek(toOffset: 0); try handle.write(contentsOf: Data([42])) }
@@ -104,6 +118,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.index.stats().generation, before.generation)
         XCTAssertEqual(coordinator.metrics.snapshot()["directory_reconciles", default: 0], metrics["directory_reconciles", default: 0])
         XCTAssertGreaterThan(coordinator.metrics.snapshot()["ignored_content_events", default: 0], metrics["ignored_content_events", default: 0])
+        XCTAssertGreaterThan(coordinator.metrics.snapshot()["content_probe_events", default: 0], metrics["content_probe_events", default: 0])
     }
 
     func testInjectedInvalidationRecoversWithoutBlockingQueries() throws {

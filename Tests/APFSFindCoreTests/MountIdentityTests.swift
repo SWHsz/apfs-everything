@@ -15,8 +15,14 @@ final class MountIdentityTests: XCTestCase {
         let normal = NamespaceEntry(path: path, kind: .directory, deviceID: 1, fileID: 7)
         let boundary = NamespaceEntry(path: path, kind: .directory, deviceID: 2, fileID: 7, isMountPoint: true)
         let child = NamespaceEntry(path: path + "/child", kind: .file, deviceID: 1, fileID: 8)
-        let index = FileIndex(root: root)
-        index.apply([.upsert(normal), .upsert(child)])
+        let ram = FileIndex(root: root)
+        ram.apply([.upsert(normal), .upsert(child)])
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(root: root, device: 1)
+        let store = try SnapshotStore(directory: cache.root, identity: identity)
+        _ = try SnapshotV2Writer.write(source: .ram(ram, ram.stats().generation), identity: identity,
+                                      generation: ram.stats().generation, cursor: 7, store: store)
+        let mapped = HybridIndex(base: try MMapBaseIndex(path: store.path, identity: identity))
+        for index: any NamespaceIndex in [ram, mapped] {
         func reconcile(_ directory: NamespaceEntry, _ descendants: [NamespaceEntry]) {
             let fixture = FixtureDirectoryReader(children: [root: [directory], path: descendants])
             let reconciler = DirectoryReconciler(scanner: fixture, index: index,
@@ -36,6 +42,7 @@ final class MountIdentityTests: XCTestCase {
         XCTAssertNotNil(index.entry(at: child.path))
         reconcile(boundary, [])
         reconcile(normal, [child])
+        }
     }
 
     func testMountFlagAndDeviceChangesAreIndependentIdentityChanges() {

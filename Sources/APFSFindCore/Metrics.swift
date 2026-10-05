@@ -46,6 +46,7 @@ public struct ProcessUsage: Sendable {
 public final class Metrics: @unchecked Sendable {
     private let lock = NSLock()
     private var counters: [String: Int] = [:]
+    private var resourceStages: [String: [String: Any]] = [:]
     public init() {}
     public func record(_ name: String, by value: Int = 1) {
         lock.withLock { counters[name, default: 0] += value }
@@ -55,6 +56,11 @@ public final class Metrics: @unchecked Sendable {
         lock.withLock { counters[name] = max(counters[name, default: 0], value) }
     }
     public func snapshot() -> [String: Int] { lock.withLock { counters } }
+    public func recordResources(_ stage: String, since before: ProcessResourceSample) {
+        let delta = ProcessResourceSample.capture().delta(since: before)
+        lock.withLock { resourceStages[stage] = delta }
+    }
+    public func resourceSnapshot() -> [String: [String: Any]] { lock.withLock { resourceStages } }
     public static func processUsage() -> ProcessUsage {
         var usage = rusage()
         let resourceOK = getrusage(RUSAGE_SELF, &usage) == 0

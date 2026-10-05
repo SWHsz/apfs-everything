@@ -69,6 +69,7 @@ enum CLI {
         var workers = 4
         var entries = 100_000
         var delta = 10_000
+        var idleSeconds = 60.0
         var ephemeral = false
         var rebuildIndex = false
         var cacheDirectory: String?
@@ -76,7 +77,7 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.3.0 — macOS filename search with snapshot recovery
+    apfsfind v0.3.1 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
@@ -84,6 +85,8 @@ enum CLI {
       apfsfind bench [--files 10000] [--latency-ms 20]
       apfsfind persistence-bench [--entries 100000] [--cache-dir PATH]
       apfsfind hybrid-bench [--entries 100000] [--delta 10000] [--cache-dir PATH]
+      apfsfind real-disk-bench --root PATH [--cache-dir /private/tmp/apfsfind-real-cache-UUID]
+                             [--idle-seconds 60]
 
     The default command is serve and the default root is $HOME.
     --latency-ms must be between 1 and 1000. No log files are saved.
@@ -93,7 +96,9 @@ enum CLI {
     Snapshots are written after cold startup, on changed exit, or during compaction.
     Compaction runs at thresholds or by :compact; :checkpoint may write only state.
     Startup waits for replay and recovery to finish; Ctrl+C cancels it.
-    Benchmark uses only a temporary directory created by this process.
+    Real-disk benchmark reads the requested root; mutations use a separate owned UUID directory.
+    Its cache is a new UUID child of /private/tmp and is cleaned up after both child processes exit.
+    Other benchmarks use only a temporary directory created by this process.
 
     Interactive commands: :stats  :verify  :rebuild  :checkpoint  :compact  :quit
     Ordinary text searches filenames, case-insensitively (up to 50 paths).
@@ -103,7 +108,7 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard ["serve", "bench", "persistence-bench", "hybrid-bench"].contains(first) else {
+            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
@@ -137,10 +142,15 @@ enum CLI {
                 guard options.command=="hybrid-bench",let n=Int(value),(1...100000).contains(n) else{throw CLIError.usage("--delta must be 1...100000 for hybrid-bench")}
                 options.delta=n
             case "--root":
-                guard options.command == "serve", !value.isEmpty else {
-                    throw CLIError.usage("--root is only accepted by serve; benchmark always owns its temporary directory.")
+                guard ["serve", "real-disk-bench"].contains(options.command), !value.isEmpty else {
+                    throw CLIError.usage("--root is accepted by serve and real-disk-bench.")
                 }
                 options.root = NSString(string: value).expandingTildeInPath
+            case "--idle-seconds":
+                guard options.command == "real-disk-bench", let n = Double(value), n.isFinite, (0...3600).contains(n) else {
+                    throw CLIError.usage("--idle-seconds requires 0...3600 for real-disk-bench.")
+                }
+                options.idleSeconds = n
             case "--latency-ms":
                 guard let number = Double(value), number.isFinite, (1...1000).contains(number) else {
                     throw CLIError.usage("--latency-ms must be a finite number in 1...1000.")
@@ -178,6 +188,9 @@ enum CLI {
             print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self))
             return 0
         }
+        if arguments.first == "_real-disk-worker" {
+            return try RealDiskBenchmarkRunner.worker(Array(arguments.dropFirst()))
+        }
         let options = try parse(arguments)
         if options.help { print(usage); return 0 }
         if options.command == "bench" {
@@ -189,6 +202,10 @@ enum CLI {
         }
         if options.command=="hybrid-bench" {
             return try HybridBenchmarkRunner(entries:options.entries,deltaCount:options.delta,cacheDirectory:options.cacheDirectory).run()
+        }
+        if options.command == "real-disk-bench" {
+            return try RealDiskBenchmarkRunner(root: options.root, cacheDirectory: options.cacheDirectory,
+                                               idleSeconds: options.idleSeconds).run()
         }
         return try serve(options)
     }

@@ -38,6 +38,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
   public let mmapMilliseconds: Double
   public let validationMilliseconds: Double
   public let residentAfterMmap: UInt64
+  public let residentAfterValidation: UInt64
   public let files: Int
   public let directories: Int
   private let fd: Int32
@@ -244,6 +245,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
       mmapMilliseconds = mapMS
       residentAfterMmap = rss
       validationMilliseconds = (ProcessInfo.processInfo.systemUptime - started) * 1000 - mapMS
+      residentAfterValidation = Metrics.processUsage().residentBytes
     } catch {
       munmap(pointer, size)
       close(fileDescriptor)
@@ -253,6 +255,30 @@ public final class MMapBaseIndex: @unchecked Sendable {
   deinit {
     munmap(address, length)
     close(fd)
+  }
+  /// Read mapped byte ranges directly: Unicode canonical equality is not byte
+  /// equality and would overestimate savings for decomposed basenames.
+  public func layoutStatistics() -> [String: Any] {
+    var sameCount = 0, sameBytes = 0, fileIDs = 0, directoryIDs = 0
+    for i in 0..<count {
+      let id = UInt32(i), r = record(at: id)
+      if r.fileID != 0 {
+        if r.kind == .file { fileIDs += 1 }
+        if r.kind == .directory { directoryIDs += 1 }
+      }
+      if i != 0, originalNameBytes(at: id).elementsEqual(foldedBytes(at: id)) {
+        sameCount += 1; sameBytes += Int(r.foldedLength)
+      }
+    }
+    let foldedLength: UInt64 = n(200, UInt64.self)
+    let childLength: UInt64 = n(216, UInt64.self)
+    return ["record_table_bytes": header.recordTableLength,
+      "child_table_bytes": childLength, "original_name_blob_bytes": header.nameBlobLength,
+      "folded_name_blob_bytes": foldedLength,
+      "folded_same_as_original_count": sameCount, "folded_same_as_original_bytes": sameBytes,
+      "potential_fold_dedup_saving_bytes": sameBytes,
+      "potential_fold_dedup_saving_ratio": Double(sameBytes) / Double(length),
+      "file_id_nonzero_files": fileIDs, "file_id_nonzero_directories": directoryIDs]
   }
   static func less(_ a: (String, String, UInt8), _ b: (String, String, UInt8)) -> Bool {
     if Array(a.0.utf8) != Array(b.0.utf8) { return a.0.utf8.lexicographicallyPrecedes(b.0.utf8) }

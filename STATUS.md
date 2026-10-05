@@ -1,3 +1,64 @@
+# v0.3.1 — 稳定性修复与真实磁盘验证
+
+本轮开始：2026-10-05，`main` / `35689d19553f768129fdec493cfd8fcd73c1cc9f`，工作区干净。
+仅在本机 Mac 执行；snapshot v2 的 256-byte header、40-byte record、name blobs、child table、footer 均保持原布局。
+
+## v0.3.1 稳定性修复
+
+CI 原失败：macOS 15.7.9 arm64 / Xcode 16.4，构建通过、测试 signal 11。
+诊断提交 `8c89167` 将确定性测试、真实 FSEvents 集成测试、ASan 分成三个必需任务。
+[诊断 CI](https://github.com/SWHsz/apfs-everything/actions/runs/37302501402) 在独立
+`SnapshotAtomicityTests` 中复现，ASan 明确报告 `SnapshotStore.normalizedDirectory` 的
+`readlink(alias, &bytes, bytes.count)` **stack-buffer-overflow / WRITE of size 11**。
+Xcode 16.4 的导入将 `&[UInt8]` 传给字符指针时指向数组值的栈存储，而非元素缓冲区；
+写入 `/private/var` 的字节破坏了相邻 Swift String。不是 FSEvents replay 超时或 mmap swap。
+本机 Xcode 27 的基线和 ASan 未复现，说明仅依赖本机成功不足以验收。
+
+- `2589b13`：使用 `[CChar].withUnsafeMutableBufferPointer` 显式传元素地址，新增 `/var`、`/tmp` 的 100 次别名回归。
+  [原失败环境修复后 CI](https://github.com/SWHsz/apfs-everything/actions/runs/37302955825)：三个任务全绿。
+- `5ccf6e8`：目录身份同时比较 kind、fileID、deviceID、isMountPoint；挂载时清理旧子树，卸载时重读实际子树。
+  C shim 元数据边界不变；新目录读取协议仅用于注入确定性 fixture。
+  FSEvents context 使用配对的 retain/release callback；stop/invalidate 后仍排空 callback queue，再 release。
+  新增 100 次 immediate stop/repeated stop 测试。mmap query 保留强引用到旧 base，原并发替换回归保持通过。
+  `cleanupTemps` 使用独立目录描述符，修复 `dup` 共享 EOF 导致重复清理遗漏；fdopendir 失败显式 close。
+  [生命周期修复 CI](https://github.com/SWHsz/apfs-everything/actions/runs/37303466053)：三个任务全绿。
+
+FSEvents 时间基准仍为目标 SDK 文档所写的 **1970**；没有改为 2001。
+完整原始 CI/ASan/TSan/benchmark 输出保存在本机 `/private/tmp`，不提交大量日志或私人索引。
+
+## v0.3.1 验证基线
+
+- 初始 release build：PASS；原 105 项测试全部通过。
+- 原 RAM benchmark：1,000 storm files / latency 20 ms；create/delete/same/cross rename p95：23.57 / 21.74 / 21.46 / 21.49 ms。
+  内容写入 10,000 次，generation 不变、0 reconciles；创建/删除风暴各 verify 0/0。
+- 修复前上述三个 suite 各 50 次：全部通过；没有把它当作 CI 崩溃已解决的证据。
+- 最终完整普通测试、ASan、TSan：各 121 项，1 个 opt-in mount smoke 默认跳过，0 failures。
+  ASan/TSan 均实际执行完整 suite；未通过 skip 环境变量规避原生 watcher。
+- 修复后的三个 suite 各 50 次：全部通过。
+- 新增进程 I/O API 成功/单调、state-only 写入远小于 full snapshot、ASCII/Unicode/NFD 字节统计、UUID 目录身份与清理拒绝测试。
+- 小目录端到端 real-disk-bench：PASS，三个独立进程，10k create / 2k rename / 5k delete，compaction 期间查询，清理与最终 verify 0/0。
+
+## v0.3.1 真实磁盘测量
+
+正在采集 `/` 与 `/Volumes/Data 1`；不重复相加 `/System/Volumes/Data`。
+每次使用新的 0700 `/private/tmp/apfsfind-real-cache-UUID`，变更只发生于单独 owned UUID 目录。
+清理核对规范父路径、精确 UUID、inode/device/type/owner/mode；不接受既有 cache 目录，不跟随 symlink。
+冷进程退出后才启动暖进程，空闲 60 秒；测试文件写入在其他进程执行，因此不混入索引进程的 I/O。
+
+实际资源 API：SDK 的 `proc_pid_rusage(..., RUSAGE_INFO_V4, ...)`：`ri_diskio_bytesread`、
+`ri_diskio_byteswritten`、`ri_logical_writes`、`ri_phys_footprint`、`ri_lifetime_max_phys_footprint`、wakeups/pageins。
+CPU/page faults/peak RSS 使用 getrusage，RSS 使用 mach_task_basic_info。
+压缩内存/历史峰值使用目标 SDK 的 TASK_VM_INFO；API 不可用则置 null。
+SDK v4 未提供 logical reads：JSON 明确置 null / unavailable。
+文件 length、st_blocks×512 与上述进程计数独立报告；没有把文件长度当作真实磁盘写入。
+`fsync_validate_publish` 包含 file fsync、只读 validation、directory map、rename 和目录 fsync；
+`serialization` 与该阶段不重叠，`.total` 为含 planning 的整体阶段，不与分项累加。
+文件系统 metadata overhead 未能从这些公开计数单独分离；没有伪造 SSD 底层写放大量。
+
+以下保留 v0.3 的原始验收与第一次体积测量。
+
+---
+
 # v0.2.1 hardening / v0.3.0 hybrid index
 
 本轮两个 milestone 已完成，本机正确性验收 PASS。日期：2026-10-05（Asia/Tokyo）。

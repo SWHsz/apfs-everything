@@ -78,9 +78,13 @@ public final class SnapshotStore: @unchecked Sendable {
     deinit { close(lockFD); close(directoryFD) }
 
     public func reader(expectedIdentity: VolumeIdentity) throws -> SnapshotReader {
+        let started = ProcessInfo.processInfo.systemUptime
         let fd = openat(directoryFD, filename, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        let openMS = (ProcessInfo.processInfo.systemUptime - started) * 1000
         guard fd >= 0 else { throw SnapshotError.io("open", errno) }
-        return try SnapshotReader(fileDescriptor: fd, expectedIdentity: expectedIdentity)
+        let reader = try SnapshotReader(fileDescriptor: fd, expectedIdentity: expectedIdentity)
+        reader.openMilliseconds = openMS
+        return reader
     }
 
     public var statePath: String { path + ".state" }
@@ -141,7 +145,8 @@ public final class SnapshotStore: @unchecked Sendable {
     func publish<T>(name: String? = nil, write: (Int32) throws -> T, beforePublish: () throws -> Void,
                     fault: ((SnapshotFailurePoint) throws -> Void)? = nil,
                     validate: ((Int32) throws -> Void)? = nil,
-                    commit: ((() throws -> Void) throws -> Void)? = nil) throws -> T {
+                    commit: ((() throws -> Void) throws -> Void)? = nil,
+                    resourceMetrics: Metrics? = nil, resourceStage: String = "snapshot") throws -> T {
         let final = name ?? filename
         guard final == filename || final == filename + ".state" else { throw SnapshotError.unsafePath(final) }
         guard activityLock.withLock({ if publishing { return false }; publishing = true; return true }) else {
@@ -160,7 +165,10 @@ public final class SnapshotStore: @unchecked Sendable {
         defer { if fd >= 0 { close(fd) } }
         do {
             guard fchmod(fd, 0o600) == 0 else { throw SnapshotError.io("chmod tmp", errno) }
+            let serializationStart = ProcessResourceSample.capture()
             let result = try write(fd)
+            resourceMetrics?.recordResources(resourceStage + ".serialization", since: serializationStart)
+            let publicationStart = ProcessResourceSample.capture()
             try fault?(.beforeFileSync)
             guard fsync(fd) == 0 else { throw SnapshotError.io("fsync tmp", errno) }
             let closing = close(fd); fd = -1
@@ -186,6 +194,7 @@ public final class SnapshotStore: @unchecked Sendable {
             if linkedBackup { _ = unlinkat(directoryFD, backup, 0) }
             }
             if let commit { try commit(publishFinal) } else { try publishFinal() }
+            resourceMetrics?.recordResources(resourceStage + ".fsync_validate_publish", since: publicationStart)
             return result
         } catch {
             if renamed {

@@ -54,6 +54,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var recoveryReason: String?
     private var restoredGeneration: UInt64?
     private var initialReplayStarted: TimeInterval?
+    private var replayResources: ProcessResourceSample?
+    private var contentProbePath: String?
     private let inboxLock = NSLock()
     private var inbox: [FileSystemEvent] = []
     private var inboxOverflow = false
@@ -86,7 +88,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         self.root = try PathCanonicalizer.canonicalRoot(root)
         self.index = index ?? FileIndex(root: self.root)
         self.configuration = configuration
-        self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots)
+        self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots + BulkScanner.maintenanceExclusions(root: self.root))
         self.identityProvider = identityProvider
         self.fenceProvider = fenceProvider
     }
@@ -115,6 +117,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if value == .live, transitioned {
             if let started = initialReplayStarted, metrics.snapshot()["initial_replay_ms"] == nil {
                 metrics.set("initial_replay_ms", to: Int((ProcessInfo.processInfo.systemUptime - started) * 1000))
+                if let replayResources { metrics.recordResources("startup_replay", since: replayResources) }
             }
             liveHandler?()
         }
@@ -138,10 +141,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
             index.installSnapshot(restored)
             let generation = index.stats().generation
             stateLock.withLock { restoredGeneration = generation }
+            // Upgrade exclusion policy without changing v2 or scanning files.
+            // Removing an existing excluded subtree is an ordinary RAM delta.
+            index.apply(excludedRoots.map { .remove($0) })
             reconciler = DirectoryReconciler(scanner: makeScanner(), index: index,
                 rootDeviceID: rootDevice, metrics: metrics)
             setState(.replaying)
             initialReplayStarted = ProcessInfo.processInfo.systemUptime
+            replayResources = .capture()
             try startWatcher(since: e0)
             return
         }
@@ -163,7 +170,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
         do {
             let scanner = makeScanner()
             metrics.record("full_scans")
+            let scanResources = ProcessResourceSample.capture()
             let result = try scanner.scan(cancellation: cancellation)
+            metrics.recordResources("initial_scan", since: scanResources)
             guard !cancellation.isCancelled, !result.cancelled else { setState(.stopped); return }
             metrics.set("initial_scan_ms", to: Int(result.elapsedMilliseconds))
             metrics.set("initial_index_building", to: 1)
@@ -184,6 +193,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 (ProcessInfo.processInfo.systemUptime - buildStart) * 1000, e0))
             setState(.replaying)
             initialReplayStarted = ProcessInfo.processInfo.systemUptime
+            replayResources = .capture()
             try startWatcher(since: e0)
             if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
         } catch {
@@ -323,6 +333,11 @@ public final class UpdateCoordinator: @unchecked Sendable {
         var namespace: [(FileSystemEvent, EventClassification)] = []
         for event in events {
             let classification = EventClassifier.classify(event)
+            let contentFlags = UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemInodeMetaMod |
+                kFSEventStreamEventFlagItemXattrMod | kFSEventStreamEventFlagItemFinderInfoMod | kFSEventStreamEventFlagItemChangeOwner)
+            if countMetrics, let contentProbePath, event.path == contentProbePath, event.flags & contentFlags != 0 {
+                metrics.record("content_probe_events")
+            }
             if debugEvents && countMetrics {
                 FileHandle.standardError.write(Data("[debug] flags=0x\(String(event.flags, radix: 16)) \(classification) \(event.path)\n".utf8))
             }
@@ -643,10 +658,17 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     public func synchronizeWriter() { writer.sync {} }
+    /// Opt-in benchmark counter for one owned fixture; no paths are logged.
+    public func measureContentEvents(at path: String?) {
+        writer.sync {
+            contentProbePath = path.flatMap { PathCanonicalizer.isWithin($0, root: root) ? PathCanonicalizer.normalize($0) : nil }
+        }
+    }
 
     public func stats() -> CoordinatorStats {
         let s = index.stats(), usage = Metrics.processUsage()
         var values: [String: Any] = metrics.snapshot()
+        values["excluded_roots"] = excludedRoots
         for key in ["fsevents_received", "fsevents_processed", "ignored_content_events", "direct_patches", "directory_reconciles",
                     "subtree_reconciles", "full_rebuilds", "full_scans", "dropped_invalidated_events", "event_queue_high_watermark", "last_batch_size"] {
             if values[key] == nil { values[key] = 0 }
@@ -700,6 +722,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 throw SnapshotError.busy
             }
             let id = UUID(); compactionID = id; compactionEvents = []; compactionOverflow = false
+            metrics.set("compaction_buffered_events", to: 0)
+            metrics.set("compaction_replayed_events", to: 0)
             return .init(id:id, snapshot:snapshot, checkpoint:.init(metadata:index.captureSnapshotMetadata(),
                 cursor:lastProcessedEventID, identity:volumeIdentity, epoch:persistenceEpoch))
         }

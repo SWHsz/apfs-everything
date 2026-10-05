@@ -43,7 +43,22 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         requestedRoot = root
         self.workerCount = min(16, max(1, workerCount))
         self.metrics = metrics
-        self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots)
+        self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots + Self.maintenanceExclusions(root: root))
+    }
+
+    public static func volumeJournalExclusions(root: String, mountPoint: String) -> [String] {
+        let journal = (mountPoint == "/" ? "" : mountPoint) + "/.fseventsd"
+        return PathCanonicalizer.isWithin(journal, root: root) ? [journal] : []
+    }
+    /// The service's own journal files are not a maintainable user namespace.
+    /// Scope the exclusion to the actual mount root, never a basename pattern.
+    public static func maintenanceExclusions(root: String) -> [String] {
+        var info = APFSVolumeInfo()
+        guard apfs_volume_info(root, &info) == 0 else { return [] }
+        let mount = withUnsafeBytes(of: info.mount_point) {
+            String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        return volumeJournalExclusions(root: root, mountPoint: mount)
     }
 
     private func applyThreadPolicy() {

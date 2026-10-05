@@ -96,6 +96,12 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     install(base: base)
   }
   public var mappedBase: MMapBaseIndex? { lock.withLock { base } }
+  public func resetWriterWaitMeasurements() {
+    lock.withLock {
+      writerWaits.removeAll(keepingCapacity: true); writerWaitSlot = 0; writerWaitMaximum = 0
+      metrics.set("writer_lock_wait_us", to: 0)
+    }
+  }
   public var transientIndex: FileIndex? { lock.withLock { bootstrap } }
   public func install(
     base: MMapBaseIndex, directoryMap: [String: EntryRef]? = nil, generation: UInt64? = nil

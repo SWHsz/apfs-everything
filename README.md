@@ -1,4 +1,4 @@
-# apfsfind v0.3.0
+# apfsfind v0.3.1
 
 macOS 本地文件名搜索 CLI，Swift 6 / macOS 14+，无第三方 package。
 首次用 `getattrlistbulk()` 扫描；后续从只读 mmap 基础索引恢复，通过 FSEvents 维护内存变化层。
@@ -147,3 +147,26 @@ best-effort 关闭线程级 dataless materialization，检查本地卷/autofs �
 无需 root，不访问 raw disk，不关闭 SIP，不建立网络连接，不写运行日志或 telemetry。
 本版单 root/单卷；TCC/权限排除继续计数，不绕过权限。macOS 14、Intel、真实 iCloud dataless、
 掉电耐久和真实 journal purge 未专项实机验证。不是 Everything 的完整克隆。
+
+## 真实磁盘验证
+
+```bash
+.build/release/apfsfind real-disk-bench --root / --idle-seconds 60
+.build/release/apfsfind real-disk-bench --root "/Volumes/Data 1" --idle-seconds 60
+```
+
+每次先退出冷启动进程，再启动新的暖启动进程。测量 60 秒空闲、六类查询的首查询与
+30 次分位数、实际进程 I/O、10k/2k/5k namespace workload 和大索引 compaction。
+stdout 最后一行为 JSON；进度输出 stderr。查询结果数量为最多 50 条的实际返回数量，并注明是否被上限截断。
+
+默认新建 `/private/tmp/apfsfind-real-cache-UUID`。可用 `--cache-dir` 指定符合该形式的**新路径**；
+现有目录会被拒绝，默认持久缓存不参与。测试变更仅在单独的 UUID 目录中，结束后清理两者。
+错误、清理失败或最终 verify 差异会返回非零。活动系统目录在 fresh scan 期间仍可能变化，原始差异会保留。
+I/O 使用 `proc_pid_rusage` 实际计数，压缩内存使用 `TASK_VM_INFO`；SDK 未提供的 logical reads 不会估算。
+v2 的 folded-name 去重只统计潜在收益，不修改格式。卷根的系统 `.fseventsd` 事件日志排除在扫描和维护范围之外；
+用户普通目录下同名文件夹仍会索引。详细结果见 [STATUS.md](STATUS.md)。
+
+可选挂载烟测（默认跳过，不需要 root）：
+```bash
+APFSFIND_RUN_MOUNT_TESTS=1 swift test --filter NativeMountSmokeTests
+```

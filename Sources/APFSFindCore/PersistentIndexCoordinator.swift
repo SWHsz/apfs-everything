@@ -40,7 +40,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private var durableCursor: UInt64 = 0
   private var snapshotLoadMS = 0.0, snapshotRestoreMS = 0.0, snapshotWriteMS = 0.0
   private var snapshotMmapMS = 0.0
+  private var snapshotOpenMS = 0.0
   private var rssBeforeLoad: UInt64 = 0, rssAfterMmap: UInt64 = 0, rssAfterRestore: UInt64 = 0
+  private var rssAfterValidation: UInt64 = 0, validationMS = 0.0
   private var checkpointPeakRSS: UInt64 = 0
   private var replayStarted: TimeInterval = 0
   private var warmReplayMS = 0.0, warmReplayEvents = 0, replayReceivedBaseline = 0
@@ -90,7 +92,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           install: { base, map, publish in
             try publish()
             hybrid.install(base: base, directoryMap: map)
-          })
+          }, resourceMetrics: self.metrics, resourceStage: "initial_snapshot")
         self.recordSnapshot(result, cache: cache, identity: identity)
       }
     }
@@ -132,8 +134,11 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
             snapshotHeader = reader.header
             snapshotLoadMS = loadMS
             snapshotMmapMS = reader.mmapMilliseconds
+            snapshotOpenMS = reader.openMilliseconds
             snapshotRestoreMS = restoreMS
             rssAfterMmap = reader.residentAfterMmap
+            rssAfterValidation = base.residentAfterValidation
+            validationMS = base.validationMilliseconds
             rssAfterRestore = afterRestore
             mode = .warmSnapshot
             automaticCheckpointNeeded = false
@@ -181,6 +186,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       let timer = DispatchSource.makeTimerSource(queue: queue)
       timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
       timer.setEventHandler { [weak self] in
+        self?.metrics.record("compaction_timer_wakeups")
         guard let self, self.currentState == .live, let h = self.index as? HybridIndex else {
           return
         }
@@ -273,6 +279,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       {
         let advanced = lock.withLock { capture.cursor > durableCursor }
         if advanced {
+          let stateResources = ProcessResourceSample.capture()
           try cache.writeState(
             header: h, cursor: capture.cursor,
             beforePublish: { [core] in try core.validateCheckpoint(capture) })
@@ -281,6 +288,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
             stateValid = true
           }
           metrics.record("state_checkpoints")
+          metrics.recordResources("state_checkpoint", since: stateResources)
         }
         return
       }
@@ -299,7 +307,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           fault: compactionFault,
           install: { [core] base, map, publish in
             try core.finishCompaction(ticket, base: base, directories: map, publish: publish)
-          })
+          }, resourceMetrics: metrics, resourceStage: "full_compaction")
         metrics.record("compactions")
         metrics.set("compaction_ms", to: Int(result.durationMilliseconds))
         metrics.set("compaction_bytes_written", to: Int(result.header.fileLength))
@@ -310,7 +318,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           cancellation: checkpointCancellation,
           install: { [core] base, map, publish in
             try core.installRecoveredBase(capture, base: base, map: map, publish: publish)
-          })
+          }, resourceMetrics: metrics, resourceStage: "recovery_snapshot")
       } else {
         throw SnapshotError.invalid("persistent runtime is not hybrid")
       }
@@ -430,6 +438,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         "snapshot_format_version": snapshotHeader == nil ? 0 : 2,
         "snapshot_load_ms": snapshotLoadMS,
         "snapshot_mmap_ms": snapshotMmapMS, "snapshot_restore_ms": snapshotRestoreMS,
+        "snapshot_open_ms": snapshotOpenMS,
+        "snapshot_validation_ms": validationMS, "rss_after_validation": rssAfterValidation,
         "snapshot_write_ms": snapshotWriteMS,
         "last_checkpoint_generation": lastCheckpointGeneration ?? 0,
         "volume_uuid": identity?.volumeUUID.uuidString ?? "",
@@ -447,6 +457,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       return v
     }
     values.merge(snapshot, uniquingKeysWith: { _, new in new })
+    values["resource_stages"] = metrics.resourceSnapshot()
     if let hybrid = index as? HybridIndex {
       values.merge(hybrid.hybridStats(), uniquingKeysWith: { _, new in new })
     }
