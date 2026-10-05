@@ -12,6 +12,16 @@ final class SnapshotAtomicityTests: XCTestCase {
                            "/private/tmp/apfsfind-alias-probe")
         }
     }
+    func testRepeatedCleanupStartsAtDirectoryBeginning() throws {
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity()
+        let store = try SnapshotStore(directory: cache.root, identity: identity)
+        for i in 0..<3 {
+            let stale = store.path + ".stale-\(i).tmp"
+            try Data([1]).write(to: URL(fileURLWithPath: stale))
+            _ = try SnapshotWriter.write(index: sampleSnapshotIndex(), identity: identity, cursor: 7, store: store)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: stale))
+        }
+    }
     func testFailuresBeforeAndAfterRenameKeepOldValidSnapshot() throws {
         let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = sampleSnapshotIndex()
         let store = try SnapshotStore(directory: cache.root, identity: identity)

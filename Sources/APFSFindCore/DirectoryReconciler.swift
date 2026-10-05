@@ -40,12 +40,12 @@ public final class DirectoryReconciler {
         }
     }
 
-    private let scanner: BulkScanner
+    private let scanner: any DirectoryReading
     private let index: any NamespaceIndex
     private let metrics: Metrics
     private let rootDeviceID: UInt64
     private var stamps: [String: DirectoryStamp] = [:]
-    public init(scanner: BulkScanner, index: any NamespaceIndex, rootDeviceID: UInt64, metrics: Metrics) {
+    public init(scanner: any DirectoryReading, index: any NamespaceIndex, rootDeviceID: UInt64, metrics: Metrics) {
         self.scanner = scanner; self.index = index
         self.rootDeviceID = rootDeviceID; self.metrics = metrics
     }
@@ -85,7 +85,7 @@ public final class DirectoryReconciler {
                 let old = Dictionary(existing.map { ($0.path, $0) }, uniquingKeysWith: { _, b in b })
                 for child in actual where BulkScanner.shouldTraverse(entry: child, rootDeviceID: rootDeviceID) {
                     // New/type-replaced directories can already contain a complete tree.
-                    let replaced = old[child.path]?.kind != .directory || old[child.path]?.fileID != child.fileID
+                    let replaced = old[child.path]?.hasSameDirectoryIdentity(as: child) != true
                     if subtree || work.reset || replaced {
                         pending.append((child.path, work.reset || replaced))
                     }

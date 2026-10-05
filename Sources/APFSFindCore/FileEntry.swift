@@ -12,6 +12,13 @@ public struct NamespaceEntry: Sendable, Equatable {
   public var fileID: UInt64?
   public var isMountPoint: Bool
 
+  /// A directory inode is only meaningful on its device. Mount flags also
+  /// change traversal eligibility even when both inode numbers are identical.
+  public func hasSameDirectoryIdentity(as other: NamespaceEntry) -> Bool {
+    kind == .directory && other.kind == .directory && fileID == other.fileID
+      && deviceID == other.deviceID && isMountPoint == other.isMountPoint
+  }
+
   public init(
     path: String, kind: EntryKind, deviceID: UInt64 = 0, fileID: UInt64? = nil,
     isMountPoint: Bool = false

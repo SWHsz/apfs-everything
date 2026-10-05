@@ -109,7 +109,11 @@ public final class SnapshotStore: @unchecked Sendable {
     }
 
     private func cleanupTemps() {
-        guard let stream = fdopendir(dup(directoryFD)) else { return }
+        // dup shares a directory offset with directoryFD: later cleanup would
+        // resume at EOF. Open a separate description and close it on failure.
+        let fd = openat(directoryFD, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        guard fd >= 0 else { return }
+        guard let stream = fdopendir(fd) else { close(fd); return }
         defer { closedir(stream) }
         while let record = readdir(stream) {
             let name = withUnsafeBytes(of: record.pointee.d_name) {

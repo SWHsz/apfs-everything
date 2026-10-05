@@ -28,7 +28,12 @@ public struct ScannerError: Error, CustomStringConvertible, Sendable {
 }
 
 /// Metadata-only bulk scanner. Worker state is independent of the online index.
-public final class BulkScanner: @unchecked Sendable {
+public protocol DirectoryReading {
+    func readDirectory(_ path: String, rootDeviceID: UInt64,
+                       cancellation: CancellationToken) throws -> [NamespaceEntry]
+}
+
+public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     private let requestedRoot: String
     public let workerCount: Int
     private let metrics: Metrics

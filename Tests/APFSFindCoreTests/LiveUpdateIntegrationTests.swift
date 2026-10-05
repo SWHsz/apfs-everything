@@ -4,6 +4,19 @@ import XCTest
 @testable import APFSFindCore
 
 final class LiveUpdateIntegrationTests: XCTestCase {
+    func testWatcherImmediateTeardownDrainsCallbacksAndReleasesContext() throws {
+        try requireFSEvents()
+        let tree = try TemporaryTree()
+        let identity = try VolumeIdentity.discover(root: tree.root)
+        for i in 0..<100 {
+            let watcher = FSEventsWatcher()
+            try watcher.start(root: tree.root, since: identity.currentEventID(),
+                              latencyMilliseconds: 1, identity: identity) { _ in }
+            try tree.file("teardown-\(i)")
+            watcher.stop()
+            watcher.stop()
+        }
+    }
     func testInitialCreateDeleteAndBothRenameForms() throws {
         try requireFSEvents()
         let tree = try TemporaryTree()

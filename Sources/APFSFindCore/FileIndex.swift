@@ -262,9 +262,7 @@ public final class FileIndex: @unchecked Sendable {
             let existing = storage.entries[Int(id)]
             guard existing.isDeleted || existing.namespaceEntry != entry else { return false }
             let directoryReplaced = existing.kind == .directory && entry.kind == .directory &&
-                ((existing.fileID != nil && entry.fileID != nil && existing.fileID != entry.fileID) ||
-                 (existing.deviceID != 0 && entry.deviceID != 0 && existing.deviceID != entry.deviceID) ||
-                 (!existing.isMountPoint && entry.isMountPoint))
+                !existing.namespaceEntry.hasSameDirectoryIdentity(as: entry)
             if existing.kind == .directory, entry.kind != .directory || directoryReplaced {
                 for childID in storage.childrenByParent[id] ?? [] {
                     _ = tombstoneSubtree(childID)

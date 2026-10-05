@@ -33,8 +33,13 @@ public final class FSEventsWatcher: @unchecked Sendable {
         try lock.withLock {
             guard stream == nil else { return }
             let identity = try supplied ?? VolumeIdentity.discover(root: root)
-            let box = Unmanaged.passRetained(EventCallbackBox(identity: identity, handler))
-            var context = FSEventStreamContext(version: 0, info: box.toOpaque(), retain: nil,
+            let box = EventCallbackBox(identity: identity, handler)
+            var context = FSEventStreamContext(version: 0,
+                info: Unmanaged.passUnretained(box).toOpaque(),
+                retain: { pointer in
+                    guard let pointer else { return nil }
+                    return UnsafeRawPointer(Unmanaged<EventCallbackBox>.fromOpaque(pointer).retain().toOpaque())
+                },
                 release: { pointer in
                     if let pointer { Unmanaged<EventCallbackBox>.fromOpaque(pointer).release() }
                 }, copyDescription: nil)
@@ -65,7 +70,6 @@ public final class FSEventsWatcher: @unchecked Sendable {
             guard let created = FSEventStreamCreateRelativeToDevice(nil, callback, &context,
                     dev_t(truncatingIfNeeded: identity.deviceID), [identity.relativeRoot] as CFArray,
                     id, latencyMilliseconds / 1000, options) else {
-                box.release()
                 throw WatcherError.cannotCreate
             }
             FSEventStreamSetDispatchQueue(created, callbackQueue)
