@@ -29,10 +29,15 @@ public final class SnapshotStore: @unchecked Sendable {
             if normalized == alias || normalized.hasPrefix(alias + "/") {
                 var info = stat()
                 if lstat(alias, &info) == 0, info.st_uid == 0, info.st_mode & S_IFMT == S_IFLNK {
-                    var bytes = [UInt8](repeating: 0, count: Int(PATH_MAX))
-                    let count = readlink(alias, &bytes, bytes.count)
+                    // readlink's char* import differs between SDKs. Passing
+                    // &Array to an untyped pointer can address the Array value,
+                    // rather than its elements (ASan caught this on Xcode 16.4).
+                    var bytes = [CChar](repeating: 0, count: Int(PATH_MAX))
+                    let count = bytes.withUnsafeMutableBufferPointer {
+                        readlink(alias, $0.baseAddress, $0.count)
+                    }
                     if count > 0 {
-                        let target = String(decoding: bytes.prefix(count), as: UTF8.self)
+                        let target = String(decoding: bytes.prefix(count).map { UInt8(bitPattern: $0) }, as: UTF8.self)
                         guard target == destination || "/" + target == destination else { throw SnapshotError.unsafePath(alias) }
                         normalized = destination + String(normalized.dropFirst(alias.count))
                     }

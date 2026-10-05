@@ -4,6 +4,14 @@ import XCTest
 @testable import APFSFindCore
 
 final class SnapshotAtomicityTests: XCTestCase {
+    func testOSAliasReadlinkUsesElementBufferAcrossSDKs() throws {
+        for _ in 0..<100 {
+            XCTAssertEqual(try SnapshotStore.normalizedDirectory("/var/apfsfind-alias-probe"),
+                           "/private/var/apfsfind-alias-probe")
+            XCTAssertEqual(try SnapshotStore.normalizedDirectory("/tmp/apfsfind-alias-probe"),
+                           "/private/tmp/apfsfind-alias-probe")
+        }
+    }
     func testFailuresBeforeAndAfterRenameKeepOldValidSnapshot() throws {
         let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = sampleSnapshotIndex()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
