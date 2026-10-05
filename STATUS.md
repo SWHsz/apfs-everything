@@ -1,153 +1,221 @@
-# Sprint 1 / v0.1.0
+# Sprint 2 / v0.2.0
 
-状态：可运行的纵向切片已完成，provisional acceptance **PASS**。
+状态：required path 已实现，当前本机 provisional acceptance **PASS**。验证日期 2026-10-05（Asia/Tokyo）。执行环境：本地 arm64 macOS 27.0.1、Swift 6.4、SDK 27.0；deployment target 保持 macOS 14，Swift language mode 6。未使用 HPC。
 
-验证日期：2026-10-05（Asia/Tokyo）。本机为 arm64 macOS 27.0.1，Swift 6.4，macOS SDK 27.0；package deployment target 为 macOS 14，Swift language mode 为 6。未使用 HPC。
+## Baseline
 
-## 已完成
+开始修改前 HEAD：bd63cbc3ea9e610441135f691fa5211fa2af5efd。
 
-- Swift Package：Core Library、C shim、CLI executable、测试 target；无第三方依赖。
-- `getattrlistbulk()` 全量扫描，安全 packed buffer 解析、基础类型/device/file ID、4 worker 默认配置、取消、权限和 race 计数。
-- 本地 root metadata-only 解析；同设备、mount/autofs、symlink 和 dataless 目录边界；不打开文件内容或 raw disk。
-- 内存文件名和完整路径索引、parent/children、tombstone、generation、Unicode 大小写折叠及 exact/prefix/substring 排序。
-- 扫描前捕获 E0，扫描后 FSEvents replay，收到并处理 HistoryDone 后进入 live。
-- callback 仅复制信息入队；串行 writer + 5 ms microbatch；查询用 pthread rwlock 并发读。
-- create/remove 快速 patch；rename/compound 目录 diff；新目录子树扫描、删除目录子树 tombstone、类型和 inode 替换处理。
-- content-only 无索引修改、stat 或 enumerate；兼容系统把旧 Created 标志合并到后续 Modified 的行为。
-- 目录纳秒 mtime gate；显式 namespace 变化绕过 gate，gate skip 后安排一次强制复查。
-- 风暴按 parent 聚合、去重、祖先合并；平面风暴只读取直接 children。过多 dirty roots/掉事件触发后台独立索引 rebuild 和短锁交换。
-- rebuild 期间缓存事件并在交换前应用，失效时从 rebuild E0 重开 stream；30 s 最短间隔、指数退避、默认 8 次失败暂停自动重试，`:rebuild` 可解除暂停。
-- `serve`、交互搜索、`:stats`、`:verify`、`:rebuild`、`:quit` 和 Ctrl+C 停止。
-- 临时目录 benchmark、真实可见延迟分布、CPU/RSS、namespace 工作量、fresh scan verify、最后一行 JSON 和退出码。
-- 运行期不保存 index、snapshot、WAL 或日志；只输出 stdout/stderr。SPM 的 `.build` 是编译产物。
+实际执行原有基线：
 
-## 实际结构
+| 检查 | 结果 |
+| --- | --- |
+| swift build -c release | PASS，无 warning |
+| swift test | 60 tests，0 failures，0 skipped，约 2.60 s |
+| bench --files 1000 --latency-ms 20 | PASS，全部 0 timeout，verify 0/0，cleanup 成功 |
 
-```text
-Package.swift
-.gitignore
-README.md
-STATUS.md
-Sources/
-  CAPFSShim/
-    include/CAPFSShim.h
-    BulkDirectoryReader.c
-    IOPolicy.c
-  APFSFindCore/
-    FileEntry.swift
-    FileIndex.swift
-    BulkScanner.swift
-    FSEventsWatcher.swift
-    EventClassifier.swift
-    DirectoryReconciler.swift
-    UpdateCoordinator.swift
-    PathCanonicalizer.swift
-    Metrics.swift
-    RWLock.swift
-  apfsfind/
-    main.swift
-    CLI.swift
-    BenchmarkRunner.swift
-Tests/APFSFindCoreTests/
-  FileIndexTests.swift
-  PathCanonicalizerTests.swift
-  BulkScannerTests.swift
-  CShimSafetyTests.swift
-  EventClassifierTests.swift
-  ReconcilerTests.swift
-  CoordinatorBatchTests.swift
-  LiveUpdateIntegrationTests.swift
-  BurstIntegrationTests.swift
-  TestSupport.swift
-```
+基线 create/delete/同目录 rename/跨目录 rename p95：21.37 / 21.09 / 21.33 / 22.36 ms。内容写入 10000 次：loop 26.53 ms，总 44.31 ms，实际忽略 1 个合并事件，无 namespace 工作。1000 文件 create/delete storm：102.84 / 101.65 ms。
 
-## 关键决策
+## 完成内容与修改文件
 
-1. 保存完整 path 和简单映射，搜索线性扫描；优先保证维护行为可验证。重复 subtree remove 可立即返回，重建负责回收 tombstone。
-2. 一次事件 microbatch 的主 diff 用一次 mutation write lock；目录 I/O 在锁外，消失目录的父级修复另用短锁。后台扫描及独立索引构建都在 builder 上完成，writer 继续接收事件，读取仍访问旧索引。初始及替代索引按 4096 条目分块构建，以响应取消。
-3. dirty scope 的 diff 优先于该 scope 内的 direct patch。避免 stale create/remove、父目录删除与子项创建在同一 batch 中留下 ghost。
-4. 目录 file ID 改变会重置旧子树；重读时重新插入该 scope 全部实际 descendants，包括 inode 幸存的子项。
-5. 不配对 rename。由实际目录状态解决事件顺序、重复和 compound flags。
-6. FSEvents 使用 FileEvents、NoDefer、UseCFTypes、WatchRoot，并加 FullHistory 覆盖首个历史 chunk 边界；允许重叠事件，不使用 IgnoreSelf。
-7. **目前只有进程内 host-level event ID**。per-device stream、FSEvents UUID、持久 cursor 都留到下一 sprint，不支持跨重启恢复。
-8. dataless I/O policy 采用编译期 best-effort；目录元数据的 dataless 标志提供额外跳过保护。本机 dataless thread policy 设置成功；可选 automount I/O policy 在当前 kernel 返回 EINVAL，安全退回缓存 mount/trigger 检查，不把它误计为 dataless 失败。
-9. benchmark 仅使用独占 system temporary 子目录；删除前检查 canonical parent、精确 UUID 名称和目录类型。成功清理纳入 acceptance，stdout JSON 不写结果文件。
+Package.swift 的三个生产 target 和测试 target 保持不变，无第三方依赖。
 
-## 构建和测试结果
+| 文件 | 变更 |
+| --- | --- |
+| Sources/CAPFSShim/include/CAPFSShim.h | volume metadata、CRC32、安全 cache directory 接口 |
+| Sources/CAPFSShim/VolumeIdentity.c | root device/inode、volume UUID、mount point；openat/no-follow cache 创建 |
+| Sources/CAPFSShim/CRC32.c | pthread_once CRC32 IEEE 表，流式累积 |
+| Sources/APFSFindCore/VolumeIdentity.swift | 卷身份、history UUID、device fence、相对路径/绝对 alias 转换 |
+| Sources/APFSFindCore/SnapshotFormat.swift | v1 explicit endian/layout/错误/export metadata |
+| Sources/APFSFindCore/SnapshotReader.swift | 一次 mmap，校验完整格式和身份 |
+| Sources/APFSFindCore/SnapshotWriter.swift | compact ID remap、4096 分块、流式 CRC/写入、G 检查 |
+| Sources/APFSFindCore/SnapshotStore.swift | SHA256 key、0700/0600、advisory lock、原子发布与 tmp cleanup |
+| Sources/APFSFindCore/FileIndex.swift | canonical export order、短锁 chunk、预分配 bulk restore、初始 G 发布 |
+| Sources/APFSFindCore/BulkScanner.swift | 排除本工具 cache 子树 |
+| Sources/APFSFindCore/FSEventsWatcher.swift | per-device stream 与 callback 路径转换、dispatch flush barrier |
+| Sources/APFSFindCore/UpdateCoordinator.swift | warm 安装、writer-confined cursor、G/C/V barrier、rebuild E0/replay |
+| Sources/APFSFindCore/PersistentIndexCoordinator.swift | 默认持久化、cold/warm/fallback、异步/退出 checkpoint、stats |
+| Sources/apfsfind/CLI.swift | v0.2、ephemeral/rebuild/cache、:checkpoint、可取消正常退出 |
+| Sources/apfsfind/BenchmarkRunner.swift | 保留原 RAM benchmark，v0.2 输出，复用安全临时目录所有权 |
+| Sources/apfsfind/PersistenceBenchmarkRunner.swift | 100k cold/warm/RSS/size/verify/online/exit benchmark |
+| Tests/APFSFindCoreTests/LiveUpdateIntegrationTests.swift | 保留原断言，等待实际已处理 content event |
+| Tests/APFSFindCoreTests/PerDeviceWatcherTests.swift | SDK 原生 relative-to-device probe |
+| Tests/APFSFindCoreTests/SnapshotTestSupport.swift | 独占 fixture 与可重新计算 CRC 的 corruption helpers |
+| Tests/APFSFindCoreTests/SnapshotFormatTests.swift | CRC 向量/分块、little-endian、整数溢出 |
+| Tests/APFSFindCoreTests/SnapshotRoundTripTests.swift | 最小、Unicode、deep、symlink、compaction、deterministic、100k |
+| Tests/APFSFindCoreTests/SnapshotCorruptionTests.swift | 恶意 header/record/blob、identity、type/mode 拒绝 |
+| Tests/APFSFindCoreTests/SnapshotAtomicityTests.swift | fault、取消、并发 publisher、stale tmp、symlink、权限 |
+| Tests/APFSFindCoreTests/PersistentRecoveryTests.swift | offline/crash-like/warm/fallback/no online writes/G/C/ephemeral |
+| README.md、STATUS.md | 使用、架构、格式、实測与限制 |
 
-实际执行，退出码均为 0：
+## Snapshot format v1
 
-```bash
+所有整数 little-endian，不写 Swift/C struct 内存布局。文件结构：
+
+~~~text
+192-byte header
+canonical root UTF-8 bytes（无 NUL）
+zero padding，record table 对齐至 8 bytes
+N × 24-byte records
+contiguous UTF-8 basename blob（无 NUL）
+~~~
+
+Header：
+
+| offset | bytes | 字段 |
+| ---: | ---: | --- |
+| 0 | 8 | magic APFSIDX + NUL |
+| 8 | 4 | version = 1 |
+| 12 | 4 | header size = 192 |
+| 16 | 4 | flags = 0 |
+| 20 | 4 | record size = 24 |
+| 24 | 8 | record count |
+| 32 / 40 | 8 each | record table offset / length |
+| 48 / 56 | 8 each | name blob offset / length |
+| 64 / 72 | 8 each | root path offset (=192) / length |
+| 80 | 8 | creation Unix seconds |
+| 88 | 8 | index generation G |
+| 96 | 8 | last successfully processed per-device event ID C |
+| 104 | 8 | root device ID |
+| 112 | 16 | volume UUID bytes |
+| 128 | 16 | FSEvents history UUID bytes |
+| 144 | 4 | CRC32 of bytes [192, EOF) |
+| 148 | 4 | CRC32 of header，hash 时该字段置零 |
+| 152 | 8 | exact file length |
+| 160 | 8 | root inode/file ID |
+| 168 | 24 | reserved zero |
+
+Record：
+
+| offset | bytes | 字段 |
+| ---: | ---: | --- |
+| 0 | 4 | compact parent ID |
+| 4 | 4 | basename offset relative to blob |
+| 8 | 2 | UTF-8 basename byte length |
+| 10 | 1 | kind：file=1、directory=2、symlink=3、other=4 |
+| 11 | 1 | flags：bit 0 = mount/device traversal boundary |
+| 12 | 4 | reserved zero |
+| 16 | 8 | file ID，0 = unknown |
+
+record ID 是 ordinal，连续 0...N-1；root 为 0，parent=UInt32.max、name length=0、directory、flags=0。其他 parent 必须先于 child，必须是可遍历 directory。device 由 header 提供；不同 device 的条目记录 boundary bit，恢复后仍不允许递归进入。导出以 raw UTF-8 basename 排序的 DFS 形成确定顺序，payload 不受原 RAM ID/插入顺序影响；header 的时间、G、C 可不同。
+
+限制：20,000,000 records，8 GiB 文件，name blob ≤ UInt32.max，basename ≤ NAME_MAX，恢复路径 < PATH_MAX。检查 checked arithmetic、canonical section 边界、连续 name offsets、有效 UTF-8、禁止 slash/NUL/dot/dotdot、合法 kind/flags、CRC、owner/type/mode。拒绝 UInt64.max cursor（SinceNow）和 generation，避免恶意 sentinel 静默跳过 replay。duplicate path 在 bulk restore 私有构建阶段拒绝，失败内容不发布。
+
+snapshot 不含 tombstone、foldedName、重复 full paths、Swift object metadata、hash table、JSON keys 或查询缓存。root bytes 是唯一完整路径。
+
+## Identity、per-device probe 与 cursor
+
+实现前阅读当前 SDK FSEvents.h。原生 probe 使用临时子目录，不经过产品 callback 转换。实测 Data volume mount 为 /System/Volumes/Data；临时 canonical root 位于 /private/var/folders/...；relativeRoot 为 private/var/folders/...（无开头 /）；原生 callback 同样无开头 /。
+
+SDK 的 volume root watch path 为 empty string。Data firmlink alias 不在 f_mntonname 字面前缀下时，先验证 mount+absoluteAlias 的 device/inode 与 root 相同，再采用该 alias 的相对 components；不会凭卷名推断。
+
+根身份检查包括 canonical root UTF-8 byte equality、device、root inode、volume UUID、FSEvents history UUID。snapshot filename 使用 SHA256(root UTF-8 + NUL + volume UUID bytes)，同 root/volume 保存一个 final。history UUID 不可用时目前明确拒绝 durable replay。
+
+E0 使用 FSEventsGetLastEventIdForDeviceBeforeTime(device, Unix seconds) 在 scan 前捕获，使用 SDK 的 conservative fence，不把 host-global ID 持久化。FSEventStreamCreateRelativeToDevice 保留 FileEvents / NoDefer / UseCFTypes / WatchRoot / FullHistory；不保留 host-level 另一套分支，ephemeral 使用相同 watcher。
+
+FullHistory 首个历史 chunk 可以覆盖 cursor 之前的活动，不能直接按旧 ID 丢弃。已知 same-kind create 在风暴计数前幂等过滤，create/remove 冲突仍根据整个 batch 进行 authoritative reconciliation。replaying 中多个 dirty parents 直接按事件范围 diff，避免反复 replay 同一历史块引起 full rebuild 循环；live 的 dirtyParentLimit 仍保留。80 个离线 rename parents 的回归测试已通过。
+
+HistoryDone 只有在 batch mutations 完成且 inbox 无遗漏/overflow、状态仍 replaying 时才能转 live。C 只在 writer queue 中于 batch apply/reconcile 后推进；content-only 推进 C、不推进 G。overflow/stream invalid/root MustScan 等进入 dirty，不能 checkpoint，恢复重新捕获 E0 后 replay。
+
+## Checkpoint 与原子性
+
+writer barrier 捕获同一逻辑时刻的 G/C/V 和 recovery epoch。ID-only 导出计划与 old→new remap 在临时 RAM；每 4096 条短锁复制必要 basename/元数据，两次顺序输出 table/blob。没有完整 NamespaceEntry 数组或完整 binary Data 副本，没有持有索引锁执行磁盘写入/fsync。
+
+导出中 G 改变立即 abort；发布前再次核对 G/epoch/state/identity。取消和 generation abort 计数并明确报告，不冒充成功。初次 warm 安装保持快照 G；未变化 warm exit 不重写文件。
+
+store 使用 pinned directory FD、openat/O_NOFOLLOW、0700 directory、0600 regular snapshot、root-specific advisory lock。只允许明确验证的 macOS /var、/tmp 系统别名；自定义 cache/final symlink 拒绝。缓存子树排除防止 checkpoint 反馈事件。
+
+流程：O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW tmp → streaming write/CRC → check length → fsync(file) → close → beforePublish validation → rename → fsync(directory)。旧 final 用临时 hard link 支持 rename 后失败回滚，不复制旧数据；数据峰值 old + one new tmp。成功仅保留 final 与零字节 lock，不保留历史 snapshot。下次启动在锁可获得时清理 stale tmp，不删除另一 publisher 的 active tmp。
+
+fault tests 包含 header 写入后、fsync 前、rename 前后、directory fsync 前的失败；全部保留旧合法 snapshot，取消/并发 publisher 同样通过。没有模拟真实断电，也不将 fault injection 宣称为所有存储故障的保证。
+
+写入仅在 cold 首次 live、完整失效恢复成功后、手动 :checkpoint、generation 变化的正常退出。没有应用级 WAL、周期/按 mutation 的高频写入。普通在线更新不写 snapshot。
+
+## 最终构建、测试与 CLI smoke
+
+实际执行，均退出码 0：
+
+~~~bash
 swift build -c release
 swift test
 swift run -c release apfsfind bench --files 1000 --latency-ms 20
-```
+swift run -c release apfsfind persistence-bench --entries 100000 --cache-dir /private/tmp
+~~~
 
-最终 release 构建无编译警告。启动修复后 `swift test`：**60 tests，0 failures，0 skipped**，测试执行约 3.2 s；FSEvents 本机默认运行。
+最终 release build 无新增 warning。swift test：**85 tests，0 failures，0 skipped**，执行约 5.47 s，包含原有全部 60 项和新增 25 项。没有删除/弱化原断言；原 content integration test 增加“已收到并处理 content event”条件等待。device-relative 的 kernel journal 发布可晚于 flush；固定 sleep 无法证明事件处理。等待使用 state、HistoryDone、queue、generation 或实际可见条件。两次 interrupt 的旧快照保留及后续 replay 另有回归测试。
 
-覆盖 initial seed、create/delete、两种 rename、移入非空目录、删除目录 ghost、1000 文件 burst、symlink 不递归、扫描到 watcher 启动 gap replay、content write 不修改索引、掉事件恢复、失败重建暂停和手动恢复。另有批次冲突、目录 inode 更换、并发读写、路径边界、packed 多页读取、root symlink loop/`..` 和输出 buffer 边界测试。新增 HistoryDone 已到而恢复仍在排队、消失目录逐级父级修复、实际权限拒绝和恢复、errno 分类，以及 10k 分散 dirty paths 祖先合并回归。
+新测试覆盖 round trip、composed/decomposed Unicode、深层目录、symlink、unknown file ID、无 tombstone、ID compaction、相同 payload、100k、CRC、全部 offset/length/parent/name/count corruption、identity、unsafe type/mode、fault/cancel/并发、stale tmp/symlink、offline create/delete/两种 rename/新非空目录、旧 cursor crash-like recovery、Wrapped/Dropped/root MustScan/history UUID fallback、缓存排除、ephemeral、强制 scan、无变化退出，以及 G/C 同步捕获。
 
-短 CLI smoke：query、`:stats`、`:verify`、`:rebuild` request、`:quit` 均通过；独立 Ctrl+C smoke 在 5 s 内退出，exit code 130。临时 smoke root 除 seed 外未产生任何运行文件。
+CLI smoke 使用两个独立 swift run serve 进程及拥有的 mktemp-style root/cache：第一次 seed、等待 live/首次保存、:checkpoint、:verify、正常退出；关闭期间 create 与 rename；第二次报告 warm_snapshot，没有 Initial scan，找到 created-while-offline.txt 和 renamed.txt，seed.txt 不再出现，verify 0/0。0700/0600 实机检查通过。所有测试/benchmark 显式注入临时 cache，未创建用户默认 HOME 索引。
 
-早期测试曾暴露根目录 parent walk 越界循环、旧 Created 标志保留及临时路径 `/var`/`/private/var` 差异；已修复并加入回归验证。
+## 原延迟 benchmark（v0.2）
 
-## 大 HOME 启动修复实测
+每种 100 samples，0 timeout：
 
-用户在终端扫描 1157675 files / 158327 directories 后遇到固定 10 s replay 失败。本机也复现旧版退出：历史结束标记已收到，但事件处理或恢复仍未完成。已去掉 `serve` 的固定启动超时，显示实际状态和事件进度；子目录权限/dataless 排除不再误触发全量重建，消失或替换目录由父目录修复。真实根目录失败和意外 I/O 仍进入有退避的恢复。
+| workload | median ms | p95 ms | p99 ms | max ms |
+| --- | ---: | ---: | ---: | ---: |
+| create | 19.74 | 21.16 | 21.74 | 22.30 |
+| delete | 19.87 | 21.31 | 21.69 | 22.27 |
+| 同目录 rename | 19.95 | 21.26 | 21.95 | 22.52 |
+| 跨目录 rename | 20.72 | 22.40 | 23.36 | 24.70 |
 
-修复后用 release executable 对真实 `/Users/huangsizhe` 做 metadata-only 启动、`Package.swift` 查询、`:stats` 和 `:quit`，退出码 **0**：
+scan+replay 147.24 ms。10000 content writes：loop 25.72 ms，总 43.42 ms，实际忽略 1 个事件，G 402→402，namespace work 0；user/system CPU 0.001618 / 0.024586 s。
 
-- 初始枚举 22.68 s，内存索引构建 35.50 s，replay 约 10.6 s，总启动至退出约 69.95 s；并行进行过 Swift 测试编译，故不作为隔离性能 benchmark。
-- live entries **1079445**，FSEvents received/processed **2468/2468**，directory reconciles **15260**，full rebuilds **0**。
-- 本宿主初始扫描有 **596** 个权限拒绝，replay 有 **38** 个 EPERM，均按不可读目录排除；终端与 Codex 的隐私授权不同，数量不能与用户终端直接比较。
-- 一次 `Package.swift` 查询返回 10 条，耗时 **802.5 ms**；RSS 170967040 bytes（约 163 MiB）。本版百万条目搜索仍是线性扫描，该值不承诺所有查询延迟。
+1000 文件 create storm 87.75 ms，user/system CPU 0.0743 / 0.0495 s，1 次 directory reconcile；delete storm 88.76 ms，CPU 0.0721 / 0.0246 s，1 次 reconcile。两次 verify 0/0、full rebuild 0、cleanup 成功，provisional_acceptance=true。最终 RSS 12,369,920 bytes。
 
-没有改动 HOME 的文件；搜索工具没有保存索引或日志。`minimalRoots` 现用集合查询真实祖先，避免原先先做 O(N²) 合并再检查 dirty limit 的 CPU 放大点。
+## 100,000 entries persistence benchmark（v0.2）
 
-另一次只读 HOME 运行在内存索引构建阶段发送 Ctrl+C，约 **0.17 s** 后以 **130** 退出，验证大树启动的取消路径。
+实际创建 root + 100 个 directory + 99,899 个短 basename 文件；一次运行的结果：
 
-## Benchmark 实测
+| cold path | 实测 |
+| --- | ---: |
+| full scan | 248.9 ms（stats integer 248） |
+| RAM build | 1949.9 ms（stats integer 1949） |
+| initial replay | 214 ms |
+| time to live | 2419.56 ms |
+| snapshot write，包含 fsync/publish | 59.16 ms |
+| snapshot bytes | 3,099,897 |
+| record table bytes | 2,400,000 |
+| name blob bytes | 699,593 |
+| bytes/live entry | 30.99897 |
+| checkpoint observed peak RSS | 92,749,824 bytes |
 
-下面是启动修复后 `--files 1000 --latency-ms 20` 的一次终端输出记录。每个 latency workload 100 个样本、2 s 硬超时，全部 **0 timeout**，所有 p95 < 500 ms。分位数采用 nearest-rank；统计真实查询可见时间，不在 latency 测量中调用 flush。
+| warm path | 实测 |
+| --- | ---: |
+| open/validate | 8.12 ms |
+| mmap syscall | 0.019 ms |
+| bulk FileIndex restore | 78.04 ms |
+| replay | 88.91 ms |
+| time to live | 176.89 ms |
+| received replay events（含重叠/HistoryDone） | 3529 |
+| full recursive scanner calls | **0** |
+| directory/subtree reconciles before verify | **0 / 0** |
+| RSS before load | 79,675,392 bytes |
+| RSS immediately after mmap | 79,675,392 bytes |
+| RSS after restore | 88,113,152 bytes |
+| live RSS | 85,016,576 bytes |
+| verify missing/extra | **0 / 0** |
 
-| workload | min ms | median ms | p90 ms | p95 ms | p99 ms | max ms |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| create | 16.81 | 20.14 | 21.40 | 21.76 | 31.53 | 221.55 |
-| delete | 17.41 | 20.12 | 21.30 | 21.71 | 25.15 | 37.05 |
-| 同目录 rename | 17.77 | 20.24 | 20.82 | 21.59 | 21.97 | 22.30 |
-| 跨目录 rename | 15.35 | 20.39 | 22.04 | 22.16 | 41.94 | 142.83 |
+RSS 是同一 benchmark 进程先 cold 后 warm 的阶段采样；cold 对象已释放，但 allocator 会保留 pages，不代表独立 warm 进程的最低 RSS。checkpoint peak 是 chunk 边界观察到的峰值，不是全进程高频采样/绝对瞬时上界。没有据此宣称最终 RAM 优化完成。
 
-初始扫描约 0.7 ms（7 个 live entries），内存索引构建约 0.5 ms，scan + replay 35.61 ms。
+在线 workload：1000 create + 1000 delete、10000 content writes、100 次 rename；590.96 ms，user/system CPU 1.179043 / 0.169961 s（含 generator、轮询和 verify）。snapshot inode/mtime/size 全部不变；content generation 不变，online verify 0/0。变化退出产生一次新快照，下一次 warm 能见最新 rename，full_scans=0，verify 0/0。最后单行 JSON provisional_acceptance=true。结果未写入仓库。
 
-content-write：10000 次 pwrite，write loop 14.62 ms，含事件观察/排空共 32.26 ms；收到 1 个合并事件并忽略 1 个，direct patches / directory reconciles / subtree reconciles / full rebuilds 均为 0。entries 109 → 109，live entries 7 → 7，generation 402 → 402。user CPU 0.000684 s，system CPU 0.012324 s。
+独立 synthetic format test：100,000 records，3,000,010 bytes，**30.0001 bytes/entry**，低于 64 bytes/entry 目标。真实 arbitrary filename 分布没有硬性 bytes/entry 上限。
 
-| storm | wall ms | user CPU s | system CPU s | direct patches | dirty dirs | directory reconciles | subtree reconciles | verify missing/extra |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| create 1000 files | 130.92 | 0.094803 | 0.053951 | 135 | 2 | 2 | 0 | 0 / 0 |
-| delete 1000 files | 139.77 | 0.105057 | 0.049919 | 0 | 3 | 3 | 0 | 0 / 0 |
+## 已知限制与未完成项
 
-两种 storm 均完成 convergence。最终 RSS 11304960 bytes（约 10.78 MiB），queue high watermark 580；entries 1109 / live 7 / tombstones 1102；generation 406，state live，full rebuilds 0，掉事件 0。临时目录清理成功，JSON `cleanup_completed=true`、`provisional_acceptance=true`，退出码 0。
+- Sprint 2 required path 没有 TODO/stub；受测场景全部通过。corruption 检查针对启动时文件；假定本工具按 immutable/atomic replacement 管理快照。同用户恶意并发原地修改或 truncate 已 mmap 文件不属于当前保证。
+- v0.2 解决 warm startup 和持久恢复，但完整运行时 namespace 仍恢复到 RAM。最终的 mmap immutable base + RAM delta 属于下一 Sprint，不能宣称 v0.2 已解决全部内存问题。
+- search 仍线性扫描，完整路径/Swift map 保留；运行期 tombstone 累积，rebuild 需要额外索引内存。
+- ID planning 对单目录 children 排序时持一次 read lock；极宽目录排序仍可能暂时阻塞 writer，尚未进行百万平面目录的隔离测量。导出/写文件不持全局锁。
+- 当前 history UUID 为 nil 的卷拒绝启动；readonly/no-journal 卷、外接盘时钟异常、真实 journal purge、突然断电均未专项实机验证。Dropped/Wrapped/MustScan/history change 使用真实 watcher 加 synthetic invalidation/identity 注入测试，不声称制造了真实 OS journal 损坏。
+- crash-like 测试采用“不保存当前变化即停止”模拟旧 checkpoint 恢复，未宣称做了真实 SIGKILL/断电耐久测试。
+- 本 Sprint 未对真实 HOME 写快照或做新的百万条目持久化 benchmark；100k 的数字不能外推所有 HOME 分布。v0.1 真实 HOME 的历史启动实测仍在 baseline commit STATUS 中。
+- 未实机验证 macOS 14、Intel、真实 dataless iCloud/DMG/network/autofs；保留扫描 metadata checks 和原测试，不主动建立这些环境。
+- verify 非原子磁盘 snapshot，需要静止目录。TCC/POSIX 读取排除依旧存在，不绕过权限。持续变化可让 checkpoint G 校验 abort，退出/手动可重试。
+- 如 cache 安全打开失败，明确拒绝该配置；如写入失败，在线索引继续服务，记录错误并保留旧 final。真正存储故障后的回滚为 best-effort。
+- 持续掉事件可能保持 dirty/rebuilding，沿用有退避/熔断的恢复，不保证固定启动时间。多卷 system-wide indexing 不在本版范围。
 
-CPU 是同进程的 workload generator、轮询查询和 index maintenance 的合计，不是单独的 maintenance CPU。以上是本机一次小规模测量，不推断大 `$HOME` 或其他机器的性能。
+## 下一 Sprint 边界
 
-## 未完成和已知限制
-
-- Sprint 1 required path 无 TODO stub；当前受测路径无未解决的已确认 correctness bug。
-- 未在真实 iCloud dataless 目录做专项测试，也未在真实 network/DMG/autofs 挂载上主动创建测试环境；扫描边界有 metadata checks 和单元测试，未声称这些环境已实机验证。
-- macOS 14 和 Intel Mac 的实际运行未验证；当前已验证 arm64 macOS 27，deployment target 保持 14。
-- `:verify` 是 fresh scan，不是原子 snapshot；变化中的树可能产生暂时差异，应先等待静止和事件收敛。
-- Full Disk Access/TCC 和 POSIX 权限会造成不可读目录；不会绕过权限。真实大 `$HOME` 已做上述启动 smoke，完整权限覆盖和静止目录的隔离性能尚未测量。
-- tombstone 及完整 path 占用会累积，查询 O(entries)，重建需要额外索引内存。
-- `serve` 等待 replay 和恢复完成，没有固定启动期限，可 Ctrl+C 取消；benchmark 仍有 10 s 启动期限。持续掉事件时索引可能保持 dirty；自动失败重试有熔断，手动恢复仍遵守 rebuild 最短间隔。
-- 后台扫描在目录 bulk pages 之间响应取消；局部 filesystem race 依赖后续事件/reconciliation 收敛。
-- 系统级 `/` 特殊情况、多卷索引、重启持久恢复均不属于本版支持承诺。
-
-## 下一 sprint 候选（本轮不实现）
-
-先在真实较大本地目录继续测量维护成本，再考虑 per-device FSEvents stream、UUID 和 persistent cursor/snapshot；评估 Extended File ID rename pairing、packed string arena、mmap index。GUI、global hotkey、system-wide multi-volume indexing 保持独立候选。
-
-运行入口：
-
-```bash
-swift run -c release apfsfind serve --root "$HOME" --latency-ms 20
-```
+只记录，当前没有实现：mmap immutable base index + RAM delta overlay + base tombstone bitmap + query base/delta merge + 后台 compaction + 低 RAM directory map。下一轮让 snapshot 直接成为可查询的 immutable base，RAM 只保留变化层；v1 fixed record/name blob/parent-before-child 格式为此保留接口基础。

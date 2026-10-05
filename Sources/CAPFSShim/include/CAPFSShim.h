@@ -34,6 +34,19 @@ typedef struct APFSDirectoryInfo {
     int64_t mtime_nanoseconds;
 } APFSDirectoryInfo;
 
+typedef struct APFSVolumeInfo {
+    uint64_t device_id;
+    uint64_t root_file_id;
+    uint8_t volume_uuid[16];
+    char mount_point[4096];
+} APFSVolumeInfo;
+
+int apfs_volume_info(const char *root, APFSVolumeInfo *info);
+/* Incremental IEEE CRC32, pass 0 for the first chunk. */
+uint32_t apfs_crc32(uint32_t previous, const void *bytes, size_t length);
+/* Component-wise O_NOFOLLOW cache directory walk. Creates only when requested. */
+int apfs_open_cache_directory(const char *path, int create);
+
 typedef struct APFSBulkReader APFSBulkReader;
 
 /* Returns 0 if denied, 1 when the SDK lacks support, -1 on policy failure. */

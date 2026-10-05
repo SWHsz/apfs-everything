@@ -46,6 +46,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var historyDone = false
     private var errorDescription: String?
     private var recoveryReason: String?
+    private var restoredGeneration: UInt64?
+    private var initialReplayStarted: TimeInterval?
     private let inboxLock = NSLock()
     private var inbox: [FileSystemEvent] = []
     private var inboxOverflow = false
@@ -61,13 +63,26 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var rebuildOverflow = false
     private var needsStreamRestart = false
     private var automaticRebuildSuspended = false
+    private var volumeIdentity: VolumeIdentity?
+    private var lastProcessedEventID: UInt64 = 0 // Writer-confined, advanced only after mutations.
+    private var persistenceEpoch: UInt64 = 0
+    private var exitFrozen = false
+    private let excludedRoots: [String]
+    private var liveHandler: (@Sendable () -> Void)?
+    private var recoveryHandler: (@Sendable (String) -> Void)?
+    private let identityProvider: @Sendable (String) throws -> VolumeIdentity
 
-    public init(root: String, configuration: APFSFindConfiguration = .init()) throws {
+    public init(root: String, configuration: APFSFindConfiguration = .init(),
+                excludedRoots: [String] = [],
+                identityProvider: @escaping @Sendable (String) throws -> VolumeIdentity = { try VolumeIdentity.discover(root: $0) }) throws {
         self.root = try PathCanonicalizer.canonicalRoot(root)
         self.index = FileIndex(root: self.root)
         self.configuration = configuration
+        self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots)
+        self.identityProvider = identityProvider
     }
     public var currentState: IndexState { stateLock.withLock { state } }
+    public var installedSnapshotGeneration: UInt64? { stateLock.withLock { restoredGeneration } }
     public func startupStatus() -> StartupStatus {
         let lifecycle = stateLock.withLock { (state, historyDone, errorDescription, recoveryReason) }
         let queued = inboxLock.withLock { inbox.count }
@@ -83,12 +98,42 @@ public final class UpdateCoordinator: @unchecked Sendable {
             lastError: lifecycle.2, recoveryReason: lifecycle.3)
     }
     private func setState(_ value: IndexState, error: String? = nil) {
-        stateLock.withLock { state = value; if let error { errorDescription = error } }
+        let transitioned = stateLock.withLock {
+            let changed = state != value; state = value
+            if let error { errorDescription = error }
+            return changed
+        }
+        if value == .live, transitioned {
+            if let started = initialReplayStarted, metrics.snapshot()["initial_replay_ms"] == nil {
+                metrics.set("initial_replay_ms", to: Int((ProcessInfo.processInfo.systemUptime - started) * 1000))
+            }
+            liveHandler?()
+        }
     }
 
-    public func start(progress: (@Sendable (String) -> Void)? = nil) throws {
+    public func setLifecycleHandlers(live: @escaping @Sendable () -> Void,
+                                     recovery: @escaping @Sendable (String) -> Void) {
+        writer.sync { liveHandler = live; recoveryHandler = recovery }
+    }
+
+    public func start(restored: FileIndex? = nil, cursor: UInt64? = nil,
+                      identity supplied: VolumeIdentity? = nil,
+                      progress: (@Sendable (String) -> Void)? = nil) throws {
+        let identity = try supplied ?? identityProvider(root)
+        let e0 = cursor ?? identity.currentEventID()
+        writer.sync { volumeIdentity = identity; lastProcessedEventID = e0; rootDevice = identity.deviceID }
+        if let restored {
+            index.installSnapshot(restored)
+            let generation = index.stats().generation
+            stateLock.withLock { restoredGeneration = generation }
+            reconciler = DirectoryReconciler(scanner: makeScanner(), index: index,
+                rootDeviceID: rootDevice, metrics: metrics)
+            setState(.replaying)
+            initialReplayStarted = ProcessInfo.processInfo.systemUptime
+            try startWatcher(since: e0)
+            return
+        }
         // Capture before any directory enumeration: replay closes the initial scan gap.
-        let e0 = FSEventsWatcher.currentEventID()
         progress?("[info] Initial scan: \(root) (\(configuration.workerCount) workers)")
         let progressQueue = DispatchQueue(label: "apfsfind.scan-progress")
         let timer = DispatchSource.makeTimerSource(queue: progressQueue)
@@ -104,7 +149,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
         timer.resume()
         defer { timer.cancel(); progressQueue.sync {} }
         do {
-            let scanner = BulkScanner(root: root, workerCount: configuration.workerCount, metrics: metrics)
+            let scanner = makeScanner()
+            metrics.record("full_scans")
             let result = try scanner.scan(cancellation: cancellation)
             guard !cancellation.isCancelled, !result.cancelled else { setState(.stopped); return }
             metrics.set("initial_scan_ms", to: Int(result.elapsedMilliseconds))
@@ -124,12 +170,17 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 s.files, s.directories, result.unreadableDirectories, result.elapsedMilliseconds,
                 (ProcessInfo.processInfo.systemUptime - buildStart) * 1000, e0))
             setState(.replaying)
+            initialReplayStarted = ProcessInfo.processInfo.systemUptime
             try startWatcher(since: e0)
             if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
         } catch {
             setState(.failed, error: String(describing: error))
             throw error
         }
+    }
+
+    private func makeScanner() -> BulkScanner {
+        BulkScanner(root: root, workerCount: configuration.workerCount, metrics: metrics, excludedRoots: excludedRoots)
     }
 
     private func makePrivateIndex(_ entries: [NamespaceEntry], counter: String) -> FileIndex {
@@ -146,13 +197,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     private func startWatcher(since id: UInt64) throws {
-        try watcher.start(root: root, since: id, latencyMilliseconds: configuration.latencyMilliseconds) { [weak self] events in
+        try watcher.start(root: root, since: id, latencyMilliseconds: configuration.latencyMilliseconds,
+                          identity: volumeIdentity) { [weak self] events in
             self?.enqueue(events)
         }
     }
     /// The callback copies only event information and queues it. No filesystem I/O.
     public func enqueue(_ events: [FileSystemEvent]) {
         guard !cancellation.isCancelled else { return }
+        let events = events.filter { event in
+            event.flags & UInt32(kFSEventStreamEventFlagHistoryDone | kFSEventStreamEventFlagKernelDropped |
+                kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagEventIdsWrapped | kFSEventStreamEventFlagRootChanged) != 0 ||
+            !excludedRoots.contains { PathCanonicalizer.isWithin(event.path, root: $0) }
+        }
         metrics.record("fsevents_received", by: events.count)
         let schedule = inboxLock.withLock {
             let room = max(0, configuration.maxPendingEvents - inbox.count)
@@ -174,6 +231,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     private func drain() {
+        guard !exitFrozen else { return }
         let (events, overflow, finished) = inboxLock.withLock {
             let result = (inbox, inboxOverflow, inboxHistoryDone)
             inbox = []; inboxOverflow = false; inboxHistoryDone = false; drainScheduled = false
@@ -197,7 +255,13 @@ public final class UpdateCoordinator: @unchecked Sendable {
             requestRebuild(invalidated: true, reason: "queue_overflow")
         }
         if let reconciler { process(events, into: index, using: reconciler, countMetrics: true, mayRebuild: true) }
-        if stateLock.withLock({ historyDone }), currentState == .replaying { setState(.live) }
+        // Include content-only IDs, but never advance a durable cursor ahead of
+        // the namespace mutations corresponding to this batch.
+        if let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
+            lastProcessedEventID = max(lastProcessedEventID, completedID)
+        }
+        if stateLock.withLock({ historyDone }), currentState == .replaying,
+           inboxLock.withLock({ inbox.isEmpty && !inboxOverflow }) { setState(.live) }
     }
 
     private func nearestIndexedParent(_ path: String, in target: FileIndex) -> String {
@@ -225,6 +289,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
             case .invalidated:
                 if countMetrics { metrics.record("dropped_invalidated_events") }
                 if mayRebuild { requestRebuild(invalidated: true, reason: "stream_invalidated") }
+            case .simpleCreate(let kind):
+                // Remove harmless overlapping history before storm accounting.
+                // FullHistory can repeat an entire chunk on warm startup.
+                if let path = PathCanonicalizer.normalize(event.path),
+                   let existing = target.entry(at: path), existing.kind == kind,
+                   kind != .directory || path == root {
+                    if countMetrics {
+                        metrics.record("duplicate_create_events")
+                        let content = UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemInodeMetaMod |
+                            kFSEventStreamEventFlagItemXattrMod | kFSEventStreamEventFlagItemFinderInfoMod | kFSEventStreamEventFlagItemChangeOwner)
+                        if event.flags & content != 0 { metrics.record("ignored_content_events") }
+                    }
+                } else { namespace.append((event, classification)) }
             default: namespace.append((event, classification))
             }
         }
@@ -287,7 +364,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
         var namespaceBits: [String: UInt32] = [:]
         let createRemove = UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved)
-        for (event, _) in namespace {
+        // Include duplicate creates discarded above: create+remove for one path
+        // still needs an authoritative diff, independent of arrival order.
+        for event in events {
             guard let path = PathCanonicalizer.normalize(event.path), PathCanonicalizer.isWithin(path, root: root) else { continue }
             namespaceBits[path, default: 0] |= event.flags & createRemove
         }
@@ -306,7 +385,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }) { mark(nearestIndexedParent(path, in: target), subtree: true) }
         }
         var roots = PathCanonicalizer.minimalRoots(Array(dirty.keys))
-        if roots.count > configuration.dirtyParentLimit && mayRebuild {
+        // Historical overlap can dirty many existing parents at once. Replay
+        // reconciles those scopes directly instead of repeatedly rebuilding and
+        // replaying the same historical chunk. Live storms retain the limit.
+        if roots.count > configuration.dirtyParentLimit && mayRebuild && currentState != .replaying {
             requestRebuild(invalidated: false, reason: "dirty_parent_limit")
             dirty.removeAll()
             roots.removeAll()
@@ -330,7 +412,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
             let options = dirty[directory] ?? (true, true)
             let plan = reconciler.prepare(directory, subtree: options.subtree || absorbed || nestedPatch,
-                                          force: options.force, cancellation: cancellation)
+                                          force: true, cancellation: cancellation)
             mutations += plan.mutations
             retryParents.formUnion(plan.retryParents)
             if plan.requiresRebuild && mayRebuild { requestRebuild(invalidated: false, reason: "reconcile_error") }
@@ -394,7 +476,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
         guard !cancellation.isCancelled else { return }
         metrics.record("rebuild_requests_" + reason)
         stateLock.withLock { recoveryReason = reason }
-        if invalidated { needsStreamRestart = true }
+        persistenceEpoch &+= 1
+        recoveryHandler?(reason)
+        // Every full rebuild establishes a new pre-scan fence and replays it.
+        needsStreamRestart = true
         if !building { setState(.dirty) }
         guard !automaticRebuildSuspended else { return }
         guard !building, !rebuildScheduled else { return }
@@ -409,19 +494,21 @@ public final class UpdateCoordinator: @unchecked Sendable {
         guard !building, !cancellation.isCancelled else { return }
         building = true; rebuildEvents = []; rebuildOverflow = false
         lastRebuildStart = Date.timeIntervalSinceReferenceDate
-        let e0 = FSEventsWatcher.currentEventID()
         setState(.rebuilding)
         buildGroup.enter()
         builder.async { [weak self] in
             guard let self else { return }
             let result = Result {
-                let scan = try BulkScanner(root: self.root, workerCount: self.configuration.workerCount,
-                                           metrics: self.metrics).scan(cancellation: self.cancellation)
+                let identity = try self.identityProvider(self.root)
+                let e0 = identity.currentEventID()
+                self.metrics.record("full_scans")
+                let scan = try self.makeScanner().scan(cancellation: self.cancellation)
                 self.metrics.set("rebuild_index_entries", to: 0)
                 let fresh = self.makePrivateIndex(scan.entries, counter: "rebuild_index_entries")
-                return PreparedIndex(index: fresh, rootDeviceID: scan.rootDeviceID, cancelled: scan.cancelled)
+                return PreparedIndex(index: fresh, rootDeviceID: scan.rootDeviceID, cancelled: scan.cancelled,
+                    identity: identity, fence: e0)
             }
-            self.writer.async { [weak self] in self?.completeRebuild(result, since: e0) }
+            self.writer.async { [weak self] in self?.completeRebuild(result) }
             self.buildGroup.leave()
         }
     }
@@ -429,8 +516,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let index: FileIndex
         let rootDeviceID: UInt64
         let cancelled: Bool
+        let identity: VolumeIdentity
+        let fence: UInt64
     }
-    private func completeRebuild(_ result: Result<PreparedIndex, Error>, since e0: UInt64) {
+    private func completeRebuild(_ result: Result<PreparedIndex, Error>) {
         building = false
         guard !cancellation.isCancelled else { return }
         do {
@@ -438,7 +527,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             guard !scan.cancelled else { return }
             let fresh = scan.index
             rootDevice = scan.rootDeviceID
-            let scanner = BulkScanner(root: root, workerCount: configuration.workerCount, metrics: metrics)
+            let scanner = makeScanner()
             let freshReconciler = DirectoryReconciler(scanner: scanner, index: fresh, rootDeviceID: rootDevice, metrics: metrics)
             // Apply all buffered namespace changes to the private index before the
             // exchange; callbacks queued later are processed by this same writer.
@@ -455,8 +544,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     inbox = []; inboxHistoryDone = false; inboxOverflow = false; drainScheduled = false
                 }
                 stateLock.withLock { historyDone = false }
+                volumeIdentity = scan.identity
+                lastProcessedEventID = scan.fence
                 setState(.replaying)
-                try startWatcher(since: e0)
+                try startWatcher(since: scan.fence)
             } else { setState(stateLock.withLock { historyDone } ? .live : .replaying) }
             failureCount = 0
             stateLock.withLock { errorDescription = nil; recoveryReason = nil }
@@ -488,18 +579,20 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     public func verify() throws -> VerificationResult {
-        let scan = try BulkScanner(root: root, workerCount: configuration.workerCount).scan(cancellation: cancellation)
+        let scan = try BulkScanner(root: root, workerCount: configuration.workerCount, excludedRoots: excludedRoots).scan(cancellation: cancellation)
         guard !scan.cancelled else { throw CocoaError(.userCancelled) }
         let actual = Set(scan.entries.map(\.path)).union([root])
         let online = index.snapshotPaths()
         return VerificationResult(missing: actual.subtracting(online).sorted(), extra: online.subtracting(actual).sorted())
     }
 
+    public func synchronizeWriter() { writer.sync {} }
+
     public func stats() -> CoordinatorStats {
         let s = index.stats(), usage = Metrics.processUsage()
         var values: [String: Any] = metrics.snapshot()
         for key in ["fsevents_received", "fsevents_processed", "ignored_content_events", "direct_patches", "directory_reconciles",
-                    "subtree_reconciles", "full_rebuilds", "dropped_invalidated_events", "event_queue_high_watermark", "last_batch_size"] {
+                    "subtree_reconciles", "full_rebuilds", "full_scans", "dropped_invalidated_events", "event_queue_high_watermark", "last_batch_size"] {
             if values[key] == nil { values[key] = 0 }
         }
         values.merge(["entries": s.totalEntries, "live_entries": s.liveEntries, "tombstones": s.tombstones,
@@ -514,7 +607,33 @@ public final class UpdateCoordinator: @unchecked Sendable {
                       "max_pending_events": configuration.maxPendingEvents,
                       "rebuild_debounce_ms": configuration.rebuildDebounceMilliseconds], uniquingKeysWith: { _, b in b })
         if let error = stateLock.withLock({ errorDescription }) { values["last_error"] = error }
+        values["last_processed_event_id"] = writer.sync { lastProcessedEventID }
         return CoordinatorStats(dictionary: values)
+    }
+
+    public func captureCheckpoint() throws -> CheckpointCapture {
+        try writer.sync {
+            guard currentState == .live, !building, !rebuildScheduled, let volumeIdentity else {
+                throw SnapshotError.invalid("checkpoint requires a live, recovered index")
+            }
+            return .init(metadata: index.captureSnapshotMetadata(), cursor: lastProcessedEventID,
+                         identity: volumeIdentity, epoch: persistenceEpoch)
+        }
+    }
+    public func validateCheckpoint(_ capture: CheckpointCapture) throws {
+        try writer.sync {
+            guard currentState == .live, persistenceEpoch == capture.epoch,
+                  volumeIdentity == capture.identity,
+                  index.captureSnapshotMetadata().generation == capture.metadata.generation else {
+                throw SnapshotError.generationChanged
+            }
+        }
+    }
+    /// Stop delivery, then finish every received batch before an exit checkpoint.
+    /// Filesystem changes after this fence are recovered from the saved cursor.
+    public func quiesceForExit() {
+        watcher.stop()
+        writer.sync { drain(); exitFrozen = true }
     }
 
     public func stop() {

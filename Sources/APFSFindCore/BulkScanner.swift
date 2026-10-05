@@ -32,11 +32,13 @@ public final class BulkScanner: @unchecked Sendable {
     private let requestedRoot: String
     public let workerCount: Int
     private let metrics: Metrics
+    private let excludedRoots: [String]
 
-    public init(root: String, workerCount: Int = 4, metrics: Metrics = Metrics()) {
+    public init(root: String, workerCount: Int = 4, metrics: Metrics = Metrics(), excludedRoots: [String] = []) {
         requestedRoot = root
         self.workerCount = min(16, max(1, workerCount))
         self.metrics = metrics
+        self.excludedRoots = PathCanonicalizer.minimalRoots(excludedRoots)
     }
 
     private func applyThreadPolicy() {
@@ -124,6 +126,8 @@ public final class BulkScanner: @unchecked Sendable {
                 let bytes = UnsafeRawPointer(namePointer).assumingMemoryBound(to: UInt8.self)
                 let name = String(decoding: UnsafeBufferPointer(start: bytes, count: record.name_length), as: UTF8.self)
                 guard name != ".", name != ".." else { continue }
+                let childPath = (path == "/" ? "/" : path + "/") + name
+                if excludedRoots.contains(where: { PathCanonicalizer.isWithin(childPath, root: $0) }) { continue }
                 let kind: EntryKind
                 switch record.object_type {
                 case UInt32(APFS_OBJECT_FILE.rawValue): kind = .file
@@ -131,7 +135,7 @@ public final class BulkScanner: @unchecked Sendable {
                 case UInt32(APFS_OBJECT_SYMLINK.rawValue): kind = .symlink
                 default: kind = .other
                 }
-                result.append(NamespaceEntry(path: (path == "/" ? "/" : path + "/") + name,
+                result.append(NamespaceEntry(path: childPath,
                                              kind: kind, deviceID: record.device_id,
                                              fileID: record.has_file_id != 0 ? record.file_id : nil,
                                              isMountPoint: record.is_mount_point != 0))

@@ -17,14 +17,14 @@ private enum BenchmarkError: Error, CustomStringConvertible {
     }
 }
 
-/// Cleanup requires an exact, process-created child of the system temporary directory.
-private struct OwnedTemporaryDirectory {
+/// Cleanup requires an exact, process-created child of a verified parent.
+struct OwnedTemporaryDirectory {
     let parent: URL
     let url: URL
     let name: String
 
-    init() throws {
-        parent = URL(fileURLWithPath: try PathCanonicalizer.canonicalRoot(FileManager.default.temporaryDirectory.path),
+    init(parentPath: String? = nil) throws {
+        parent = URL(fileURLWithPath: try PathCanonicalizer.canonicalRoot(parentPath ?? FileManager.default.temporaryDirectory.path),
                      isDirectory: true)
         name = "apfsfind-bench-" + UUID().uuidString
         url = parent.appendingPathComponent(name, isDirectory: true)
@@ -276,7 +276,7 @@ struct BenchmarkRunner {
             deleteConverged && deleteDrained && deleteVerification.isConsistent
         print("Provisional acceptance: \(accepted ? "PASS" : "FAIL") (100 samples per latency workload; p95 < 500 ms; 2 s hard timeout; both storms verified)")
         let report: [String: Any] = [
-            "version": "0.1.0", "files": files, "latency_ms": latencyMilliseconds,
+            "version": "0.2.0", "files": files, "latency_ms": latencyMilliseconds,
             "visibility_timeout_ms": visibilityTimeout * 1000,
             "storm_timeout_ms": stormTimeout * 1000, "initial_scan_and_replay_ms": initialMilliseconds,
             "create": creates.dictionary, "delete": deletes.dictionary,

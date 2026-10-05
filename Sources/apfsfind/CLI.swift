@@ -67,22 +67,32 @@ enum CLI {
         var latencyMilliseconds = 20.0
         var files = 10_000
         var workers = 4
+        var entries = 100_000
+        var ephemeral = false
+        var rebuildIndex = false
+        var cacheDirectory: String?
         var help = false
     }
 
     static let usage = """
-    apfsfind v0.1.0 — macOS in-memory filename search
+    apfsfind v0.2.0 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
+                    [--ephemeral] [--rebuild-index] [--cache-dir PATH]
       apfsfind bench [--files 10000] [--latency-ms 20]
+      apfsfind persistence-bench [--entries 100000] [--cache-dir PATH]
 
     The default command is serve and the default root is $HOME.
-    --latency-ms must be between 1 and 1000. No index or log files are saved.
+    --latency-ms must be between 1 and 1000. No log files are saved.
+    Snapshots default to ~/Library/Application Support/apfsfind/indexes/.
+    Cache directories are 0700; snapshots contain sensitive filename metadata (0600).
+    --ephemeral disables snapshot reads and writes. --rebuild-index forces a scan.
+    Snapshots are written after cold startup, on changed exit, or by :checkpoint.
     Startup waits for replay and recovery to finish; Ctrl+C cancels it.
     Benchmark uses only a temporary directory created by this process.
 
-    Interactive commands: :stats  :verify  :rebuild  :quit
+    Interactive commands: :stats  :verify  :rebuild  :checkpoint  :quit
     Ordinary text searches filenames, case-insensitively (up to 50 paths).
     """
 
@@ -90,7 +100,7 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard first == "serve" || first == "bench" else {
+            guard ["serve", "bench", "persistence-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
@@ -103,10 +113,23 @@ enum CLI {
                 options.help = true
                 continue
             }
+            if flag == "--ephemeral" || flag == "--rebuild-index" {
+                guard options.command == "serve" else { throw CLIError.usage("\(flag) is only accepted by serve.") }
+                if flag == "--ephemeral" { options.ephemeral = true } else { options.rebuildIndex = true }
+                continue
+            }
             guard cursor < arguments.count else { throw CLIError.usage("Missing value for \(flag)") }
             let value = arguments[cursor]
             cursor += 1
             switch flag {
+            case "--cache-dir":
+                guard options.command != "bench", !value.isEmpty else { throw CLIError.usage("--cache-dir requires a path and is not accepted by bench.") }
+                options.cacheDirectory = NSString(string: value).expandingTildeInPath
+            case "--entries":
+                guard options.command == "persistence-bench", let number = Int(value), (102...1_000_000).contains(number) else {
+                    throw CLIError.usage("--entries must be in 102...1000000 and is only accepted by persistence-bench.")
+                }
+                options.entries = number
             case "--root":
                 guard options.command == "serve", !value.isEmpty else {
                     throw CLIError.usage("--root is only accepted by serve; benchmark always owns its temporary directory.")
@@ -139,6 +162,10 @@ enum CLI {
         if options.command == "bench" {
             return try BenchmarkRunner(files: options.files, latencyMilliseconds: options.latencyMilliseconds).run()
         }
+        if options.command == "persistence-bench" {
+            return try PersistenceBenchmarkRunner(entries: options.entries, cacheDirectory: options.cacheDirectory,
+                latencyMilliseconds: options.latencyMilliseconds).run()
+        }
         return try serve(options)
     }
 
@@ -154,14 +181,15 @@ enum CLI {
     }
 
     private static func serve(_ options: Options) throws -> Int32 {
-        let coordinator = try UpdateCoordinator(root: options.root, configuration: .init(
-            latencyMilliseconds: options.latencyMilliseconds, workerCount: options.workers))
-        let shutdown = ShutdownSignal { coordinator.stop() }
+        let coordinator = try PersistentIndexCoordinator(root: options.root, configuration: .init(
+            latencyMilliseconds: options.latencyMilliseconds, workerCount: options.workers),
+            ephemeral: options.ephemeral, rebuildIndex: options.rebuildIndex, cacheDirectory: options.cacheDirectory)
+        let shutdown = ShutdownSignal { coordinator.interrupt() }
         defer { coordinator.stop(); withExtendedLifetime(shutdown) {} }
-        TerminalOutput.info("Scanning \(options.root)")
+        TerminalOutput.info("Starting filename search in \(options.root)")
         try coordinator.start { TerminalOutput.info($0) }
         if shutdown.isCancelled { throw CLIError.interrupted }
-        try waitForStartup(coordinator, shutdown: shutdown)
+        try waitForStartup(coordinator.core, shutdown: shutdown)
         TerminalOutput.info("Replay complete; live filename search is ready.")
         print(coordinator.stats().description)
         let input = InteractiveInput()
@@ -174,6 +202,8 @@ enum CLI {
             switch query {
             case ":quit": return 0
             case ":stats": print(coordinator.stats().description)
+            case ":checkpoint":
+                print(coordinator.checkpoint() ? "Checkpoint requested." : "Checkpoint already running, disabled or stopping.")
             case ":verify":
                 let result = try coordinator.verify()
                 print("verify: missing=\(result.missing.count) extra=\(result.extra.count) consistent=\(result.isConsistent)")
@@ -183,7 +213,7 @@ enum CLI {
                 coordinator.rebuild()
                 print("Rebuild requested; searches continue while the replacement index is built.")
             default:
-                if query.hasPrefix(":") { print("Unknown command. Use :stats, :verify, :rebuild or :quit."); continue }
+                if query.hasPrefix(":") { print("Unknown command. Use :stats, :verify, :rebuild, :checkpoint or :quit."); continue }
                 let result = coordinator.index.search(query, limit: 50)
                 for hit in result.hits { print(hit.path) }
                 print(String(format: "%d results · %.3f ms · generation %llu", result.hits.count,

@@ -80,6 +80,12 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: tree.path("content")))
         for _ in 0..<1000 { try handle.seek(toOffset: 0); try handle.write(contentsOf: Data([42])) }
         try handle.close()
+        // Device-relative streams can publish the kernel journal after a flush
+        // of already-queued events. Observe actual processing, not elapsed time.
+        waitFor("content event processed") {
+            coordinator.metrics.snapshot()["ignored_content_events", default: 0] >
+                metrics["ignored_content_events", default: 0]
+        }
         XCTAssertTrue(coordinator.flushEvents())
         XCTAssertEqual(coordinator.index.stats().liveEntries, before.liveEntries)
         XCTAssertEqual(coordinator.index.stats().generation, before.generation)

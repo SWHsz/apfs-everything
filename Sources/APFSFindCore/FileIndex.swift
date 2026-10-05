@@ -55,6 +55,16 @@ public final class FileIndex: @unchecked Sendable {
     /// Transfers a completed rebuild without copying the index or doing I/O under a lock.
     /// The donor receives the previous storage and should be discarded by the caller.
     public func replace(with replacement: FileIndex) {
+        exchange(with: replacement, advanceGeneration: true)
+    }
+
+    /// Initial publication of a validated snapshot retains its durable G.
+    /// Rebuild exchanges still advance G so active exports cannot survive them.
+    internal func installSnapshot(_ replacement: FileIndex) {
+        exchange(with: replacement, advanceGeneration: false)
+    }
+
+    private func exchange(with replacement: FileIndex, advanceGeneration: Bool) {
         guard replacement !== self else { return }
         precondition(replacement.root == root, "Replacement index must use the same scan root")
         let selfAddress = UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque())
@@ -63,7 +73,8 @@ public final class FileIndex: @unchecked Sendable {
         let second = selfAddress < otherAddress ? replacement : self
         first.lock.withWriteLock {
             second.lock.withWriteLock {
-                let nextGeneration = max(storage.generation, replacement.storage.generation) &+ 1
+                let nextGeneration = advanceGeneration ? max(storage.generation, replacement.storage.generation) &+ 1 :
+                    replacement.storage.generation
                 swap(&storage, &replacement.storage)
                 storage.generation = nextGeneration
             }
@@ -108,6 +119,86 @@ public final class FileIndex: @unchecked Sendable {
                        tombstones: storage.tombstones, files: storage.files,
                        directories: storage.directories, generation: storage.generation)
         }
+    }
+
+    public func captureSnapshotMetadata() -> SnapshotExportMetadata {
+        lock.withReadLock {
+            .init(generation: storage.generation, totalEntries: storage.entries.count, liveEntries: storage.liveEntries)
+        }
+    }
+
+    /// Canonical DFS order uses only IDs. Each directory is visited under a
+    /// separate read lock; no full paths/Strings are copied for an export plan.
+    public func snapshotExportOrder(expectedGeneration: UInt64, cancellation: CancellationToken = .init()) throws -> [Int32] {
+        var result: [Int32] = [], pending: [Int32] = [0]
+        let metadata = captureSnapshotMetadata()
+        guard metadata.generation == expectedGeneration else { throw SnapshotError.generationChanged }
+        result.reserveCapacity(metadata.liveEntries)
+        while let id = pending.popLast() {
+            guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
+            let children: [Int32] = try lock.withReadLock {
+                guard storage.generation == expectedGeneration else { throw SnapshotError.generationChanged }
+                guard Int(id) < storage.entries.count, !storage.entries[Int(id)].isDeleted else {
+                    throw SnapshotError.invalid("deleted root/ancestor")
+                }
+                return (storage.childrenByParent[id] ?? []).filter { !storage.entries[Int($0)].isDeleted }.sorted {
+                    storage.entries[Int($0)].name.utf8.lexicographicallyPrecedes(storage.entries[Int($1)].name.utf8)
+                }
+            }
+            result.append(id); pending.append(contentsOf: children.reversed())
+        }
+        return result
+    }
+
+    public func exportLiveChunk(ids: ArraySlice<Int32>, expectedGeneration: UInt64,
+                                rootDeviceID: UInt64) throws -> [SnapshotExportEntry] {
+        try lock.withReadLock {
+            guard storage.generation == expectedGeneration else { throw SnapshotError.generationChanged }
+            return try ids.map { id in
+                guard id >= 0, Int(id) < storage.entries.count, !storage.entries[Int(id)].isDeleted else {
+                    throw SnapshotError.invalid("export ID is not live")
+                }
+                let entry = storage.entries[Int(id)]
+                return .init(id: id, parentID: entry.parentID, name: entry.name, kind: entry.kind,
+                    fileID: entry.fileID, isBoundary: entry.isMountPoint || (entry.deviceID != 0 && entry.deviceID != rootDeviceID))
+            }
+        }
+    }
+
+    /// The reader has already validated parent-before-child and basename bytes.
+    /// Build all runtime maps once, without apply/upsert/normalization recursion.
+    public static func restore(from reader: SnapshotReader, cancellation: CancellationToken = .init()) throws -> FileIndex {
+        let index = FileIndex(root: reader.root)
+        var restored = Storage()
+        let count = Int(reader.header.recordCount)
+        restored.entries.reserveCapacity(count)
+        restored.pathToID.reserveCapacity(count)
+        restored.directoryToID.reserveCapacity(count / 8)
+        restored.childrenByParent.reserveCapacity(count / 8)
+        for ordinal in 0..<count {
+            if ordinal % 4096 == 0, cancellation.isCancelled { throw SnapshotError.cancelled }
+            let record = reader.record(at: ordinal)
+            let name = ordinal == 0 ? (reader.root == "/" ? "/" : String(reader.root.split(separator: "/").last!)) : reader.name(at: ordinal)
+            let parentID = ordinal == 0 ? Int32(-1) : Int32(record.parentID)
+            let parentPath = ordinal == 0 ? "" : restored.entries[Int(parentID)].path
+            let path = ordinal == 0 ? reader.root : (parentPath == "/" ? "/" : parentPath + "/") + name
+            guard path.utf8.count < 4096, restored.pathToID[path] == nil else {
+                throw SnapshotError.invalid("duplicate or overlong restored path")
+            }
+            let id = Int32(ordinal)
+            restored.entries.append(FileEntry(id: id, parentID: parentID, name: name,
+                foldedName: FileEntry.fold(name), kind: record.kind, isDeleted: false, path: path,
+                deviceID: reader.header.rootDeviceID, fileID: record.fileID == 0 ? nil : record.fileID,
+                isMountPoint: record.flags & 1 != 0))
+            restored.pathToID[path] = id
+            if record.kind == .directory { restored.directoryToID[path] = id; restored.directories += 1 }
+            if record.kind == .file { restored.files += 1 }
+            if parentID >= 0 { restored.childrenByParent[parentID, default: []].insert(id) }
+        }
+        restored.liveEntries = count
+        restored.generation = reader.header.indexGeneration
+        index.storage = restored
+        return index
     }
 
     /// A linear filename substring scan with bounded result storage.
@@ -162,7 +253,9 @@ public final class FileIndex: @unchecked Sendable {
             let existing = storage.entries[Int(id)]
             guard existing.isDeleted || existing.namespaceEntry != entry else { return false }
             let directoryReplaced = existing.kind == .directory && entry.kind == .directory &&
-                existing.fileID != nil && entry.fileID != nil && existing.fileID != entry.fileID
+                ((existing.fileID != nil && entry.fileID != nil && existing.fileID != entry.fileID) ||
+                 (existing.deviceID != 0 && entry.deviceID != 0 && existing.deviceID != entry.deviceID) ||
+                 (!existing.isMountPoint && entry.isMountPoint))
             if existing.kind == .directory, entry.kind != .directory || directoryReplaced {
                 for childID in storage.childrenByParent[id] ?? [] {
                     _ = tombstoneSubtree(childID)
