@@ -2,14 +2,15 @@
 
 本轮两个 milestone 已完成，本机正确性验收 PASS。日期：2026-10-05（Asia/Tokyo）。
 环境：arm64 macOS 27.0.1 (26A434)、Apple Swift 6.4、SDK 27.0；deployment target macOS 14、Swift language mode 6。
-无第三方 package。仅在本机执行，没有使用 HPC，没有 push。
+无第三方 package。仅在本机执行，没有使用 HPC。A/B 开发完成时未 push；
+后续增加实盘记录，并按用户的新指令发布到 GitHub。
 
 ## 提交与基线
 
 - 开始 HEAD：`6ab6b9fee6cda3217353deea1ce0737cf6ee0918`，开始工作区干净，与当时 origin/main 一致。
 - Phase A：`948d4ba633c6e3fd75b99d837c8f3d069a600e2b`，`fix: harden durable cursor and cache handling`。
-- Phase B / 结束 HEAD：本文件所在的 `feat: add mmap base index and delta overlay` 提交；具体 SHA 在最终交付回复中。
-  可用 `git log -1 --format=%H --grep='^feat: add mmap base index and delta overlay$'` 查询。
+- Phase B / 开发完成 HEAD：`2c2d811f3865f8b9e304ea35acac2c23f50457c3`，`feat: add mmap base index and delta overlay`。
+  实盘数据在其后的独立文档提交中记录。
 
 | 阶段 | release build | tests | 原 RAM bench create/delete/same/cross rename p95 ms |
 | --- | --- | --- | --- |
@@ -31,7 +32,7 @@ state 和 snapshot 都使用安全临时文件、fsync、原子 rename 和目录
 现有 cache 必须已经是当前用户所有的 0700 目录；不再 chmod 现有目录。
 新建目录 0700，snapshot/state/零字节 lock 为 0600；拒绝任意 symlink/不安全文件类型。
 已加入 MIT LICENSE 和 macOS-15 CI：release build + 全部 tests，默认不跳过原生 FSEvents 测试。
-本轮没有 push，未声称远端 CI 已运行。
+A 独立检查点当时没有 push；配置不等于远端 CI 已运行，发布后的执行状态以 GitHub Actions 为准。
 
 A 独立检查点采用 additive v1 UUID flag（bit 0、header 168..183）；原来 flag=0、无 UUID 的 v1 仍能验证，
 不采纳 state。B 对两种 v1 均执行一次安全扫描，写入独立的 v2 格式。
@@ -350,6 +351,48 @@ CPU 计整个进程，包含同时运行的查询；peak RSS 是 chunk 边界采
 末轮 estimated overlay 40,000 bytes 来自 10k 个复用空闲 UInt32 槽，没有 20×10k 个已删除字符串。
 RSS 和 query work 未随轮数线性增长；重开 base/model 和真实 CLI 再次 warm 均通过。
 
+
+## 本机全盘范围索引体积实测（2026-10-05）
+
+使用本轮 v0.3.0 release 二进制（代码提交 `2c2d811`），真实扫描本机目录并写入 v2 索引。
+与上面的合成 benchmark 不同，这里测的是实际文件名分布；MB/GB 均使用十进制。
+
+分别运行 `serve --root /`、`serve --root /System/Volumes/Data` 和 `serve --root "/Volumes/Data 1"`，
+worker=4、latency=20 ms，使用独立拥有的同一个 0700 临时 cache。
+等待 scan/replay 到 live，正常退出并保存收到的 namespace 更新后，读取最终快照的 header/records，
+用 `stat` 测文件长度和已分配块；不读取用户文件内容、不需要 root、不访问 raw disk。
+三次运行均退出码 0，临时索引随后全部清理，既有用户缓存未修改。
+
+这台 Mac 的 `/` 可见目录视图已经包含 `/Users` 等用户数据目录；实测相关路径的 st_dev 相同。
+因此主结果采用 `/` + `Data 1` 两份索引，不把 `/System/Volumes/Data` 的重叠视图再相加。
+以下是两份索引的条目数相加，包含各自 root 和挂载边界目录，不是去重后的 inode 数。
+
+| 范围 | records | regular files | directories | symlinks | other | base bytes | base MB | bytes/entry |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `/`：系统及用户目录视图 | 2,918,502 | 2,295,555 | 474,586 | 148,243 | 118 | 253,089,857 | 253.09 | 86.72 |
+| `/Volumes/Data 1`：工作盘 | 1,479,905 | 1,396,525 | 78,100 | 5,280 | 0 | 141,187,055 | 141.19 | 95.40 |
+| 两份索引合计 | **4,398,407** | **3,692,080** | **552,686** | **153,523** | **118** | **394,276,912** | **394.28** | **89.64** |
+
+两份 base 加两个 128-byte state 和零字节 lock，逻辑文件长度合计 **394,277,168 bytes**，约 **0.4 GB**。
+比合成基准的约 60 bytes/entry 更大；实际原名/折叠名 blob 长度取决于用户文件名分布，
+不能用合成短文件名的平均值直接外推实盘。
+
+各扫描完成时的已分配块采样（`st_blocks × 512`，包含 state/lock）：
+
+| 范围 | 已分配 bytes | MB | 启动、replay、正常退出耗时 |
+| --- | ---: | ---: | ---: |
+| `/` | 261,181,440 | 261.18 | 214.70 s |
+| `Data 1` | 141,193,216 | 141.19 | 55.26 s |
+
+两个不同采样时刻的分配块之和约 402.37 MB；不是严格同时采样的全盘瞬时值。
+常驻规划可按约 0.4 GB，合并时需要保留旧 base 并生成新 base，按这批数据建议预留约 **0.8 GB**。
+这里的文件体积/已分配块不是 SSD 的累计物理写入量；初始 replay 有 namespace 变化时，正常退出会再次合并写 base。
+
+独立数据卷视图作为对照：`/System/Volumes/Data` 有 2,404,780 records，
+base 216,137,950 bytes（216.14 MB、89.88 bytes/entry），运行 210.44 s；它不计入上述主结果。
+恢复卷、VM、Preboot 等辅助卷、其他设备边界、不可读目录及 symlink 目标不递归。
+运行期间 permission-denied 计数分别为 `/` 950、数据卷 891、工作盘 4，包含 replay/reconciliation 的重复访问，
+不能当作不同不可读目录的数量。这是当前可访问范围的索引体积，不是完整 inode 总量或一次全盘 fresh verify 结果。
 
 ## 限制与后续边界
 
