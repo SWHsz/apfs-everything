@@ -7,8 +7,9 @@ Swift 6 / macOS 14+，无第三方 Swift package；目前是可运行的桌面 A
 
 ## 构建与运行
 
+在仓库根目录运行：
+
 ```bash
-cd "/Volumes/Data 1/everything"
 bash scripts/build_app.sh
 open dist/APFSFind.app
 # 或：bash scripts/run_app.sh
@@ -55,6 +56,9 @@ open dist/APFSFind.app
 只读取目录项与元数据，不读文件内容，不访问 raw disk，不跟随 symlink 目录，默认不跨设备。
 best-effort 禁止 dataless materialization；不联网、无 telemetry、无运行日志文件。
 本机实盘测量与限制见 [STATUS.md](STATUS.md)，引擎和格式细节见 [architecture](docs/architecture.md)。
+
+本机约 451 万条索引的两份 snapshot 合计 **404.89 MB**；warm search-ready 为系统盘 **3.53 s**、Data 1 **1.71 s**。
+两次独立复测的两卷查询 p95 为 **55–65 ms**；首次 `config` 的 162.60 ms 尾延迟也完整记录在 STATUS。
 
 ## 已知限制
 

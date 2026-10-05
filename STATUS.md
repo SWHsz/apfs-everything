@@ -1,8 +1,8 @@
 # v0.4.0 — Usable Desktop Alpha
 
 开始 HEAD：`a90920044806d2aca7d627a59963db4f0da67a8a`（main，工作区干净）。本轮仅本机 Mac 开发。
-三个顺序 milestone：A `27e3596`，B `9da1cbb`，C 见 `feat: add desktop search alpha` 提交。
-结束 HEAD 与实盘数据将在测量/CI 完成后追加。snapshot v2 布局保持不变，原 127 项测试全部保留。
+三个顺序 milestone：A `27e3596`，B `9da1cbb`，C `a5af396`。
+验收结束代码 HEAD：`24eb0831d1f8e5c5aa201145d7700bf4dd0c5dd4`；后续提交只更新测量文档。snapshot v2 布局保持不变，原 127 项测试全部保留。
 
 ## 已完成实现
 
@@ -25,8 +25,10 @@
 ## 本机测试与桌面 smoke（2026-10-06）
 
 原始基线 127 tests 通过。A 136、B 141 tests 通过，均保留默认 native FSEvents 集成。
-最终 Core 142 + Desktop 5 = **147 tests**，0 failures；仅可选真实挂载测试 1 skip。
-ASan 完整 Core 141 + Desktop 5 已通过；最终新增 backoff 测试由 CI ASan 再验证。
+最终 Core 145 + Desktop 5 = **150 tests**，0 failures；仅可选真实挂载测试 1 skip。
+最终代码 macOS 15 CI ASan 完整 150 tests 通过，0 failures。
+本机最终普通测试 Core 145 为 51.337 s，Desktop 5 通过；完整 ASan Core 145 为 137.854 s，Desktop 5 通过，
+0 AddressSanitizer errors。发布构建、最后一次 bundle 构建、Info.plist 和 ad-hoc signature 验证均通过。
 额外 TSan 首次发现 lazy CompactionScheduler 初始化竞态，已改成构造阶段初始化；
 修复后的完整 Core 141 + Desktop 5 TSan 通过，0 warnings，不隐藏首次失败。
 
@@ -44,7 +46,75 @@ ASan 完整 Core 141 + Desktop 5 已通过；最终新增 backoff 测试由 CI A
 
 新 synthetic mmap benchmark：2 × 100,000 entries、5 warmup + 30 samples、global top 50，
 p50 2.943 ms / p90 2.995 / p95 **3.031** / p99 3.047 / max 3.047；RSS 91.28 MB。
-真实大索引独立进程测量正在运行，最终记录不以 synthetic 代替实盘结果。
+真实大索引独立进程测量见下方；synthetic 不替代实盘结果。
+
+## v0.4 实盘结果（2026-10-06，本机 arm64 / macOS 27.0.1 / Xcode 27.0 / Swift 6.4）
+
+所有扫描只读取目录项和元数据；缓存与变更位于本任务新建的 UUID 目录，退出后按 inode/device/owner/mode 验证并清理。
+日用 cache 未参与 benchmark，没有删除用户已有缓存。先独立 cold 进程准备、退出，再独立 warm 进程测量。
+实盘 worker 提高自动 compaction 阈值以隔离 ready/idle/fast-exit；生产应用阈值未改变。
+
+| root | entries（warm live） | snapshot bytes | warm search-ready | warm live | overlap skipped | query cancel 返回 | small overlay fast exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `/` | 3,019,488 | 262,843,841 | 3.530 s | 63.915 s | 790 | 2.647 ms | 0.256 ms |
+| `/Volumes/Data 1` | 1,490,087 | 142,042,089 | 1.707 s | 2.768 s | 1,487 | 1.716 ms | 0.158 ms |
+
+两份 snapshot 合计 **404,885,930 bytes / 404.89 MB**；warm 两卷均 full_scans=0。
+fast exit 均 compactions=0、实际 disk_bytes_written=0、保留未持久 namespace，未重写 base。
+100 rename + create 的独立回归逐字节验证原 base 不变，重新启动 replay 后 verify 一致。
+取消的百万 base 正确性、writer 可用、mmap 生命周期由专项测试验证；实盘表中的数值是取消请求至查询返回耗时。
+
+根目录 replay 仍有大量不可安全跳过的历史歧义事件：95,451 directory reconciles、9 subtree reconciles、
+4,337 special events，metadata lookup 109；Data 1 为 3,052 / 6 / 2,585 / 320。
+Root live 尚需 63.915 s，本轮没有通过丢弃歧义事件加速，也不宣称 live 时间已全面改善。
+可搜索时间已独立于 live，分别达到 <5 s / <3 s 目标；replay 中明确显示可能陈旧。
+Cold ready/live 为 121.355/187.806 s 与 54.705/55.781 s，peak RSS 2.433 / 1.202 GB。
+
+### Idle
+
+实盘 60 s 中 Root / Data 1 都有 5 次 direct namespace patch，scheduler wakeups 均 0，实际写盘均 0。
+Root CPU user+system 5.012 s、实际读取 65,536 bytes；Data 1 CPU 0.00704 s、读取 0。
+实盘有系统事件，不能将其称为“完全无 namespace mutation”。
+另用独立安静临时 root、**默认生产 compaction policy** 实测 60.005 s：namespace events=0、
+compaction scheduler wakeups=0、CPU 0.000177 s、disk read/write=0、进程 idle wakeups=0（interrupt wakeups=2）。
+周期 timer 已移除；初始扫描的进度 timer 和真实 FSEvents callback 不计入 compaction scheduler。
+
+### 两卷查询
+
+每个查询独立 5 warmup + 30 samples；global top 50；两个真实 v2 mmap base，由同一 MultiVolumeCoordinator 并行合并。
+首次 4,509,567 entries；复测重新准备独立缓存，共 4,509,729 entries。查询 worker 不启动在线 watcher，测量 mapped query 层。
+
+| query | 首次 p95 | 独立复测 1 p95 | 独立复测 2 p95 |
+| --- | ---: | ---: | ---: |
+| `apfsfi` | 78.414 ms | 65.255 ms | 62.162 ms |
+| `swift` | 71.382 ms | 59.874 ms | 62.324 ms |
+| `config` | 162.596 ms | 61.128 ms | 61.484 ms |
+| `document` | 56.821 ms | 55.088 ms | 56.030 ms |
+
+首次 `config` p95 162.596 ms 超过 120 ms 目标，原结果完整保留；两次复测所有查询 p95 为 55–65 ms，
+均低于目标，最高单次 78.949 ms。没有更换搜索算法或减少验证条目来制造达标。
+复测 RSS 为 597.80 MB。尾延迟可能受系统调度/内存压力影响，这是推断，本轮没有逐样本证据确定首次 outlier 原因。
+
+### 原 CLI 基准
+
+`bench --files 1000 --latency-ms 20` PASS；create/delete/same-directory rename/cross-directory rename
+p95 分别为 **22.126 / 22.450 / 23.512 / 24.844 ms**，各 100 samples、0 timeouts。
+10,000 content writes generation 不变、0 reconciliation；create/delete storm verify 均 missing=0 / extra=0。
+原 benchmark JSON 的 version 字段沿用 0.3.1（旧 harness），执行的发布 binary 来自本轮 v0.4 代码。
+
+### CI 与诊断
+
+验收代码 `24eb083` 的 [macOS 15 CI](https://github.com/SWHsz/apfs-everything/actions/runs/37346128381)：
+**deterministic / integration / address-sanitizer / desktop-build 四项全绿**。
+Core / Desktop 全部 150 tests 保留，native FSEvents 默认运行；optional physical mount test 默认 skip。
+
+[首次 CI](https://github.com/SWHsz/apfs-everything/actions/runs/37344187099) 失败保留：
+桌面测试固定 30 ms 等待后过早读取空结果；ASan 的 95 ms 并行耗时断言实测 123.456 ms。
+`29554f7` 改为等待真实 UI result；`24eb083` 使用同步门直接证明两个查询同时进入，串行实现会超时失败。
+并行性能仍由独立 synthetic/实盘 benchmark 验收，没有删除结果/ranking/offline/取消断言或跳过 ASan。
+TSan 的 lazy scheduler 初始化竞态在 C 中改为构造期创建；修复后完整本机检查无 warnings。
+
+详细原始输出位于本机 `/private/tmp/apfsfind-v040-*`，不提交日志、私有文件路径列表或索引。
 
 ## 当前限制与后续
 
