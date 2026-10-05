@@ -46,7 +46,7 @@ macOS 自带的 `/tmp`、`/var` 别名经过验证后支持，网络卷和 autof
 | 命令 | 行为 |
 | --- | --- |
 | `:stats` | base/overlay、generation/cursor、恢复、合并、查询分阶段、CPU/RSS |
-| `:verify` | fresh scan 比较 path set，报告 missing/extra；需要目录暂时静止 |
+| `:verify` | fresh scan 比较 path set，再复读差异目录；同时报告 raw 差异、复核后的 missing/extra 和变化路径 |
 | `:checkpoint` | namespace 变化则合并；只有 cursor 变化则写 state；均未变化则无 I/O |
 | `:compact` | 强制请求后台合并，重复请求不会重复启动 |
 | `:rebuild` | 后台全量扫描，重新捕获设备 fence、replay、映射新基础索引 |
@@ -162,6 +162,9 @@ stdout 最后一行为 JSON；进度输出 stderr。查询结果数量为最多 
 默认新建 `/private/tmp/apfsfind-real-cache-UUID`。可用 `--cache-dir` 指定符合该形式的**新路径**；
 现有目录会被拒绝，默认持久缓存不参与。测试变更仅在单独的 UUID 目录中，结束后清理两者。
 错误、清理失败或最终 verify 差异会返回非零。活动系统目录在 fresh scan 期间仍可能变化，原始差异会保留。
+verify 不是文件系统原子快照：日志轮转等发生在扫描之后时，使用同一 bulk reader 复读差异目录，
+检查最新目录项与在线索引是否相符；保留 `raw_missing` / `raw_extra` / 每次尝试 / `revalidated_races`。
+持续缺失、ghost、元数据不可读仍失败，不按系统目录名称忽略差异，也不修改索引来制造验证通过。
 I/O 使用 `proc_pid_rusage` 实际计数，压缩内存使用 `TASK_VM_INFO`；SDK 未提供的 logical reads 不会估算。
 v2 的 folded-name 去重只统计潜在收益，不修改格式。卷根的系统 `.fseventsd` 事件日志排除在扫描和维护范围之外；
 用户普通目录下同名文件夹仍会索引。详细结果见 [STATUS.md](STATUS.md)。

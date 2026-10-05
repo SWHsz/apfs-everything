@@ -250,6 +250,7 @@ enum CLI {
             case ":verify":
                 let result = try coordinator.verify()
                 print("verify: missing=\(result.missing.count) extra=\(result.extra.count) consistent=\(result.isConsistent)")
+                print("raw scan comparison: missing=\(result.rawMissing.count) extra=\(result.rawExtra.count); current-directory revalidated races=\(result.racedPaths.count)")
                 for path in result.missing.prefix(20) { print("missing: \(path)") }
                 for path in result.extra.prefix(max(0, 20 - result.missing.count)) { print("extra: \(path)") }
             case ":rebuild":

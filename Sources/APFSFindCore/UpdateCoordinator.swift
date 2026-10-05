@@ -21,7 +21,33 @@ public struct StartupStatus: Sendable {
 public struct VerificationResult: Sendable {
     public let missing: [String]
     public let extra: [String]
+    public let rawMissing: [String]
+    public let rawExtra: [String]
+    public let racedPaths: [String]
     public var isConsistent: Bool { missing.isEmpty && extra.isEmpty }
+    public var rawSetsAgree: Bool { rawMissing.isEmpty && rawExtra.isEmpty }
+
+    /// A large scan is not an atomic filesystem snapshot. Re-read only the
+    /// differing directories and compare their current names with the index.
+    /// Keep every original difference; unknown metadata never counts as a pass.
+    static func revalidated(missing: [String], extra: [String],
+                            exists: (String) -> Bool?, indexed: (String) -> Bool) -> Self {
+        var confirmedMissing: [String] = [], confirmedExtra: [String] = [], races: [String] = []
+        let originalMissing = Set(missing)
+        for path in (missing + extra).sorted() {
+            guard let present = exists(path) else {
+                if originalMissing.contains(path) { confirmedMissing.append(path) }
+                else { confirmedExtra.append(path) }
+                continue
+            }
+            let online = indexed(path)
+            if present == online { races.append(path) }
+            else if present { confirmedMissing.append(path) }
+            else { confirmedExtra.append(path) }
+        }
+        return .init(missing: confirmedMissing, extra: confirmedExtra,
+                     rawMissing: missing, rawExtra: extra, racedPaths: races)
+    }
 }
 public struct CoordinatorStats {
     public let dictionary: [String: Any]
@@ -650,11 +676,33 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     public func verify() throws -> VerificationResult {
-        let scan = try BulkScanner(root: root, workerCount: configuration.workerCount, excludedRoots: excludedRoots).scan(cancellation: cancellation)
+        let scanner = makeScanner()
+        let scan = try scanner.scan(cancellation: cancellation)
         guard !scan.cancelled else { throw CocoaError(.userCancelled) }
+        guard flushEvents(timeout: 120) else { throw SnapshotError.invalid("verification event flush timed out") }
         let actual = Set(scan.entries.map(\.path)).union([root])
         let online = index.snapshotPaths()
-        return VerificationResult(missing: actual.subtracting(online).sorted(), extra: online.subtracting(actual).sorted())
+        let missing = actual.subtracting(online).sorted(), extra = online.subtracting(actual).sorted()
+        // A mass discrepancy stays a hard failure; do not turn verification
+        // into millions of metadata probes or silently hide unreadable paths.
+        guard missing.count + extra.count <= 10_000 else {
+            return .init(missing: missing, extra: extra, rawMissing: missing, rawExtra: extra, racedPaths: [])
+        }
+        var refreshed: [String: Set<String>] = [:], unknown = Set<String>()
+        return .revalidated(missing: missing, extra: extra, exists: { path in
+            if path == root { return true }
+            let parent = PathCanonicalizer.parent(of: path)
+            if unknown.contains(parent) { return nil }
+            if refreshed[parent] == nil {
+                do {
+                    refreshed[parent] = Set(try scanner.readDirectory(parent, rootDeviceID: scan.rootDeviceID,
+                                                                     cancellation: cancellation).map(\.path))
+                } catch let error as ScannerError where [ENOENT, ENOTDIR, ELOOP, EXDEV].contains(error.code) {
+                    refreshed[parent] = []
+                } catch { unknown.insert(parent); return nil }
+            }
+            return refreshed[parent]!.contains(path)
+        }, indexed: { index.entry(at: $0) != nil })
     }
 
     public func synchronizeWriter() { writer.sync {} }

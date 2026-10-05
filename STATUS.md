@@ -39,13 +39,20 @@ macOS 15 的 [诊断 CI](https://github.com/SWHsz/apfs-everything/actions/runs/3
 仅排除实际卷根的系统 `.fseventsd`（在数据盘初次测量中产生 7 个 journal missing）；
 普通用户目录中同名目录保留。新增 journal 范围与旧 snapshot warm 排除升级回归。
 
+第二轮系统盘：socket 修复后 compaction 的第二次 raw comparison 为 0/0；清理后的三次 raw comparison
+分别为 6/24、2/3、3/5，涉及运行中的系统诊断日志轮转、临时文件和 Codex 自身资源更新。
+完整尝试保留在 JSON；没有将其写成通过。验证器现先 flush 扫描期间的事件，再用同一安全 bulk reader
+复读差异目录，报告 raw 差异与复核后的实际差异，未知元数据保守失败、超过 10k 差异直接失败。
+四项回归确保持续 missing/ghost 不会清零、读取失败不会清零、扫描之后创建/删除可被验证为时序变化。
+不新增通用 cache/log 排除，不修改在线索引来通过 verify；不声称获得了原子文件系统快照。
+
 ## v0.3.1 验证基线
 
 - 初始 release build：PASS；原 105 项测试全部通过。
 - 原 RAM benchmark：1,000 storm files / latency 20 ms；create/delete/same/cross rename p95：23.57 / 21.74 / 21.46 / 21.49 ms。
   内容写入 10,000 次，generation 不变、0 reconciles；创建/删除风暴各 verify 0/0。
 - 修复前上述三个 suite 各 50 次：全部通过；没有把它当作 CI 崩溃已解决的证据。
-- 最终完整普通测试、ASan、TSan：各 123 项，1 个 opt-in mount smoke 默认跳过，0 failures。
+- 最终完整普通测试、ASan、TSan：各 127 项，1 个 opt-in mount smoke 默认跳过，0 failures。
   ASan/TSan 均实际执行完整 suite；未通过 skip 环境变量规避原生 watcher。
 - 修复后的三个 suite 各 50 次：全部通过。
 - 新增进程 I/O API 成功/单调、state-only 写入远小于 full snapshot、ASCII/Unicode/NFD 字节统计、UUID 目录身份与清理拒绝测试。

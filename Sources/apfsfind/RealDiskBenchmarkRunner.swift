@@ -298,6 +298,10 @@ struct RealDiskBenchmarkRunner {
             let start = ProcessResourceSample.capture(), v = try c.verify()
             last = ["missing": v.missing.count, "extra": v.extra.count, "attempt": attempt,
                     "missing_sample": Array(v.missing.prefix(10)), "extra_sample": Array(v.extra.prefix(10)),
+                    "raw_missing": v.rawMissing.count, "raw_extra": v.rawExtra.count, "raw_sets_agree": v.rawSetsAgree,
+                    "raw_missing_sample": Array(v.rawMissing.prefix(10)), "raw_extra_sample": Array(v.rawExtra.prefix(10)),
+                    "revalidated_races": v.racedPaths.count, "revalidated_race_sample": Array(v.racedPaths.prefix(10)),
+                    "mode": "fresh_scan_then_current_directory_difference_revalidation",
                     "resources": ProcessResourceSample.capture().delta(since: start)]
             attempts.append(last)
             last["attempts"] = attempts
