@@ -1,9 +1,43 @@
 import Foundation
+import Darwin
 import CoreServices
 import XCTest
 @testable import APFSFindCore
 
 final class LiveUpdateIntegrationTests: XCTestCase {
+    func testUnixSocketCreationWithUntypedMetadataEventReconcilesParent() throws {
+        try requireFSEvents()
+        let tree = try OwnedBenchmarkDirectory(parent: "/private/tmp", prefix: "apfsfind-real-bench-")
+        defer { try? tree.remove() }
+        let coordinator = try UpdateCoordinator(root: tree.path)
+        defer { coordinator.stop() }
+        try coordinator.start()
+        XCTAssertTrue(coordinator.waitUntilLive())
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        let path = tree.path + "/local.sock", bytes = Array(path.utf8) + [UInt8(0)]
+        var address = sockaddr_un()
+        XCTAssertLessThanOrEqual(bytes.count, MemoryLayout.size(ofValue: address.sun_path))
+        guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { return }
+        address.sun_family = sa_family_t(AF_UNIX)
+        let length = socklen_t(2 + bytes.count)
+        address.sun_len = UInt8(length)
+        withUnsafeMutableBytes(of: &address.sun_path) { destination in
+            bytes.withUnsafeBytes { destination.copyMemory(from: $0) }
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, length) }
+        }
+        XCTAssertEqual(bound, 0)
+        guard bound == 0 else { return }
+        waitFor("socket visible") { coordinator.index.entry(at: path)?.kind == .other }
+        XCTAssertEqual(unlink(path), 0)
+        waitFor("socket removed") { coordinator.index.entry(at: path) == nil }
+        XCTAssertTrue(coordinator.flushEvents())
+        XCTAssertTrue(try coordinator.verify().isConsistent)
+    }
     func testStopRequestedInsideCallbackDoesNotSyncOntoItsOwnQueue() throws {
         try requireFSEvents()
         let tree = try TemporaryTree(), identity = try VolumeIdentity.discover(root: tree.root)

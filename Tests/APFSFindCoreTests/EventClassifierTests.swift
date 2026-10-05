@@ -23,6 +23,13 @@ final class EventClassifierTests: XCTestCase {
         XCTAssertEqual(classify(0), .ambiguous)
         XCTAssertEqual(classify(Int(0x80000000)), .ambiguous)
     }
+    func testUntypedMetadataCannotBeAssumedToBeContentOnly() {
+        for flag in [kFSEventStreamEventFlagItemModified, kFSEventStreamEventFlagItemInodeMetaMod,
+                     kFSEventStreamEventFlagItemXattrMod, kFSEventStreamEventFlagItemFinderInfoMod,
+                     kFSEventStreamEventFlagItemChangeOwner] {
+            XCTAssertEqual(classify(flag), .ambiguous)
+        }
+    }
     func testInvalidationPrecedesOtherFlags() {
         for flag in [kFSEventStreamEventFlagUserDropped, kFSEventStreamEventFlagKernelDropped,
                      kFSEventStreamEventFlagEventIdsWrapped, kFSEventStreamEventFlagRootChanged] {

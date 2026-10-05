@@ -43,7 +43,14 @@ public enum EventClassifier {
             if type == UInt32(kFSEventStreamEventFlagItemIsSymlink) { return .simpleCreate(.symlink) }
             return .ambiguous
         }
-        if f & content != 0 { return .contentOnly }
+        // Metadata flags without a known object type can describe namespace
+        // creation (observed for bind(AF_UNIX) as XattrMod without Created).
+        // Preserve the low-cost ignore path only for typed existing objects.
+        if f & content != 0 {
+            let type = f & types
+            return [UInt32(kFSEventStreamEventFlagItemIsFile), UInt32(kFSEventStreamEventFlagItemIsDir),
+                    UInt32(kFSEventStreamEventFlagItemIsSymlink)].contains(type) ? .contentOnly : .ambiguous
+        }
         return .ambiguous
     }
 }
