@@ -150,6 +150,9 @@ best-effort 关闭线程级 dataless materialization，检查本地卷/autofs �
 
 ## 真实磁盘验证
 
+最终 v0.3.1 实盘：两份基础索引合计 **403.141 MB**；独立 warm live RSS 为 **474.792 / 259.424 MB**。
+暖启动含 replay，为 **31.84 / 76.73 s**；实际一次采样，环境持续变化。
+
 ```bash
 .build/release/apfsfind real-disk-bench --root / --idle-seconds 60
 .build/release/apfsfind real-disk-bench --root "/Volumes/Data 1" --idle-seconds 60

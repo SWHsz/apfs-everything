@@ -60,7 +60,7 @@ macOS 15 的 [诊断 CI](https://github.com/SWHsz/apfs-everything/actions/runs/3
 
 ## v0.3.1 真实磁盘测量
 
-正在采集 `/` 与 `/Volumes/Data 1`；不重复相加 `/System/Volumes/Data`。
+已采集 `/` 与 `/Volumes/Data 1`；不重复相加 `/System/Volumes/Data`。
 每次使用新的 0700 `/private/tmp/apfsfind-real-cache-UUID`，变更只发生于单独 owned UUID 目录。
 清理核对规范父路径、精确 UUID、inode/device/type/owner/mode；不接受既有 cache 目录，不跟随 symlink。
 冷进程退出后才启动暖进程，空闲 60 秒；测试文件写入在其他进程执行，因此不混入索引进程的 I/O。
@@ -74,6 +74,230 @@ SDK v4 未提供 logical reads：JSON 明确置 null / unavailable。
 `fsync_validate_publish` 包含 file fsync、只读 validation、directory map、rename 和目录 fsync；
 `serialization` 与该阶段不重叠，`.total` 为含 planning 的整体阶段，不与分项累加。
 文件系统 metadata overhead 未能从这些公开计数单独分离；没有伪造 SSD 底层写放大量。
+
+## 最终提交与 CI
+
+测量代码 HEAD：`b3a5a7c5c2801a91845045e02962ba823ed76089`；开始 HEAD 为 `35689d19553f768129fdec493cfd8fcd73c1cc9f`。结束文档提交在此代码之后，最终 hash 见 Git history / 本轮回复。
+最终代码 [CI run 37322535828](https://github.com/SWHsz/apfs-everything/actions/runs/37322535828)：release build、deterministic、native integration、ASan 全部 PASS，三个 job 无 continue-on-error。
+127 项本机普通测试、完整 ASan、完整 TSan：各 1 个默认 opt-in mount skip、0 failures。deterministic 模式 34 skips（仅分类诊断用）；完整原生模式不跳过普通 watcher。
+最新三个 suite 各 50 次：SnapshotAtomicityTests / LiveUpdateIntegrationTests / HybridRecoveryTests，150 次退出码全部 0。原 105 项全部保留。
+最终 RAM bench（1,000 files / latency 20 ms）create/delete/same/cross rename p95：21.672 / 21.953 / 21.487 / 21.482 ms；10k 内容写入无 namespace 工作，风暴与清理验证通过。
+
+提交：`8c89167` CI 定位；`2589b13` readlink 根因修复；`5ccf6e8` 生命周期/挂载；`b10846f` 真实资源入口；`a109b68` 无类型元数据事件；`bfb9fcc` SDK 事件诊断/保留尝试；`0aecb23` 独立于通知支持的 socket 回归；`b3a5a7c` 保留 raw 的目录差异复核。
+
+## 最终实盘数据
+
+本机 arm64 macOS 27.0.1 (26A434)、Swift 6.4 / SDK 27.0；target macOS 14。日期 2026-10-05，Asia/Tokyo。最后两轮测量期间没有并行运行本机测试或编译；未使用 HPC。单位 MB=1,000,000 bytes。
+两 root 独立测量；不相加 `/System/Volumes/Data`。所有 cache/workload 为新建 0700 UUID 目录；三进程结束后已删除。每种查询 first 单列，然后 5 次 warmup + 30 次测量，limit=50。
+
+| 指标 | / | /Volumes/Data 1 |
+| --- | --- | --- |
+| cold / warm / cleanup PID | 55823 / 56201 / 56823 | 57494 / 57779 / 58122 |
+| cold layout records | 3001900 | 1488325 |
+| cold snapshot logical bytes / allocated bytes | 261267617 / 272338944 | 141873679 / 147120128 |
+| warm cache logical / allocated bytes (含 state/lock) | 261268611 / 265863168 | 141873993 / 141881344 |
+| cold time to live ms | 156189.216 | 122596.211 |
+| warm time to live ms | 31836.806 | 76731.945 |
+| cold startup user / system CPU s | 126.911 / 83.047 | 74.953 / 40.115 |
+| warm startup user / system CPU s | 10.305 / 15.110 | 23.231 / 24.888 |
+| startup_mode | warm_snapshot | warm_snapshot |
+| snapshot_open_ms | 0.018 | 0.019 |
+| snapshot_validation_ms | 2606.364 | 1416.944 |
+| snapshot_mmap_ms | 1.914 | 0.697 |
+| snapshot_restore_ms | 176.702 | 29.994 |
+| warm_replay_ms | 29050.168 | 75281.671 |
+| warm_replay_events | 4535 | 3987 |
+| full_scans | 0 | 0 |
+| base_materialized_file_entries | 0 | 0 |
+| materialized_file_entries | 0 | 0 |
+| base_records | 3001906 | 1488327 |
+| base_directories | 498011 | 79126 |
+| directory_map_entries | 498011 | 79126 |
+| directory_map_estimated_bytes | 93504587 | 14695871 |
+| overlay_live_entries | 2 | 0 |
+| base_tombstones | 2 | 0 |
+| tombstone_bitmap_bytes | 375240 | 186048 |
+
+`snapshot_restore_ms` 在 warm 路径为 directory-map build；“没有 full_scans”并不意味着 replay 没有做目录 I/O，下面列出实际事件/reconciliation 成本。cold 的初始 scan / index build 与总 time-to-live 不等价。
+
+| 内存/空闲 | / | /Volumes/Data 1 |
+| --- | --- | --- |
+| process start RSS MB | 6.095 | 6.095 |
+| before mmap RSS MB | 7.700 | 7.750 |
+| immediately after mmap RSS MB | 7.700 | 7.750 |
+| after validation RSS MB | 281.756 | 156.369 |
+| after directory map RSS MB | 427.901 | 174.195 |
+| live RSS MB | 474.792 | 259.424 |
+| after 60s idle RSS MB | 475.103 | 259.539 |
+| warm startup lifetime peak RSS MB | 512.852 | 259.424 |
+| live physical footprint MB | 152.454 | 65.062 |
+| live / idle compressed MB | 0.000 / 0.000 | 0.000 / 0.000 |
+| cold startup lifetime peak RSS MB | 2459.615 | 1445.102 |
+| idle wall ms | 60005.054 | 60005.088 |
+| idle user / system CPU s | 1.731 / 0.244 | 0.004 / 0.006 |
+| idle process idle / interrupt wakeups | 97 / 194 | 71 / 123 |
+| idle compaction_timer_wakeups | 120 | 120 |
+| idle fsevents_received | 130 | 1 |
+| idle fsevents_processed | 130 | 1 |
+| idle ignored_content_events | 62 | 0 |
+| idle directory_reconciles | 17 | 0 |
+| idle subtree_reconciles | 1 | 0 |
+| idle scanner_directories | 17 | 0 |
+| idle scanner_entries | 151050 | 0 |
+
+timer 0.5 s 一次只检查 compaction 条件，没有周期性全盘扫描。idle 中有实际 FSEvents；目录读取由 namespace/歧义事件触发。冷启动/verify 会临时分配完整路径集合；它们的 lifetime peak 不能当作 warm 常驻 RAM 或单次 CP 峰值。
+
+### 查询：`/`
+
+| 类型 | 实际 query | 返回 | first ms | p50 | p90 | p95 | p99 | max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| exact_basename | `046D_B010_0001_000C_real.rpt_desc` | 1 | 28.784 | 23.915 | 24.023 | 24.097 | 24.110 | 24.110 |
+| prefix | `046D_` | 50 (limit) | 59.832 | 59.584 | 60.004 | 60.239 | 60.691 | 60.691 |
+| substring | `6D_B01` | 15 | 58.413 | 58.531 | 59.371 | 59.646 | 59.670 | 59.670 |
+| no_match | `apfsfind-no-match-5E40C444-AD2B-4177-811F-2787DB921CE5` | 0 | 18.303 | 18.042 | 18.293 | 18.338 | 18.855 | 18.855 |
+| one_character | `a` | 50 (limit) | 46.921 | 46.660 | 47.612 | 47.810 | 48.183 | 48.183 |
+| two_character | `py` | 50 (limit) | 65.278 | 64.278 | 65.332 | 65.647 | 66.332 | 66.332 |
+
+| 类型 | base p50/p95/p99 ms | overlay p50/p95/p99 | path p50/p95/p99 | 30次 user/system CPU s | minor/major faults |
+| --- | --- | --- | --- | --- | --- |
+| exact_basename | 23.907 / 24.089 / 24.103 | 0.002 / 0.006 / 0.007 | 0.004 / 0.009 / 0.011 | 0.716 / 0.002 | 12 / 0 |
+| no_match | 18.037 / 18.333 / 18.845 | 0.003 / 0.005 / 0.006 | 0.000 / 0.001 / 0.002 | 0.666 / 0.420 | 0 / 0 |
+| one_character | 46.584 / 47.718 / 48.110 | 0.004 / 0.008 / 0.010 | 0.068 / 0.080 / 0.081 | 1.856 / 0.949 | 12 / 0 |
+| prefix | 59.453 / 60.110 / 60.544 | 0.003 / 0.010 / 0.011 | 0.125 / 0.137 / 0.138 | 1.808 / 0.011 | 32 / 0 |
+| substring | 58.487 / 59.592 / 59.620 | 0.004 / 0.008 / 0.009 | 0.042 / 0.050 / 0.051 | 2.168 / 0.051 | 20 / 0 |
+| two_character | 64.177 / 65.549 / 66.212 | 0.004 / 0.006 / 0.007 | 0.094 / 0.111 / 0.116 | 2.465 / 1.400 | 9 / 0 |
+
+### 查询：`/Volumes/Data 1`
+
+| 类型 | 实际 query | 返回 | first ms | p50 | p90 | p95 | p99 | max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| exact_basename | `9c73569cc35c36b76c959a1e29556b203e047ff5ce6c42268560be6a899e27-uuid@14.0.1.json` | 1 | 17.157 | 6.957 | 7.079 | 7.115 | 7.433 | 7.433 |
+| prefix | `9c735` | 17 | 33.911 | 33.526 | 34.334 | 35.303 | 47.161 | 47.161 |
+| substring | `73569c` | 1 | 32.365 | 32.743 | 33.149 | 34.097 | 34.321 | 34.321 |
+| no_match | `apfsfind-no-match-EE507999-9751-45C7-9CAE-27E99DDE14D6` | 0 | 8.077 | 8.140 | 8.234 | 8.543 | 8.556 | 8.556 |
+| one_character | `a` | 50 (limit) | 30.916 | 30.328 | 30.945 | 30.953 | 31.595 | 31.595 |
+| two_character | `py` | 50 (limit) | 29.787 | 29.549 | 30.182 | 30.408 | 30.465 | 30.465 |
+
+| 类型 | base p50/p95/p99 ms | overlay p50/p95/p99 | path p50/p95/p99 | 30次 user/system CPU s | minor/major faults |
+| --- | --- | --- | --- | --- | --- |
+| exact_basename | 6.952 / 7.110 / 7.422 | 0.001 / 0.003 / 0.005 | 0.002 / 0.006 / 0.007 | 0.209 / 0.000 | 1 / 0 |
+| no_match | 8.137 / 8.536 / 8.546 | 0.001 / 0.004 / 0.007 | 0.000 / 0.001 / 0.002 | 0.245 / 0.000 | 0 / 0 |
+| one_character | 30.244 / 30.862 / 31.487 | 0.004 / 0.008 / 0.010 | 0.077 / 0.091 / 0.095 | 0.911 / 0.002 | 0 / 0 |
+| prefix | 33.497 / 35.245 / 47.102 | 0.003 / 0.009 / 0.009 | 0.032 / 0.046 / 0.049 | 1.014 / 0.003 | 0 / 0 |
+| substring | 32.735 / 34.067 / 34.298 | 0.002 / 0.009 / 0.012 | 0.004 / 0.014 / 0.016 | 0.976 / 0.002 | 0 / 0 |
+| two_character | 29.470 / 30.333 / 30.386 | 0.002 / 0.007 / 0.009 | 0.075 / 0.089 / 0.093 | 0.887 / 0.002 | 0 / 0 |
+
+first 与稳定 warm 分位数分开；没有减少 base 条目，一/二字符查询完整保留。返回 50 不等于全部匹配数，本轮没有新增全量 count 查询。
+
+### 实际累计 I/O（各索引进程的阶段 delta）
+
+logical reads 不可获得；filesystem metadata / SSD 控制器写放大无法独立分离。以下是进程归属计数，不是全机磁盘总量。MB 与 final file size / st_blocks 相互独立。
+
+`/`
+
+| 阶段 | wall ms | user/system CPU s | logical writes MB | disk writes MB | disk reads MB |
+| --- | --- | --- | --- | --- | --- |
+| cold scan | 50733.503 | 44.297/66.952 | 0.000 | 0.000 | 2436.579 |
+| initial snapshot serialization | 2203.473 | 2.016/0.065 | 263.312 | 260.047 | 1.872 |
+| initial snapshot fsync/validate/publish | 2825.252 | 2.793/0.032 | 0.004 | 1.245 | 0.004 |
+| cold startup replay | 46978.094 | 24.935/15.466 | 0.000 | 0.000 | 220.402 |
+| warm startup replay | 29049.994 | 7.542/15.087 | 0.000 | 0.000 | 218.149 |
+| content-only (10k writes, helper process) | 80.454 | 0.000/0.001 | 0.000 | 0.000 | 0.000 |
+| checkpoint request: full CP (G changed) | 6657.306 | 6.570/0.074 | 262.329 | 261.292 | 0.049 |
+| small create/rename/delete | 71.072 | 0.001/0.001 | 0.000 | 0.000 | 0.000 |
+| 10k/2k/5k namespace workload | 1348.236 | 1.263/0.266 | 0.000 | 0.000 | 0.000 |
+| manual full compaction | 12400.328 | 21.472/3.617 | 263.582 | 261.575 | 2.028 |
+| cold graceful exit | 6746.819 | 6.589/0.094 | 262.636 | 261.296 | 1.040 |
+| warm graceful exit | 6732.934 | 6.569/0.083 | 263.545 | 261.591 | 1.921 |
+| cleanup compaction | 7157.692 | 7.079/0.158 | 263.533 | 261.292 | 2.040 |
+| cleanup graceful exit | 6898.168 | 6.604/0.113 | 263.742 | 261.296 | 6.255 |
+
+content G：768 → 768，unchanged=True；small CRUD compactions=0.
+
+`/Volumes/Data 1`
+
+| 阶段 | wall ms | user/system CPU s | logical writes MB | disk writes MB | disk reads MB |
+| --- | --- | --- | --- | --- | --- |
+| cold scan | 18287.145 | 22.542/15.061 | 0.000 | 0.000 | 936.260 |
+| initial snapshot serialization | 1080.359 | 1.048/0.024 | 142.971 | 135.266 | 0.000 |
+| initial snapshot fsync/validate/publish | 1452.987 | 1.443/0.009 | 0.053 | 6.636 | 0.000 |
+| cold startup replay | 73502.052 | 21.856/24.826 | 0.000 | 0.000 | 732.226 |
+| warm startup replay | 75281.491 | 21.791/24.879 | 0.000 | 0.000 | 772.944 |
+| content-only (10k writes, helper process) | 81.947 | 0.000/0.001 | 0.000 | 0.000 | 0.004 |
+| checkpoint request: state-only | 1.188 | 0.000/0.001 | 0.020 | 0.004 | 0.000 |
+| small create/rename/delete | 68.438 | 0.002/0.001 | 0.000 | 0.000 | 0.000 |
+| 10k/2k/5k namespace workload | 1285.767 | 1.218/0.270 | 0.000 | 0.000 | 0.000 |
+| manual full compaction | 3740.934 | 7.856/0.114 | 143.442 | 142.180 | 1.913 |
+| cold graceful exit | 3436.614 | 3.384/0.043 | 143.221 | 141.898 | 0.000 |
+| warm graceful exit | 3459.155 | 3.399/0.045 | 143.450 | 142.184 | 0.041 |
+| cleanup compaction | 3520.310 | 3.379/0.055 | 143.319 | 141.906 | 1.483 |
+| cleanup graceful exit | 0.098 | 0.000/0.000 | 0.000 | 0.000 | 0.000 |
+
+content G：367 → 367，unchanged=True；small CRUD compactions=0.
+
+Root 的 checkpoint 请求若因其他 namespace 变化写了整个 base，就列为 full CP；不把它误称为 128-byte state 写入。Data 1 是否实际走 state-only 由上述 counters 和 delta 确认，另有 20k entries 的隔离 API 写入量回归。
+
+### 大索引 compaction 与最终验证
+
+| 指标 | / | /Volumes/Data 1 |
+| --- | --- | --- |
+| old/new base bytes | 261268449 / 261548519 | 141873957 / 142154027 |
+| CP wall ms | 12400.328 | 3740.934 |
+| CP user/system CPU s | 21.472 / 3.617 | 7.856 / 0.114 |
+| CP logical/disk writes MB | 263.582 / 261.575 | 143.442 / 142.180 |
+| RSS before/after MB | 1256.505 / 1096.204 | 582.074 / 587.383 |
+| process lifetime peak RSS at CP MB | 1517.568 | 729.268 |
+| writer sampled CP peak RSS MB | 1458.668 | 729.252 |
+| overlay before/after | 5003 / 105 | 5001 / 104 |
+| base tombstones before/after | 2 / 5 | 0 / 0 |
+| events buffered/replayed | 1514 / 1514 | 3945 / 3945 |
+| queries during CP / p50/p95/max ms | 185 / 67.031 / 67.895 / 72.096 | 118 / 31.728 / 32.297 / 32.490 |
+| writer wait p50/p95/p99/max ms | 0.000083 / 0.000208 / 0.000208 / 0.000208 | 0.000083 / 0.000208 / 0.000208 / 0.000208 |
+| after CP confirmed missing/extra | 0 / 0 | 0 / 0 |
+| after CP raw missing/extra / revalidated races | 0 / 0 / 0 | 0 / 0 / 0 |
+| after CP attempts | 1 | 1 |
+| after cleanup confirmed missing/extra | 0 / 0 | 0 / 0 |
+| after cleanup raw missing/extra / revalidated races | 1 / 2 / 3 | 0 / 0 / 0 |
+| after cleanup attempts | 1 | 1 |
+
+CP 内另制造 100 个 owned 文件，验证 buffered/replayed；因此 after overlay 可非零。差异复核是新鲜目录项与在线索引的逐项比较，不是原子快照；raw 与 confirmed 均保留，不按系统日志/用户缓存路径忽略。两轮 exit=0、validation_passed=true、cleanup_completed=true。
+
+### v2 布局与 folded dedup 上限
+
+| 字段（cold 映射） | / | /Volumes/Data 1 |
+| --- | --- | --- |
+| record_table_bytes | 120076000 | 59533000 |
+| child_table_bytes | 12007596 | 5953296 |
+| original_name_blob_bytes | 64591908 | 38193559 |
+| folded_name_blob_bytes | 64591833 | 38193536 |
+| folded_same_as_original_count | 1917138 | 1376703 |
+| folded_same_as_original_bytes | 41653593 | 35299320 |
+| potential_fold_dedup_saving_bytes | 41653593 | 35299320 |
+| file_id_nonzero_files | 2354966 | 1403919 |
+| file_id_nonzero_directories | 498009 | 79126 |
+| potential saving MB / snapshot % | 41.654 / 15.943% | 35.299 / 24.881% |
+
+两份 cold snapshot 合计 **403,141,296 bytes / 403.141 MB**；folded bytes 引用 original bytes 的理论上限 **76,952,913 bytes / 76.953 MB（19.088%）**。这是潜在引用复用收益，不是压缩结果；本轮格式完全未变。
+
+## 修改范围、复现与边界
+
+修改职责：SnapshotStore / SnapshotV2Writer / SnapshotReader 的生命周期和资源采样；FSEventsWatcher / EventClassifier / UpdateCoordinator 的 retain/release、callback teardown、事件与验证；FileIndex / DirectoryReconciler / BulkScanner / HybridIndex 的挂载身份及统计；C ProcessResources + Swift ProcessResources；CLI / RealDiskBenchmarkRunner / OwnedBenchmarkDirectory；对应 crash、mount、资源、目录所有权、journal、并发 verify 测试；README / STATUS / CI。main.swift 没有堆入逻辑。
+
+```bash
+swift build -c release
+swift test
+APFSFIND_SKIP_FSEVENTS_TESTS=1 swift test
+swift test --sanitize=address
+swift test --sanitize=thread
+.build/release/apfsfind bench --files 1000 --latency-ms 20
+.build/release/apfsfind real-disk-bench --root / --idle-seconds 60
+.build/release/apfsfind real-disk-bench --root "/Volumes/Data 1" --idle-seconds 60
+```
+
+也可显式 `--cache-dir "/private/tmp/apfsfind-real-cache-$(uuidgen)"`；必须是新路径，拒绝复用。stdout 最后一行 JSON，stderr 进度；测量日志在 `/private/tmp`，不进 Git，私有索引测完删除。
+已知边界：MAC 14 / Intel 未专项实机测；macOS 15 的 Unix socket 通知未在观测窗口出现；TCC/不可读目录计数并继续；活动系统不能获得强原子 path-set 快照。warm replay 可触发大范围 reconciliation，time-to-live 不能用 mmap syscall 时间替代。CPU 数据含实际其他 namespace 事件，未绕过日志目录来达标。没有改 epoch 到 2001，没有更新 v2、添加压缩/复杂索引/网络/telemetry/GUI。
+
+下一轮仅候选 v0.4 Usable Desktop Alpha：MultiVolumeCoordinator，用户选本地卷，跨卷并行搜索/top-k，mount 生命周期；SwiftUI/AppKit 窗口/hotkey/debounce/取消旧 query；打开/Finder 定位/复制路径/图标/来源卷；排除目录/FDA 提示/可选开机启动。本轮未实现。
 
 以下保留 v0.3 的原始验收与第一次体积测量。
 
