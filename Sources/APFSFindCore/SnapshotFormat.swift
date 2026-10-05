@@ -60,6 +60,7 @@ public struct SnapshotHeader: Sendable {
     public var payloadCRC32: UInt32
     public var fileLength: UInt64
     public var rootFileID: UInt64
+    public var snapshotUUID: UUID? = nil
 
     func encoded() -> Data {
         var bytes = Data(repeating: 0, count: SnapshotFormat.headerSize)
@@ -73,6 +74,12 @@ public struct SnapshotHeader: Sendable {
             (152,fileLength),(160,rootFileID)] { bytes.put(value, at: offset) }
         bytes.replaceSubrange(112..<128, with: volumeUUID.bytes)
         bytes.replaceSubrange(128..<144, with: historyUUID.bytes)
+        // Additive v1 flag: legacy v1 with zero reserved bytes remains readable.
+        // v0.3 migrates both forms to the separate v2 layout.
+        if let snapshotUUID {
+            bytes.put(UInt32(1), at: 16)
+            bytes.replaceSubrange(168..<184, with: snapshotUUID.bytes)
+        }
         bytes.put(payloadCRC32, at: 144)
         bytes.put(SnapshotFormat.crc(bytes), at: 148) // Header CRC field is zero while hashing.
         return bytes

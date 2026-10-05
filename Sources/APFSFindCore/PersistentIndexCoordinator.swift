@@ -25,6 +25,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     private var automaticCheckpointNeeded = false
     private var lastCheckpointGeneration: UInt64?
     private var snapshotHeader: SnapshotHeader?
+    private var stateValid = false
+    private var durableCursor: UInt64 = 0
     private var snapshotLoadMS = 0.0, snapshotRestoreMS = 0.0, snapshotWriteMS = 0.0
     private var snapshotMmapMS = 0.0
     private var rssBeforeLoad: UInt64 = 0, rssAfterMmap: UInt64 = 0, rssAfterRestore: UInt64 = 0
@@ -69,7 +71,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
                     restored = try FileIndex.restore(from: reader, cancellation: checkpointCancellation)
                     let restoreMS = (ProcessInfo.processInfo.systemUptime - restoreStart) * 1000
                     let afterRestore = Metrics.processUsage().residentBytes
-                    cursor = reader.header.lastProcessedEventID
+                    let state = cache.effectiveCursor(for: reader.header)
+                    cursor = state.cursor
+                    lock.withLock { stateValid = state.valid; durableCursor = state.cursor }
                     lock.withLock {
                         loaded = true; valid = true; snapshotHeader = reader.header
                         snapshotLoadMS = loadMS; snapshotMmapMS = reader.mmapMilliseconds
@@ -147,15 +151,30 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         do {
             let capture = try core.captureCheckpoint()
             let cache = try SnapshotStore(directory: cacheDirectory, identity: capture.identity)
+            if let h = lock.withLock({ snapshotHeader }), h.snapshotUUID != nil,
+               h.indexGeneration == capture.metadata.generation {
+                let advanced = lock.withLock { capture.cursor > durableCursor }
+                if advanced {
+                    try cache.writeState(header: h, cursor: capture.cursor,
+                        beforePublish: { [core] in try core.validateCheckpoint(capture) })
+                    lock.withLock { durableCursor = capture.cursor; stateValid = true }
+                    metrics.record("state_checkpoints")
+                }
+                return
+            }
             let result = try SnapshotWriter.write(index: index, identity: capture.identity, cursor: capture.cursor,
                 store: cache, metadata: capture.metadata, cancellation: checkpointCancellation,
                 beforePublish: { [core] in try core.validateCheckpoint(capture) })
             metrics.record("snapshot_checkpoints")
             lock.withLock {
                 store = cache; identity = capture.identity; snapshotHeader = result.header
-                lastCheckpointGeneration = capture.metadata.generation; snapshotWriteMS = result.durationMilliseconds
+                lastCheckpointGeneration = capture.metadata.generation; durableCursor = capture.cursor; stateValid = false; snapshotWriteMS = result.durationMilliseconds
                 checkpointPeakRSS = result.peakResidentBytes; automaticCheckpointNeeded = false
                 valid = true; persistenceError = nil
+            }
+            if result.header.snapshotUUID != nil {
+                try? cache.writeState(header: result.header, cursor: capture.cursor,
+                    beforePublish: { [core] in try core.validateCheckpoint(capture) })
             }
             emit(String(format: "[info] Checkpoint saved: %llu bytes, %llu records, %.1f ms",
                 result.header.fileLength, result.header.recordCount, result.durationMilliseconds))
@@ -198,7 +217,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         if saveCheckpoint && persistenceEnabled && !checkpointCancellation.isCancelled {
             core.quiesceForExit()
             group.wait()
-            let changed = lock.withLock { lastCheckpointGeneration != index.stats().generation }
+            let capture = try? core.captureCheckpoint()
+            let changed = lock.withLock { lastCheckpointGeneration != index.stats().generation || (capture?.cursor ?? 0) > durableCursor }
             if currentState == .live && changed {
                 emit("[info] Saving index snapshot...")
                 // An exit is quiesced, so the writer cannot change G during export.
@@ -225,7 +245,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
                 "startup_mode": mode.rawValue, "warm_replay_events": warmReplayEvents, "warm_replay_ms": warmReplayMS,
                 "rss_before_snapshot_load": rssBeforeLoad, "rss_after_mmap": rssAfterMmap,
                 "rss_after_restore": rssAfterRestore, "checkpoint_peak_rss_bytes": checkpointPeakRSS,
-                "checkpoint_running": active
+                "checkpoint_running": active, "state_path": store?.statePath ?? "",
+                "state_valid": stateValid, "snapshot_uuid": snapshotHeader?.snapshotUUID?.uuidString ?? "",
+                "base_cursor": snapshotHeader?.lastProcessedEventID ?? 0, "effective_cursor": durableCursor
             ]
             if let persistenceError { v["persistence_error"] = persistenceError }
             return v

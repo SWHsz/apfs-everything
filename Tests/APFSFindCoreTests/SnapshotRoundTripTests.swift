@@ -5,7 +5,7 @@ import XCTest
 
 final class SnapshotRoundTripTests: XCTestCase {
     func testMinimalRootAndOneFileRoundTrip() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         let index = FileIndex(root: identity.root)
         for withFile in [false, true] {
@@ -26,7 +26,7 @@ final class SnapshotRoundTripTests: XCTestCase {
     }
 
     func testDeepUnicodeSymlinkUnknownIDCompactionAndNoTombstones() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity(), index = sampleSnapshotIndex()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = sampleSnapshotIndex()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: index, identity: identity, cursor: 100, store: store)
         let reader = try store.reader(expectedIdentity: identity)
@@ -48,7 +48,7 @@ final class SnapshotRoundTripTests: XCTestCase {
     }
 
     func testSameLogicalContentHasDeterministicPayloadDespiteInsertionOrder() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         let items: [NamespaceEntry] = [
             .init(path: identity.root + "/z/file", kind: .file),
@@ -64,7 +64,7 @@ final class SnapshotRoundTripTests: XCTestCase {
     }
 
     func testHundredThousandSyntheticEntriesStayUnder64BytesPerEntry() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity(), index = FileIndex(root: "/snapshot-fixture")
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = FileIndex(root: "/snapshot-fixture")
         var batch: [IndexMutation] = []
         for ordinal in 0..<99_899 {
             batch.append(.upsert(.init(path: identity.root + String(format: "/d%03d/f%05d", ordinal % 100, ordinal), kind: .file)))

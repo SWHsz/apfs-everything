@@ -5,7 +5,7 @@ import XCTest
 
 final class SnapshotAtomicityTests: XCTestCase {
     func testFailuresBeforeAndAfterRenameKeepOldValidSnapshot() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity(), index = sampleSnapshotIndex()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = sampleSnapshotIndex()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: index, identity: identity, cursor: 7, store: store)
         let old = try Data(contentsOf: URL(fileURLWithPath: store.path))
@@ -21,7 +21,7 @@ final class SnapshotAtomicityTests: XCTestCase {
     }
 
     func testGenerationChangeAbortsWithoutPublishingAndCancellationPreservesOld() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity(), index = sampleSnapshotIndex()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = sampleSnapshotIndex()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: index, identity: identity, cursor: 7, store: store)
         let old = try Data(contentsOf: URL(fileURLWithPath: store.path))
@@ -34,7 +34,7 @@ final class SnapshotAtomicityTests: XCTestCase {
     }
 
     func testStaleTempCleanupAndSymlinkRejection() throws {
-        let cache = try TemporaryTree(), target = try TemporaryTree(), identity = snapshotIdentity()
+        let cache = try TemporaryTree(cache: true), target = try TemporaryTree(), identity = snapshotIdentity()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         let stale = store.path + ".stale.tmp"
         try Data([1,2,3]).write(to: URL(fileURLWithPath: stale))
@@ -53,7 +53,7 @@ final class SnapshotAtomicityTests: XCTestCase {
     }
 
     func testConcurrentPublisherCannotDeleteAnActiveTemporary() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity(), index = sampleSnapshotIndex()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = sampleSnapshotIndex()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: index, identity: identity, cursor: 7, store: store)
         _ = try SnapshotWriter.write(index: index, identity: identity, cursor: 8, store: store, fault: { point in
@@ -70,7 +70,7 @@ final class SnapshotAtomicityTests: XCTestCase {
     }
 
     func testMidExportCancellationKeepsPreviousSnapshotAndStandardAliasesAreSafe() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity(), index = sampleSnapshotIndex()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity(), index = sampleSnapshotIndex()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: index, identity: identity, cursor: 7, store: store)
         let token = CancellationToken()

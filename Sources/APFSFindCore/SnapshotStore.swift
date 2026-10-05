@@ -75,6 +75,31 @@ public final class SnapshotStore: @unchecked Sendable {
         return try SnapshotReader(fileDescriptor: fd, expectedIdentity: expectedIdentity)
     }
 
+    public var statePath: String { path + ".state" }
+    func readState() throws -> Data {
+        let fd = openat(directoryFD, filename + ".state", O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard fd >= 0 else { throw SnapshotError.io("open state", errno) }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_uid == geteuid(), st.st_mode & S_IFMT == S_IFREG,
+              st.st_mode & 0o7777 == 0o600, st.st_size == CursorState.size else { throw SnapshotError.invalid("state metadata") }
+        var data = Data(repeating: 0, count: CursorState.size)
+        let count = data.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+        guard count == CursorState.size else { throw SnapshotError.invalid("state truncated") }
+        return data
+    }
+    public func effectiveCursor(for header: SnapshotHeader) -> (cursor: UInt64, valid: Bool) {
+        guard let bytes = try? readState(), let state = try? CursorState.decode(bytes), state.matches(header) else {
+            return (header.lastProcessedEventID, false)
+        }
+        return (state.cursor, true)
+    }
+    func writeState(header: SnapshotHeader, cursor: UInt64, beforePublish: () throws -> Void,
+                    fault: ((SnapshotFailurePoint) throws -> Void)? = nil) throws {
+        let data = try CursorState(header: header, cursor: cursor).encoded()
+        try publish(name: filename + ".state", write: { try snapshotWriteAll($0, data) }, beforePublish: beforePublish, fault: fault)
+    }
+
     private func cleanupTemps() {
         guard let stream = fdopendir(dup(directoryFD)) else { return }
         defer { closedir(stream) }
@@ -90,9 +115,9 @@ public final class SnapshotStore: @unchecked Sendable {
             }
         }
     }
-    private func hasSafeFinal() throws -> Bool {
+    private func hasSafeFinal(_ name: String) throws -> Bool {
         var metadata = stat()
-        if fstatat(directoryFD, filename, &metadata, AT_SYMLINK_NOFOLLOW) < 0 {
+        if fstatat(directoryFD, name, &metadata, AT_SYMLINK_NOFOLLOW) < 0 {
             if errno == ENOENT { return false }
             throw SnapshotError.io("check final", errno)
         }
@@ -101,8 +126,10 @@ public final class SnapshotStore: @unchecked Sendable {
         return true
     }
 
-    func publish<T>(write: (Int32) throws -> T, beforePublish: () throws -> Void,
+    func publish<T>(name: String? = nil, write: (Int32) throws -> T, beforePublish: () throws -> Void,
                     fault: ((SnapshotFailurePoint) throws -> Void)? = nil) throws -> T {
+        let final = name ?? filename
+        guard final == filename || final == filename + ".state" else { throw SnapshotError.unsafePath(final) }
         guard activityLock.withLock({ if publishing { return false }; publishing = true; return true }) else {
             throw SnapshotError.busy
         }
@@ -110,9 +137,9 @@ public final class SnapshotStore: @unchecked Sendable {
         guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw SnapshotError.busy }
         defer { _ = flock(lockFD, LOCK_UN) }
         cleanupTemps()
-        _ = try hasSafeFinal()
-        let temporary = filename + "." + UUID().uuidString + ".tmp"
-        let backup = filename + ".old." + UUID().uuidString + ".tmp"
+        _ = try hasSafeFinal(final)
+        let temporary = final + "." + UUID().uuidString + ".tmp"
+        let backup = final + ".old." + UUID().uuidString + ".tmp"
         var fd = openat(directoryFD, temporary, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { throw SnapshotError.io("create tmp", errno) }
         var linkedBackup = false, renamed = false
@@ -126,11 +153,11 @@ public final class SnapshotStore: @unchecked Sendable {
             guard closing == 0 else { throw SnapshotError.io("close tmp", errno) }
             try beforePublish()
             try fault?(.beforeRename)
-            if try hasSafeFinal() {
-                guard linkat(directoryFD, filename, directoryFD, backup, 0) == 0 else { throw SnapshotError.io("backup link", errno) }
+            if try hasSafeFinal(final) {
+                guard linkat(directoryFD, final, directoryFD, backup, 0) == 0 else { throw SnapshotError.io("backup link", errno) }
                 linkedBackup = true
             }
-            guard renameat(directoryFD, temporary, directoryFD, filename) == 0 else { throw SnapshotError.io("rename", errno) }
+            guard renameat(directoryFD, temporary, directoryFD, final) == 0 else { throw SnapshotError.io("rename", errno) }
             renamed = true
             try fault?(.afterRename)
             try fault?(.directorySync)
@@ -139,8 +166,8 @@ public final class SnapshotStore: @unchecked Sendable {
             return result
         } catch {
             if renamed {
-                if linkedBackup { _ = renameat(directoryFD, backup, directoryFD, filename) }
-                else { _ = unlinkat(directoryFD, filename, 0) }
+                if linkedBackup { _ = renameat(directoryFD, backup, directoryFD, final) }
+                else { _ = unlinkat(directoryFD, final, 0) }
                 _ = fsync(directoryFD)
             } else if linkedBackup { _ = unlinkat(directoryFD, backup, 0) }
             _ = unlinkat(directoryFD, temporary, 0)

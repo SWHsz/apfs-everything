@@ -27,7 +27,7 @@ public enum SnapshotWriter {
             rootPathLength: UInt64(rootBytes.count), createdAtUnixSeconds: UInt64(max(0, Date().timeIntervalSince1970)),
             indexGeneration: metadata.generation, lastProcessedEventID: cursor, rootDeviceID: identity.deviceID,
             volumeUUID: identity.volumeUUID, historyUUID: identity.historyUUID, payloadCRC32: 0,
-            fileLength: 0, rootFileID: identity.rootFileID)
+            fileLength: 0, rootFileID: identity.rootFileID, snapshotUUID: UUID())
         try store.publish(write: { fd in
             func emit(_ bytes: Data) throws {
                 try snapshotWriteAll(fd, bytes)

@@ -138,3 +138,9 @@ v0.2 解决 warm startup 和持久恢复，但完整运行时 namespace 仍恢�
 verify 是 fresh scan，不是原子文件系统 snapshot；请等待目录静止后比较。FSEvents 合并、TCC、权限和持续变化会影响恢复耗时；history UUID 不可用的卷目前拒绝启动。时间 fence 使用 SDK 的 per-device conservative API，外部磁盘/时钟异常依赖失效恢复，未实测所有场景。
 
 下一 Sprint 才实现 mmap immutable base + RAM delta overlay、base tombstone bitmap、base/delta query merge、后台 compaction 和低 RAM directory map。本轮没有 GUI、全文索引、raw APFS 解析、APFS snapshot 解析、searchfs()、Endpoint Security、网络/telemetry、自动更新或数据库。
+
+v0.2.1 adds a 128-byte atomic `.state` cursor sidecar. Content-only changes can
+advance this fence without rewriting the namespace snapshot. A stale/corrupt
+state falls back to the snapshot fence. An existing `--cache-dir` must already
+be owned by you with mode 0700; apfsfind will reject other permissions without
+changing them. A newly created cache has mode 0700.

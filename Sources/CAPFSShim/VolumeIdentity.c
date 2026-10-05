@@ -52,8 +52,7 @@ int apfs_open_cache_directory(const char *path, int create) {
     struct stat metadata;
     if (fstat(fd, &metadata) < 0) { int error = errno; close(fd); errno = error; return -1; }
     if (metadata.st_uid != geteuid()) { close(fd); errno = EPERM; return -1; }
-    if (create) {
-        if (fchmod(fd, 0700) < 0) { int error = errno; close(fd); errno = error; return -1; }
-    } else if ((metadata.st_mode & 0777) != 0700) { close(fd); errno = EPERM; return -1; }
+    /* Never chmod an existing caller-owned directory. mkdirat creates ours 0700. */
+    if ((metadata.st_mode & 07777) != 0700) { close(fd); errno = EPERM; return -1; }
     return fd;
 }

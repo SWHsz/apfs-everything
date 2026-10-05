@@ -26,7 +26,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testOfflineMutationsWarmReplayWithoutFullScan() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.directory("a"); try tree.directory("b")
         for name in ["deleted", "same", "cross"] { try tree.file("a/" + name) }
         try cold(tree, cache)
@@ -49,7 +49,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testCrashLikeOldCursorReplayAndExitCheckpoint() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.file("seed"); try cold(tree, cache)
         let c = try make(tree, cache)
         try c.start(); XCTAssertTrue(c.waitUntilLive())
@@ -76,7 +76,7 @@ final class PersistentRecoveryTests: XCTestCase {
         try requireFSEvents()
         for flag in [kFSEventStreamEventFlagEventIdsWrapped, kFSEventStreamEventFlagKernelDropped,
                      kFSEventStreamEventFlagMustScanSubDirs] {
-            let tree = try TemporaryTree(), cache = try TemporaryTree()
+            let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
             try tree.file("seed"); try cold(tree, cache)
             let c = try make(tree, cache)
             defer { c.stop(saveCheckpoint: false) }
@@ -95,7 +95,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testHistoryIdentityChangeAndCorruptionFallback() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.file("seed"); try cold(tree, cache)
         let real = try VolumeIdentity.discover(root: tree.root)
         let changed = VolumeIdentity(root: real.root, deviceID: real.deviceID, rootFileID: real.rootFileID,
@@ -121,7 +121,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testEphemeralAndForcedRebuildAndOwnCacheExclusion() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.file("seed")
         let ephemeral = try make(tree, cache, ephemeral: true)
         try ephemeral.start(); XCTAssertTrue(ephemeral.waitUntilLive())
@@ -142,7 +142,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testNoOnlineSnapshotWritesDuringStormsAndContent() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.directory("storm"); try tree.file("content"); try cold(tree, cache)
         let c = try make(tree, cache)
         defer { c.stop(saveCheckpoint: false) }
@@ -202,7 +202,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testUnchangedWarmExitDoesNotRewriteSnapshotOrAdvanceGeneration() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.file("seed"); try cold(tree, cache)
         let identity = try VolumeIdentity.discover(root: tree.root)
         let store = try SnapshotStore(directory: cache.root, identity: identity)
@@ -219,7 +219,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testWarmReplayManyDirtyParentsDoesNotLoopFullRebuild() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         for i in 0..<80 { try tree.directory("d\(i)"); try tree.file("d\(i)/seed") }
         try cold(tree, cache)
         for i in 0..<80 {
@@ -237,7 +237,7 @@ final class PersistentRecoveryTests: XCTestCase {
 
     func testSecondInterruptPreservesOldSnapshotForReplay() throws {
         try requireFSEvents()
-        let tree = try TemporaryTree(), cache = try TemporaryTree()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.file("seed"); try cold(tree, cache)
         let store = try SnapshotStore(directory: cache.root, identity: VolumeIdentity.discover(root: tree.root))
         let before = try stamp(store.path)

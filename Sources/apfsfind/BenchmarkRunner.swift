@@ -28,7 +28,7 @@ struct OwnedTemporaryDirectory {
                      isDirectory: true)
         name = "apfsfind-bench-" + UUID().uuidString
         url = parent.appendingPathComponent(name, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     }
 
     func remove() throws {

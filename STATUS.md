@@ -219,3 +219,20 @@ RSS 是同一 benchmark 进程先 cold 后 warm 的阶段采样；cold 对象已
 ## 下一 Sprint 边界
 
 只记录，当前没有实现：mmap immutable base index + RAM delta overlay + base tombstone bitmap + query base/delta merge + 后台 compaction + 低 RAM directory map。下一轮让 snapshot 直接成为可查询的 immutable base，RAM 只保留变化层；v1 fixed record/name blob/parent-before-child 格式为此保留接口基础。
+
+## v0.2.1 Milestone A
+
+基线 HEAD 为 6ab6b9fee6cda3217353deea1ce0737cf6ee0918，工作区干净。
+新增 128-byte CRC cursor state，仅绑定 UUID/G/length/payload CRC/volume/history 完全一致的快照；
+namespace 未持久化时禁止单独推进 state。旧 v1（无 UUID）忽略 state，使用 header cursor。
+为了在 A 检查点独立验证 state，writer 使用 additive v1 UUID flag（bit 0，168..183）；
+原来的 flag=0 v1 仍可读，B 将这两种 v1 都重建为 v2。
+已有 cache 必须 0700，不再 chmod；新建 cache 为 0700。加入 MIT 和 macOS CI（不默认跳过集成测试）。
+
+FSEvents SDK 的 CFAbsoluteTime 参数明确要求 Jan 1 1970 POSIX epoch。本机实测直接 CF epoch 返回 0，
+转换后返回 1335086013，host current 为 1335101758。因此采用可注入 CF 时钟 + API 边界 epoch 转换，
+不使用 Date().timeIntervalSince1970 作为 fence 参数。
+基线：release build、85 tests、bench PASS；create/delete/同目录/跨目录 p95 为 21.43/21.57/21.70/22.24 ms。
+100k persistence baseline PASS：cold 2846.9 ms，warm 361.5 ms，30.999 bytes/entry，warm full_scans=0，verify 0/0。
+A 验证：release build PASS；90 tests（原85+5）全部通过；旧 benchmark PASS，
+p95 create/delete/same rename/cross rename = 21.24/21.44/21.67/21.42 ms，10000 content writes 无 namespace 工作，storm verify 0/0。

@@ -4,9 +4,10 @@ import XCTest
 
 final class TemporaryTree {
     let root: String
-    init() throws {
+    init(cache: Bool = false) throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("apfsfind-tests-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false,
+            attributes: cache ? [.posixPermissions: 0o700] : nil)
         root = try PathCanonicalizer.canonicalRoot(url.path)
     }
     func path(_ relative: String) -> String { root + "/" + relative }

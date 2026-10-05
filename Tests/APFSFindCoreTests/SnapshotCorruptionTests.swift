@@ -5,7 +5,7 @@ import XCTest
 
 final class SnapshotCorruptionTests: XCTestCase {
     func testMalformedSnapshotsAreRejectedWithoutUnsafeReads() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: sampleSnapshotIndex(), identity: identity, cursor: 7, store: store)
         let valid = try Data(contentsOf: URL(fileURLWithPath: store.path))
@@ -46,7 +46,7 @@ final class SnapshotCorruptionTests: XCTestCase {
     }
 
     func testAllIdentityMismatchesAreRejected() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: sampleSnapshotIndex(), identity: identity, cursor: 1, store: store)
         for wrong in [snapshotIdentity(root: "/another-root"), snapshotIdentity(device: 10),
@@ -56,7 +56,7 @@ final class SnapshotCorruptionTests: XCTestCase {
     }
 
     func testUnsafeFinalTypeAndModeAreRejected() throws {
-        let cache = try TemporaryTree(), identity = snapshotIdentity()
+        let cache = try TemporaryTree(cache: true), identity = snapshotIdentity()
         let store = try SnapshotStore(directory: cache.root, identity: identity)
         _ = try SnapshotWriter.write(index: sampleSnapshotIndex(), identity: identity, cursor: 1, store: store)
         XCTAssertEqual(chmod(store.path, 0o644), 0)

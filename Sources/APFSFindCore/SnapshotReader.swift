@@ -113,8 +113,8 @@ public final class SnapshotReader: @unchecked Sendable {
         guard Array(raw.prefix(8)) == SnapshotFormat.magic else { throw SnapshotError.invalid("magic") }
         guard number(raw, 8, UInt32.self) == SnapshotFormat.version else { throw SnapshotError.invalid("unsupported version") }
         guard number(raw, 12, UInt32.self) == SnapshotFormat.headerSize,
-              number(raw, 16, UInt32.self) == 0, number(raw, 20, UInt32.self) == SnapshotFormat.recordSize,
-              raw[168..<192].allSatisfy({ $0 == 0 }) else { throw SnapshotError.invalid("header layout/flags") }
+              number(raw, 16, UInt32.self) <= 1, number(raw, 20, UInt32.self) == SnapshotFormat.recordSize,
+              raw[(number(raw, 16, UInt32.self) == 1 ? 184 : 168)..<192].allSatisfy({ $0 == 0 }) else { throw SnapshotError.invalid("header layout/flags") }
         var copy = Data(raw.prefix(SnapshotFormat.headerSize))
         let stored = number(raw, 148, UInt32.self)
         copy.put(UInt32(0), at: 148)
@@ -126,7 +126,8 @@ public final class SnapshotReader: @unchecked Sendable {
             indexGeneration: number(raw,88,UInt64.self), lastProcessedEventID: number(raw,96,UInt64.self),
             rootDeviceID: number(raw,104,UInt64.self), volumeUUID: UUID(bytes: Array(raw[112..<128])),
             historyUUID: UUID(bytes: Array(raw[128..<144])), payloadCRC32: number(raw,144,UInt32.self),
-            fileLength: number(raw,152,UInt64.self), rootFileID: number(raw,160,UInt64.self))
+            fileLength: number(raw,152,UInt64.self), rootFileID: number(raw,160,UInt64.self),
+            snapshotUUID: number(raw,16,UInt32.self) == 1 ? UUID(bytes: Array(raw[168..<184])) : nil)
     }
     private static func validateLayout(_ header: SnapshotHeader, fileLength: UInt64) throws {
         guard header.recordCount > 0, header.recordCount <= SnapshotFormat.maxRecords,

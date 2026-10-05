@@ -48,9 +48,11 @@ public struct VolumeIdentity: Sendable, Equatable {
             volumeUUID: volume, historyUUID: historyID, mountPoint: mount, relativeRoot: relative)
     }
 
-    public func currentEventID() -> UInt64 {
-        // SDK's per-device conservative fence, captured before any scan.
-        FSEventsGetLastEventIdForDeviceBeforeTime(dev_t(truncatingIfNeeded: deviceID), Date().timeIntervalSince1970)
+    public func currentEventID(clock: () -> CFAbsoluteTime = { CFAbsoluteTimeGetCurrent() },
+                               fence: (dev_t, CFAbsoluteTime) -> UInt64 = { FSEventsGetLastEventIdForDeviceBeforeTime($0, $1) }) -> UInt64 {
+        // FSEvents.h explicitly specifies POSIX seconds despite its CFAbsoluteTime
+        // typedef. Convert the injected CF clock at this API boundary (not Date).
+        fence(dev_t(truncatingIfNeeded: deviceID), clock() + kCFAbsoluteTimeIntervalSince1970)
     }
 
     public func absoluteCallbackPath(_ raw: String) -> String? {
