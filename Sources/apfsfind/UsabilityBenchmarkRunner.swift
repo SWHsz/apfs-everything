@@ -67,8 +67,11 @@ struct UsabilityBenchmarkRunner {
     let root = args[1], cache = args[2], fixture = args[3]
     // Internal workers never clean a path passed from their parent.
     guard PathCanonicalizer.isWithin(fixture, root: root), URL(fileURLWithPath: fixture).lastPathComponent.hasPrefix("apfsfind-real-bench-") else { throw CLIError.usage("Fixture outside root") }
-    var policy = CompactionPolicy(); policy.liveLimit = Int.max; policy.tombstoneLimit = Int.max
-    policy.byteLimit = Int.max; policy.safetyByteLimit = Int.max; policy.overlayRatio = 2; policy.tombstoneRatio = 2
+    var policy = CompactionPolicy()
+    if args[0] != "quiet" {
+      policy.liveLimit = Int.max; policy.tombstoneLimit = Int.max
+      policy.byteLimit = Int.max; policy.safetyByteLimit = Int.max; policy.overlayRatio = 2; policy.tombstoneRatio = 2
+    }
     let p = try PersistentIndexCoordinator(root: root, cacheDirectory: cache, compactionPolicy: policy)
     defer { p.stop(policy: .fast) }
     let begin = ProcessInfo.processInfo.systemUptime
@@ -80,7 +83,7 @@ struct UsabilityBenchmarkRunner {
     var result: [String: Any] = ["root": root, "pid": getpid(), "base_ready_ms": ready, "live_ms": live,
       "ready_freshness": readyStatus.freshness.rawValue, "indexed_entries": p.index.stats().liveEntries,
       "startup_mode": p.stats().dictionary["startup_mode"] ?? "", "snapshot_format_version": 2]
-    if args[0] == "warm" {
+    if args[0] != "prepare" {
       guard p.stats().dictionary["startup_mode"] as? String == "warm_snapshot" else { throw CLIError.startupFailed("Warm benchmark needs a valid existing test snapshot") }
       let idleStart = ProcessResourceSample.capture()
       let before = p.metrics.snapshot()
@@ -106,13 +109,13 @@ struct UsabilityBenchmarkRunner {
       guard p.index.entry(at: path) != nil else { throw CLIError.startupFailed("Owned create not observed") }
     }
     result["snapshot_bytes"] = p.snapshotBytes
-    result["automatic_compaction_disabled_for_measurement"] = true
+    result["automatic_compaction_disabled_for_measurement"] = args[0] != "quiet"
     let beforeExit = ProcessResourceSample.capture()
     p.stop(policy: .fast)
     result["fast_exit_ms"] = (ProcessInfo.processInfo.systemUptime - beforeExit.uptime) * 1000
     result["exit_resources"] = ProcessResourceSample.capture().delta(since: beforeExit)
     let metrics = p.metrics.snapshot()
-    for key in ["replay_overlap_events_skipped", "replay_events_applied", "replay_special_events_applied", "replay_metadata_lookups", "replay_directory_reconciles", "replay_subtree_reconciles", "full_scans", "compactions", "fast_exit_unpersisted_namespace"] {
+    for key in ["replay_overlap_events_skipped", "replay_events_applied", "replay_special_events_applied", "replay_metadata_lookups", "replay_directory_reconciles", "replay_subtree_reconciles", "full_scans", "compactions", "fast_exit_unpersisted_namespace", "search_cancelled"] {
       result[key] = metrics[key, default: 0]
     }
     result["rss_bytes"] = Metrics.processUsage().residentBytes

@@ -148,6 +148,48 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
     let running = await scheduler.snapshot()
     XCTAssertEqual(running.count, 1); third.release()
   }
+  func testMaintenancePriorityThenFIFO() async throws {
+    let scheduler = MaintenanceScheduler()
+    let first = try await scheduler.acquire(volumeID: UUID(), kind: .coldScan, cancellation: .init())
+    let low = Task { try await scheduler.acquire(volumeID: UUID(), kind: .compaction, cancellation: .init()) }
+    for _ in 0..<1000 { if await scheduler.snapshot().count == 2 { break }; await Task.yield() }
+    let high = Task { try await scheduler.acquire(volumeID: UUID(), kind: .rebuild, priority: 1, cancellation: .init()) }
+    for _ in 0..<1000 { if await scheduler.snapshot().count == 3 { break }; await Task.yield() }
+    let queued = await scheduler.snapshot(); XCTAssertEqual(queued.count, 3)
+    first.release()
+    let priorityLease = try await high.value
+    let running = await scheduler.snapshot()
+    XCTAssertEqual(running.first?.kind, .rebuild); XCTAssertEqual(running.count, 2)
+    priorityLease.release()
+    let last = try await low.value
+    let final = await scheduler.snapshot(); XCTAssertEqual(final.first?.kind, .compaction)
+    last.release()
+  }
+  func testThresholdShutdownOnlyCompactsAtThreshold() throws {
+    for reached in [false, true] {
+      let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
+      var policy = CompactionPolicy(); policy.liveLimit = reached ? 1 : 1000
+      policy.quietSeconds = 3600; policy.overlayRatio = 2; policy.tombstoneRatio = 2
+      let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root,
+        compactionPolicy: policy, replayStarter: { _, sink in sink([.init(path: "/", flags: UInt32(kFSEventStreamEventFlagHistoryDone))]) })
+      try p.start(); XCTAssertTrue(p.waitUntilLive())
+      p.index.apply([.upsert(.init(path: tree.path("change"), kind: .file))])
+      p.stop(policy: .compactIfThresholdReached)
+      XCTAssertEqual(p.metrics.snapshot()["compactions", default: 0], reached ? 1 : 0)
+    }
+  }
+  func testOverlayCancellationAndPersistentReadinessStreamMode() async throws {
+    let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, replayStarter: { _, _ in })
+    defer { p.stop(policy: .fast) }; try p.start()
+    var iterator = p.readinessStream().makeAsyncIterator()
+    let status = await iterator.next()
+    XCTAssertEqual(status?.startupMode, .coldScan); XCTAssertEqual(status?.searchAvailable, true)
+    p.index.apply((0..<5000).map { .upsert(.init(path: tree.path("delta-\($0)"), kind: .file)) })
+    let token = SearchCancellationToken(); token.cancel()
+    XCTAssertTrue(p.search(.init(query: "delta", cancellation: token)).cancelled)
+    XCTAssertEqual(p.search("delta", limit: 3).hits.count, 3)
+  }
   private func awaitCount(_ values: [MaintenanceTaskSnapshot]) -> Int { values.count }
   func testMillionRecordBaseCancellationKeepsWriterAndMappingSafe() throws {
     let cache = try TemporaryTree(cache: true), v = snapshotIdentity()

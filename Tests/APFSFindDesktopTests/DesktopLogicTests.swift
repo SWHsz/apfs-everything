@@ -40,11 +40,19 @@ private actor ReconcileRecorder {
 }
 @MainActor
 final class DesktopLogicTests: XCTestCase {
+  private func eventually(_ condition: @MainActor () async -> Bool) async {
+    let deadline = ProcessInfo.processInfo.systemUptime + 3
+    while !(await condition()), ProcessInfo.processInfo.systemUptime < deadline {
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+    let reached = await condition(); XCTAssertTrue(reached, "UI result was not published before deadline")
+  }
   func testDebounceAndLatestResultOnly() async throws {
     let service = FakeDesktopSearch(), model = SearchViewModel(service: service, actions: FileActionController())
     model.query = "x"; model.query = "y"; model.query = "slow"
-    try await Task.sleep(for: .milliseconds(65)); model.query = "latest"
-    try await Task.sleep(for: .milliseconds(250))
+    await eventually { await service.requests().contains("slow") }
+    model.query = "latest"
+    await eventually { model.hits.count == 3 && model.hits.allSatisfy { $0.path.contains("latest") } && !model.searching }
     let queries = await service.requests()
     XCTAssertEqual(queries, ["slow", "latest"])
     XCTAssertTrue(model.hits.allSatisfy { $0.path.contains("latest") })
@@ -56,7 +64,7 @@ final class DesktopLogicTests: XCTestCase {
     let routing = FakeFileRouting(), recorder = ReconcileRecorder()
     let actions = FileActionController(routing: routing, exists: { _ in false }, reconcile: { _ in await recorder.record() })
     let model = SearchViewModel(service: FakeDesktopSearch(), actions: actions, debounce: .milliseconds(1))
-    model.query = "needle"; try await Task.sleep(for: .milliseconds(30))
+    model.query = "needle"; await eventually { model.hits.count == 3 }
     model.moveSelection(100); XCTAssertEqual(model.selectedIndex, 2)
     model.moveSelection(-100); XCTAssertEqual(model.selectedIndex, 0)
     await model.perform(.copyPath); XCTAssertEqual(routing.copied.count, 1)
