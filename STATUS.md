@@ -1,3 +1,62 @@
+# v0.4.0 — Usable Desktop Alpha
+
+开始 HEAD：`a90920044806d2aca7d627a59963db4f0da67a8a`（main，工作区干净）。本轮仅本机 Mac 开发。
+三个顺序 milestone：A `27e3596`，B `9da1cbb`，C 见 `feat: add desktop search alpha` 提交。
+结束 HEAD 与实盘数据将在测量/CI 完成后追加。snapshot v2 布局保持不变，原 127 项测试全部保留。
+
+## 已完成实现
+
+- A：baseReady / catchingUp / live 分离；合法旧 base 在 rebuildingUsingOldBase 继续可搜索。
+  **baseReady 允许搜索，但 replay 完成前结果可能短暂陈旧。** AsyncStream 状态与 freshness 对外暴露。
+  FullHistory 保留，仅可靠普通 overlap ID <= floor 跳过；特殊/歧义/不可靠事件永远处理。
+  durable cursor 不跨过未写入对应 base 的 namespace mutation；state 完整绑定 base，失败回退 header。
+  每 4096 records 检查 query cancellation；latest request ID 防止旧请求覆盖新结果。
+  默认 CLI/桌面 fast 退出，小 overlay 不写 base；namespace 一致时才写 128-byte state。
+  CompactionScheduler 单次事件驱动、quiet 重排、safety、失败 backoff；MaintenanceScheduler 全局串行重型任务。
+- B：独立 VolumeIndexSession、多卷 actor 并行查询、全局排序/top 50、UUID+path 去重及部分失败结果。
+  getfsstat 本地挂载发现，排除网络/autofs/辅助卷/Data 重叠；UserDefaults 按 UUID 保存选择。
+  mount/unmount diff；offline 停 watcher/取消排队维护，remount 恢复缓存，取消选择不删除缓存。
+- C：APFSFindDesktop / NSPanel + SwiftUI / Carbon Option+Space；40 ms debounce、100 ms 延迟 spinner。
+  Enter / 双击打开、Command+Enter Finder、Command+C 路径、Escape 隐藏、Command+Q fast 退出。
+  操作前后台 lstat；stale hit 移除并 scoped reconcile。SF Symbols，UI 不执行索引查询或真实图标读取。
+  卷设置与基于不可读目录的权限提示；不能精确检测 FDA，用户自行授予。
+  `.app` 位于 `dist/APFSFind.app`，稳定 identifier `local.apfsfind.desktop`，本地 ad-hoc signature。
+
+## 本机测试与桌面 smoke（2026-10-06）
+
+原始基线 127 tests 通过。A 136、B 141 tests 通过，均保留默认 native FSEvents 集成。
+最终 Core 142 + Desktop 5 = **147 tests**，0 failures；仅可选真实挂载测试 1 skip。
+ASan 完整 Core 141 + Desktop 5 已通过；最终新增 backoff 测试由 CI ASan 再验证。
+额外 TSan 首次发现 lazy CompactionScheduler 初始化竞态，已改成构造阶段初始化；
+修复后的完整 Core 141 + Desktop 5 TSan 通过，0 warnings，不隐藏首次失败。
+
+桌面 actual smoke 使用本任务创建的两个 UUID 临时 root / 专用缓存，未使用日用 cache：
+
+- bundle build、Info.plist、codesign --verify --deep --strict 通过；
+- 启动立即显示，输入自动 focus；同名目录搜索返回 A/B 两条；
+- ↑↓ 选择、Command+C 出现“路径已复制”；Enter 打开 owned 目录，Command+Enter 在 Finder 选中该目录；
+- Settings 取消 B 后仅 A 一条，重新选择 B 后恢复两条；系统项不可关闭；
+- Escape 隐藏，公开 open 入口重新显示；真实 Option+Space 由用户明确确认“能正常显示／隐藏”；
+- 自动化 Option+Space 注入没有可靠触发 Carbon，**不计作自动化通过**；注册/toggle/conflict/stop wrapper 有单元测试；
+- 实际窗口恢复至 input focus **14.00 / 20.19 ms**（初次 56.08 ms）；这些是 focus 通知测量，
+  不含无法捕获的物理键按下到 Carbon callback 的传递时间，不冒充完整 key-to-focus 测量；
+- Command+Q 正常退出，进程消失；只删除校验 inode/device/owner/mode 后的本任务 UUID fixtures/cache。
+
+新 synthetic mmap benchmark：2 × 100,000 entries、5 warmup + 30 samples、global top 50，
+p50 2.943 ms / p90 2.995 / p95 **3.031** / p99 3.047 / max 3.047；RSS 91.28 MB。
+真实大索引独立进程测量正在运行，最终记录不以 synthetic 代替实盘结果。
+
+## 当前限制与后续
+
+Alpha 无 notarization、App Sandbox、daemon、fuzzy、内容搜索或自动更新。macOS 14 / Intel / 真实 iCloud dataless
+未专项实机验证；本机 macOS 27 / Xcode 27 与 CI macOS 15 都需独立验证。
+特殊节点通知随平台不同，保持 v0.3.1 的已知限制；活动系统目录存在 race，不能宣称文件系统原子快照。
+热键固定，实际外置设备拔插未做物理测试，UUID fake + 两个真实临时 root 覆盖 lifecycle/replay/verify。
+下一版候选：packed directory arena、exact hash、SIMD、可选 trigram/fuzzy、真实图标、menu bar、login、
+cache/exclusions UI、XPC、更新与自定义 hotkey；本轮未实现。
+
+---
+
 # v0.3.1 — 稳定性修复与真实磁盘验证
 
 本轮开始：2026-10-05，`main` / `35689d19553f768129fdec493cfd8fcd73c1cc9f`，工作区干净。

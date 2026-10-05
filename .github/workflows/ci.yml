@@ -14,6 +14,14 @@ jobs:
       - name: Crash reports
         if: failure()
         run: cat ~/Library/Logs/DiagnosticReports/*apfs* 2>/dev/null || true
+  desktop-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build -c release --product APFSFindDesktop
+      - run: bash scripts/build_app.sh
+      - run: codesign --verify --deep --strict dist/APFSFind.app
+      - run: plutil -lint dist/APFSFind.app/Contents/Info.plist
   integration:
     runs-on: macos-15
     env:

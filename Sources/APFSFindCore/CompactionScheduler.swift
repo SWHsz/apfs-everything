@@ -11,14 +11,14 @@ public final class CompactionScheduler: @unchecked Sendable {
   public let metrics: Metrics
   public init(metrics: Metrics = .init()) { self.metrics = metrics }
   public var currentState: State { lock.withLock { state } }
-  public func schedule(delay: Double, safety: Bool = false, action: @escaping @Sendable () -> Void) {
+  public func schedule(delay: Double, safety: Bool = false, backoff: Bool = false, action: @escaping @Sendable () -> Void) {
     lock.withLock {
       guard state != .stopped else { return }
       metrics.record("compaction_schedule_requests")
       if item != nil { item?.cancel(); metrics.record("compaction_schedule_reschedules") }
       epoch &+= 1
       let expected = epoch
-      state = .scheduled
+      state = backoff ? .backoff : .scheduled
       if safety { metrics.record("compaction_safety_triggered") }
       let work = DispatchWorkItem { [weak self] in
         guard let self else { return }

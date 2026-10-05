@@ -122,6 +122,17 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(scheduler.metrics.snapshot()["compaction_schedule_reschedules"], 1)
     XCTAssertEqual(scheduler.metrics.snapshot()["compaction_schedule_cancelled"], 1)
   }
+  func testSchedulerSafetyAndRetryBackoff() {
+    let scheduler = CompactionScheduler()
+    let fired = expectation(description: "immediate safety work")
+    scheduler.schedule(delay: 0, safety: true) { fired.fulfill() }
+    wait(for: [fired], timeout: 1)
+    XCTAssertEqual(scheduler.metrics.snapshot()["compaction_safety_triggered"], 1)
+    scheduler.schedule(delay: 30, backoff: true) { XCTFail("cancelled retry executed") }
+    XCTAssertEqual(scheduler.currentState, .backoff)
+    scheduler.stop()
+    XCTAssertEqual(scheduler.currentState, .stopped)
+  }
   func testMaintenanceSerialFIFOAndQueuedCancellation() async throws {
     let scheduler = MaintenanceScheduler(), a = UUID(), b = UUID()
     let first = try await scheduler.acquire(volumeID: a, kind: .coldScan, cancellation: .init())

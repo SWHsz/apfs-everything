@@ -20,7 +20,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private let rebuildIndex: Bool
   private let compactionPolicy: CompactionPolicy
   private let compactionFault: (@Sendable (SnapshotFailurePoint) throws -> Void)?
-  private lazy var compactionScheduler = CompactionScheduler(metrics: metrics)
+  private let compactionScheduler: CompactionScheduler
   private var startupBegan = ProcessInfo.processInfo.systemUptime
   private let maintenanceScheduler: MaintenanceScheduler
   private var compacting = false
@@ -80,6 +80,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       root: canonical, configuration: configuration,
       excludedRoots: ephemeral ? [] : [self.cacheDirectory], index: runtime,
       identityProvider: identityProvider, fenceProvider:fenceProvider, maintenanceScheduler: maintenanceScheduler, replayStarter: replayStarter)
+    compactionScheduler = CompactionScheduler(metrics: core.metrics)
     core.setLifecycleHandlers(
       live: { [weak self] in self?.becameLive() },
       recovery: { [weak self] reason in self?.beganRecovery(reason) })
@@ -195,15 +196,31 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     guard persistenceEnabled, currentState == .live, let hybrid = index as? HybridIndex else { return }
     let trigger = hybrid.compactionTrigger(compactionPolicy)
     guard trigger.threshold else { return }
-    let delay = lock.withLock { max(trigger.safety ? 0 : compactionPolicy.quietSeconds, retryAfter - ProcessInfo.processInfo.systemUptime) }
-    compactionScheduler.schedule(delay: delay, safety: trigger.safety) { [weak self] in
+    let retry = lock.withLock { retryAfter - ProcessInfo.processInfo.systemUptime }
+    let delay = max(trigger.safety ? 0 : compactionPolicy.quietSeconds, retry)
+    compactionScheduler.schedule(delay: delay, safety: trigger.safety, backoff: retry > 0) { [weak self] in
       guard let self, !self.lock.withLock({ self.shuttingDown }) else { return }
       if self.compact() { _ = self.group.wait(timeout: .now() + 3600) }
     }
   }
   public var snapshotBytes: UInt64 { lock.withLock { snapshotHeader?.fileLength ?? 0 } }
   public func readinessSnapshot() -> IndexReadinessSnapshot { core.readinessSnapshot(startupMode: lock.withLock { mode }) }
-  public func readinessStream() -> AsyncStream<IndexReadinessSnapshot> { core.readinessStream() }
+  public func readinessStream() -> AsyncStream<IndexReadinessSnapshot> {
+    let source = core.readinessStream()
+    return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+      let task = Task { [weak self] in
+        for await value in source {
+          guard let self, !Task.isCancelled else { break }
+          continuation.yield(.init(state: value.state, searchAvailable: value.searchAvailable,
+            resultsMayBeStale: value.resultsMayBeStale, startupMode: self.lock.withLock { self.mode },
+            indexedEntries: value.indexedEntries, replayReceived: value.replayReceived,
+            replayProcessed: value.replayProcessed, replayPending: value.replayPending, error: value.error))
+        }
+        continuation.finish()
+      }
+      continuation.onTermination = { _ in task.cancel() }
+    }
+  }
   public func search(_ request: SearchRequest) -> SearchResult { core.search(request) }
   public func search(_ query: String, limit: Int = 50) -> SearchResult { search(.init(query: query, limit: limit)) }
 

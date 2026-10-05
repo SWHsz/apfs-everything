@@ -13,7 +13,7 @@ enum CLIError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage(let message): return message + "\nRun apfsfind --help for usage."
-        case .replayTimedOut: return "FSEvents replay did not reach the live state within 10 seconds."
+        case .replayTimedOut: return "FSEvents replay did not reach the live state within the requested timeout."
         case .startupFailed(let message): return message
         case .interrupted: return "Interrupted; the watcher and workers have stopped."
         case .input(let code): return "Cannot read standard input: \(String(cString: strerror(code)))."
@@ -197,6 +197,7 @@ enum CLI {
             print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self))
             return 0
         }
+        if arguments.first == "_multivolume-real-worker" { return try MultiVolumeBenchmarkRunner.realWorker(Array(arguments.dropFirst())) }
         if arguments.first == "_usability-worker" { return try UsabilityBenchmarkRunner.worker(Array(arguments.dropFirst())) }
         if arguments.first == "_real-disk-worker" {
             return try RealDiskBenchmarkRunner.worker(Array(arguments.dropFirst()))

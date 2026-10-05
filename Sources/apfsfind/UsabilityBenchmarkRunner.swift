@@ -49,7 +49,7 @@ struct UsabilityBenchmarkRunner {
       try fixture.remove(); try newCache?.remove(); throw error
     }
   }
-  private func child(_ args: [String]) throws -> [String: Any] {
+  func child(_ args: [String]) throws -> [String: Any] {
     let process = Process(), output = Pipe()
     process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
     process.arguments = ["_usability-worker"] + args
@@ -97,8 +97,16 @@ struct UsabilityBenchmarkRunner {
       result["query_cancel_ms"] = (ProcessInfo.processInfo.systemUptime - cancellationStart) * 1000
       let path = fixture + "/small-overlay"
       guard FileManager.default.createFile(atPath: path, contents: Data()) else { throw CLIError.startupFailed("Cannot create owned fixture") }
-      guard p.core.flushEvents(timeout: 30), p.index.entry(at: path) != nil else { throw CLIError.startupFailed("Owned create not observed") }
+      let deadline = ProcessInfo.processInfo.systemUptime + 10
+      repeat {
+        _ = p.core.flushEvents(timeout: 2)
+        if p.index.entry(at: path) != nil { break }
+        Thread.sleep(forTimeInterval: 0.02)
+      } while ProcessInfo.processInfo.systemUptime < deadline
+      guard p.index.entry(at: path) != nil else { throw CLIError.startupFailed("Owned create not observed") }
     }
+    result["snapshot_bytes"] = p.snapshotBytes
+    result["automatic_compaction_disabled_for_measurement"] = true
     let beforeExit = ProcessResourceSample.capture()
     p.stop(policy: .fast)
     result["fast_exit_ms"] = (ProcessInfo.processInfo.systemUptime - beforeExit.uptime) * 1000
