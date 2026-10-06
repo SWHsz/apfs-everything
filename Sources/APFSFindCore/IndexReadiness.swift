@@ -1,7 +1,7 @@
 import Foundation
 
 public enum IndexReadiness: String, Sendable {
-  case opening, scanning, baseReady, catchingUp, live, rebuildingUsingOldBase, offline, failed, stopped
+  case opening, scanning, baseReady, catchingUp, live, rebuildingUsingOldBase, paused, offline, failed, stopped
 }
 public struct IndexReadinessSnapshot: Sendable {
   public let state: IndexReadiness
@@ -16,6 +16,7 @@ public struct IndexReadinessSnapshot: Sendable {
   public var freshness: SearchFreshness {
     switch state {
     case .live: .live
+    case .paused: .pausedStale
     case .catchingUp: .catchingUp
     case .rebuildingUsingOldBase: .rebuilding
     default: .baseSnapshot

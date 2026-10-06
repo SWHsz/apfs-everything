@@ -29,6 +29,12 @@ struct AppPreferences {
       guard ["--test-root", "--test-cache"].contains(flag), i < arguments.count else { continue }
       if flag == "--test-root" { roots.append(arguments[i]) } else { cache = arguments[i] }; i += 1
     }
+    // Explicitly renamed smoke bundles can be launched by native UI automation
+    // without command-line arguments. Production bundles never use these keys.
+    if roots.isEmpty, Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.") == true {
+      roots = Bundle.main.object(forInfoDictionaryKey: "APFSFindTestRoots") as? [String] ?? []
+      cache = Bundle.main.object(forInfoDictionaryKey: "APFSFindTestCache") as? String
+    }
     if !roots.isEmpty, cache == nil { throw CocoaError(.fileNoSuchFile) }
     testRoots = roots; testCache = cache
   }

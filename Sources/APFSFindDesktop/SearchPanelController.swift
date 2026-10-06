@@ -48,6 +48,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
   }
   func show() {
     showStarted = ProcessInfo.processInfo.systemUptime
+    model.refreshQuery()
     NSApp.activate(ignoringOtherApps: true); panel.makeKeyAndOrderFront(nil); model.focusToken += 1
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }

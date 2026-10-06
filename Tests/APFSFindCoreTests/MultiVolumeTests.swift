@@ -34,6 +34,7 @@ final class FakeVolumeSession: VolumeSearching, @unchecked Sendable {
   let volume: VolumeDescriptor
   let index = FileIndex(root: "/fixture")
   let lock = NSLock(); var offline = false
+  var reasons: Set<IndexPauseReason> = []
   let delay: Double
   let probe: ParallelSearchProbe?
   init(_ volume: VolumeDescriptor, delay: Double = 0, probe: ParallelSearchProbe? = nil) {
@@ -44,9 +45,11 @@ final class FakeVolumeSession: VolumeSearching, @unchecked Sendable {
   func start() {}
   func stop(policy: ShutdownPolicy) async { lock.withLock { offline = true } }
   func snapshot() -> VolumeSessionSnapshot {
-    .init(volume: volume, state: lock.withLock { offline } ? .offline : .live,
-          searchAvailable: !lock.withLock { offline }, freshness: .live,
-          indexedEntries: index.stats().liveEntries, snapshotBytes: 0, unreadableDirectories: 0, pendingReplayEvents: 0)
+    let (offline, reasons) = lock.withLock { (self.offline, self.reasons) }
+    return .init(volume: volume, state: offline ? .offline : (reasons.isEmpty ? .live : .paused),
+          searchAvailable: !offline, freshness: reasons.isEmpty ? .live : .pausedStale,
+          indexedEntries: index.stats().liveEntries, snapshotBytes: 0, unreadableDirectories: 0, pendingReplayEvents: 0,
+          pauseReasons: reasons)
   }
   func search(_ request: SearchRequest) -> SearchResult {
     probe?.enter()
@@ -56,6 +59,9 @@ final class FakeVolumeSession: VolumeSearching, @unchecked Sendable {
   }
   func reconcileParent(of path: String) {}
   func changes() -> AsyncStream<VolumeSessionSnapshot> { AsyncStream { $0.yield(snapshot()) } }
+  func setPauseReason(_ reason: IndexPauseReason, enabled: Bool) async {
+    lock.withLock { if enabled { reasons.insert(reason) } else { reasons.remove(reason) } }
+  }
 }
 final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
   func testParallelTop50RankingAndSamePathsDoNotDedupAcrossVolumes() async {

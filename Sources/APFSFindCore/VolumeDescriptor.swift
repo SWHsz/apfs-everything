@@ -8,10 +8,12 @@ public struct VolumeDescriptor: Sendable, Hashable {
   public let isSystemVolume: Bool
   public let isRemovable: Bool
   public let isReadOnly: Bool
+  public let deviceID: UInt64
   public init(volumeUUID: UUID, displayName: String, mountPath: String,
-              isSystemVolume: Bool = false, isRemovable: Bool = false, isReadOnly: Bool = false) {
+              isSystemVolume: Bool = false, isRemovable: Bool = false, isReadOnly: Bool = false, deviceID: UInt64 = 0) {
     self.volumeUUID = volumeUUID; self.displayName = displayName; self.mountPath = mountPath
     self.isSystemVolume = isSystemVolume; self.isRemovable = isRemovable; self.isReadOnly = isReadOnly
+    self.deviceID = deviceID
   }
 }
 public protocol MountedVolumeProvider: Sendable { func mountedVolumes() throws -> [VolumeDescriptor] }
@@ -40,7 +42,7 @@ public struct LocalMountedVolumeProvider: MountedVolumeProvider {
       let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeNameKey, .volumeIsRemovableKey])
       volumes.append(.init(volumeUUID: identity.volumeUUID, displayName: values?.volumeName ?? (path == "/" ? "System" : String(path.split(separator: "/").last!)), mountPath: path,
                            isSystemVolume: path == "/", isRemovable: values?.volumeIsRemovable ?? false,
-                           isReadOnly: fs.f_flags & UInt32(MNT_RDONLY) != 0))
+                           isReadOnly: fs.f_flags & UInt32(MNT_RDONLY) != 0, deviceID: identity.deviceID))
     }
     return volumes.sorted { $0.isSystemVolume != $1.isSystemVolume ? $0.isSystemVolume : $0.displayName < $1.displayName }
   }

@@ -1,3 +1,43 @@
+# v0.4.1 — Background Lifecycle
+
+本轮开始 HEAD：`712ede5814cae259cd24029dc92551144e8ac766`。Milestone A 完成，Milestone B（元数据索引及排序）继续开发；本轮不 push。
+
+- 菜单栏入口、全局与单卷暂停、关闭窗口继续索引、开机启动与隐藏启动偏好已实现。
+- 暂停原因分别保存用户全局、用户单卷和系统睡眠；唤醒先刷新挂载，再从内存 cursor 回放，不解除用户暂停。
+- 暂停取消未执行的 compaction，已有结果标为 pausedStale；fast 退出不为小 overlay 重写 base。
+- 登录项通过 SMAppService.mainApp，状态与错误来自真实 API；普通测试使用 fake，不修改系统登录项。
+- 重新显示窗口刷新未修改的查询词，避免沿用隐藏前的结果。
+
+## Milestone A 本机验收（2026-10-06）
+
+完整测试 Core 152 + Desktop 18 = **170 项**，0 failures，1 项可选真实挂载测试 skip。
+TSan 子集 Core 11 + Desktop 17 = 28 项通过，0 warnings；后增加的菜单 action 测试通过普通测试。
+release CLI、desktop 与 .app 构建、Info.plist 与 ad-hoc 签名验证通过。
+基线完整 ASan 157 项通过；新版本完整 sanitizer 验证待 Milestone B 最终执行。
+基线 GitHub Actions 四个 job 全部通过：https://github.com/SWHsz/apfs-everything/actions/runs/37460139248 。
+当前改动未推送，因此没有对应新 HEAD 的远端 CI 结果。
+
+`background-bench --idle-seconds 60` 使用 owned 临时 root/cache，结果：
+
+| 项目 | 测量 |
+|---|---:|
+| idle 实测时长 | 60.010 s |
+| idle user + system CPU | 0.000189 s |
+| idle 磁盘读 / 写 | 0 / 0 bytes |
+| compaction 调度唤醒 / 周期轮询 | 0 / 0 |
+| create p50 / p95（30 次） | 20.148 / 21.438 ms |
+| rename p50 / p95（30 次） | 21.465 / 23.609 ms |
+| delete p50 / p95（30 次） | 18.854 / 19.503 ms |
+| 暂停期间 1000 个创建后恢复收敛 | 275.016 ms，校验通过 |
+
+create 最大值 388.57 ms，保留首次测量 outlier。benchmark 提高 compaction 阈值以隔离事件与暂停行为；不是生产策略压力测试。
+
+真实 smoke 使用独立 UUID bundle、临时 root 和 cache；搜索、真实 API 登录项状态读取和 watcher 更新已观察。
+菜单 action 使用真实 NSMenu.performAction 单元验证；桌面焦点切换影响了部分自动化，真实暂停菜单、登录项开关及系统 sleep/wake 不计为自动化通过。
+用户随后指出测试实例已关闭；最新桌面 inventory 确认 APFSFindSmoke 不在运行。测试数据尚保留，未修改日用缓存。
+
+---
+
 # v0.4.0 — Usable Desktop Alpha
 
 ## 用户反馈修复（2026-10-06）

@@ -43,4 +43,10 @@ public final class CompactionScheduler: @unchecked Sendable {
       item?.cancel(); item = nil; state = .stopped
     }
   }
+  public func cancelPending() {
+    lock.withLock {
+      guard state != .stopped else { return }
+      epoch &+= 1; item?.cancel(); item = nil; state = .idle
+    }
+  }
 }

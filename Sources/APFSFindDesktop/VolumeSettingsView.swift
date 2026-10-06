@@ -24,9 +24,16 @@ final class VolumeSettingsViewModel: ObservableObject {
 }
 struct VolumeSettingsView: View {
   @ObservedObject var model: VolumeSettingsViewModel
+  @ObservedObject var login: LaunchAtLoginController
+  @ObservedObject var launchPreferences: DesktopLaunchPreferences
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text("索引卷").font(.title2)
+      Toggle("登录时启动", isOn: Binding(get: { login.enabled }, set: { try? login.setEnabled($0) }))
+      Text(login.error.map { "注册失败：" + $0 } ?? login.description).font(.caption).foregroundStyle(.secondary)
+      Toggle("登录启动时隐藏搜索窗口", isOn: $launchPreferences.hideOnColdStart)
+      Text("开启后每次冷启动隐藏窗口；再次打开应用或按 Option+Space 显示搜索。")
+        .font(.caption).foregroundStyle(.secondary)
       Text("系统卷默认启用。其他本地卷只有在你选择后才会建立索引。离线卷的缓存会保留。")
         .font(.callout).foregroundStyle(.secondary)
       ScrollView {
@@ -52,7 +59,7 @@ struct VolumeSettingsView: View {
         }
       }
       PermissionStatusView(status: model.accessStatus)
-    }.padding(22).frame(width: 600, height: 430).task { await model.refresh() }
+    }.padding(22).frame(width: 600, height: 530).task { login.refresh(); await model.refresh() }
   }
 }
 struct PermissionStatusView: View {

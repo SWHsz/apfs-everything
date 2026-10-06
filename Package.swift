@@ -15,7 +15,7 @@ let package = Package(
                 linkerSettings: [.linkedFramework("CoreServices")]),
         .executableTarget(name: "apfsfind", dependencies: ["APFSFindCore"]),
         .executableTarget(name: "APFSFindDesktop", dependencies: ["APFSFindCore"],
-                          linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("SwiftUI"), .linkedFramework("Carbon")]),
+                          linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("SwiftUI"), .linkedFramework("Carbon"), .linkedFramework("ServiceManagement")]),
         .testTarget(name: "APFSFindDesktopTests", dependencies: ["APFSFindDesktop", "APFSFindCore"]),
         .testTarget(name: "APFSFindCoreTests", dependencies: ["APFSFindCore", "CAPFSShim"])
     ],

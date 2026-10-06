@@ -1,5 +1,16 @@
 # v0.4 engine and desktop architecture
 
+## v0.4.1 Background Lifecycle
+
+StatusBarController 订阅 session observation，图标/菜单按通知更新；无循环动画或周期 timer。
+LaunchAtLoginController 包装 SMAppService.mainApp，CI 使用 fake，不修改 runner 登录项。
+隐藏启动设置是明确的冷启动策略，applicationShouldHandleReopen 和热键仍显示窗口。
+WorkspaceLifecycleController 顺序处理 sleep/wake/mount 通知，wake 先发现卷，再移除 systemSleep。
+每个 session 的 userGlobal/userVolume/systemSleep reason set 独立；不清除其他暂停来源。
+暂停 flush callback → stop stream → drain writer，内存 fence 与 namespace overlay 保留；恢复验证 identity 并 replay。
+history/device/root identity 改变走现有 recovery。暂停取消尚未执行的 compaction，不强制写全量 base。
+状态栏退出与 Command+Q 共用 fast shutdown；关闭最后一个窗口不退出。
+
 `APFSFindDesktop`（AppKit / SwiftUI / Carbon）与 `APFSFindCore` 在同一进程。
 UI 只在 MainActor 更新视图与调用 NSWorkspace；扫描、映射校验、查询、replay 和 compaction 在后台。
 `CAPFSShim` 只封装 Darwin 目录枚举、元数据和 best-effort I/O policy。

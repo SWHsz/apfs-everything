@@ -78,7 +78,7 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.4.0 — macOS filename search with snapshot recovery
+    apfsfind v0.4.1 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
@@ -92,6 +92,7 @@ enum CLI {
     Additional benchmarks:
       apfsfind usability-bench --root PATH [--cache-dir EXISTING_TEST_CACHE] [--idle-seconds 60]
       apfsfind multivolume-bench --entries-per-volume 100000 --volumes 2
+      apfsfind background-bench [--idle-seconds 60]
 
     The default command is serve and the default root is $HOME.
     --latency-ms must be between 1 and 1000. No log files are saved.
@@ -113,7 +114,7 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench"].contains(first) else {
+            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench", "background-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
@@ -156,7 +157,7 @@ enum CLI {
                 }
                 options.root = NSString(string: value).expandingTildeInPath
             case "--idle-seconds":
-                guard ["real-disk-bench", "usability-bench"].contains(options.command), let n = Double(value), n.isFinite, (0...3600).contains(n) else {
+                guard ["real-disk-bench", "usability-bench", "background-bench"].contains(options.command), let n = Double(value), n.isFinite, (0...3600).contains(n) else {
                     throw CLIError.usage("--idle-seconds requires 0...3600 for real-disk-bench.")
                 }
                 options.idleSeconds = n
@@ -204,6 +205,7 @@ enum CLI {
         }
         let options = try parse(arguments)
         if options.help { print(usage); return 0 }
+        if options.command == "background-bench" { return try BackgroundBenchmarkRunner(idleSeconds: options.idleSeconds).run() }
         if options.command == "multivolume-bench" { return try MultiVolumeBenchmarkRunner(entries: options.entries, volumeCount: options.volumes).run() }
         if options.command == "usability-bench" { return try UsabilityBenchmarkRunner(root: options.root, cacheDirectory: options.cacheDirectory, idleSeconds: options.idleSeconds).run() }
         if options.command == "bench" {

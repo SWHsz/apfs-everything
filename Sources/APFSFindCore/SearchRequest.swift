@@ -18,7 +18,7 @@ public struct SearchRequest: Sendable {
   }
 }
 public enum MatchRank: Int, Sendable { case exact, prefix, substring }
-public enum SearchFreshness: String, Sendable { case baseSnapshot, catchingUp, live, rebuilding }
+public enum SearchFreshness: String, Sendable { case baseSnapshot, catchingUp, live, rebuilding, pausedStale }
 
 public enum SearchOrdering {
   public static func foldedBasename(_ path: String) -> String {

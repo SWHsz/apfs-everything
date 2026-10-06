@@ -41,6 +41,8 @@ public actor MultiVolumeCoordinator {
   private var observers: [UUID: Task<Void, Never>] = [:]
   private var mounted: [VolumeDescriptor] = []
   private var selected: Set<UUID>
+  private var globalPauseReasons: Set<IndexPauseReason> = []
+  private var individuallyPaused: Set<UUID> = []
   private var stopping = false
   private var revision: UInt64 = 0
   private let observations = SnapshotObservation<[VolumeSessionSnapshot]>()
@@ -72,7 +74,8 @@ public actor MultiVolumeCoordinator {
     guard !stopping, revision == expected else { return }
     for volume in mounted where volume.isSystemVolume || selected.contains(volume.volumeUUID) {
       let old = sessions[volume.volumeUUID]
-      if let old, old.snapshot().state != .offline, old.volume.mountPath == volume.mountPath { continue }
+      if let old, old.snapshot().state != .offline, old.volume.mountPath == volume.mountPath,
+        old.volume.deviceID == volume.deviceID { continue }
       if let old { await old.stop(policy: .fast) }
       guard !stopping, revision == expected else { return }
       do {
@@ -82,6 +85,8 @@ public actor MultiVolumeCoordinator {
         observers[volume.volumeUUID] = Task { [weak self] in
           for await _ in session.changes() { if Task.isCancelled { break }; await self?.publish() }
         }
+        for reason in globalPauseReasons { await session.setPauseReason(reason, enabled: true) }
+        if individuallyPaused.contains(volume.volumeUUID) { await session.setPauseReason(.userVolume, enabled: true) }
         session.start()
       } catch { /* A failed factory is represented by an unavailable session. */
         sessions[volume.volumeUUID] = UnavailableVolumeSession(volume: volume, error: String(describing: error))
@@ -133,6 +138,20 @@ public actor MultiVolumeCoordinator {
                  cancelled: request.cancellation.isCancelled)
   }
   public func reconcile(_ hit: VolumeSearchHit) { sessions[hit.volumeUUID]?.reconcileParent(of: hit.path) }
+  public var isGloballyPausedByUser: Bool { globalPauseReasons.contains(.userGlobal) }
+  public func setAllPaused(_ reason: IndexPauseReason, enabled: Bool) async {
+    guard !stopping else { return }
+    if enabled { globalPauseReasons.insert(reason) } else { globalPauseReasons.remove(reason) }
+    for session in Array(sessions.values) {
+      await session.setPauseReason(reason, enabled: globalPauseReasons.contains(reason))
+    }
+    publish()
+  }
+  public func setVolumePaused(_ id: UUID, enabled: Bool) async {
+    guard !stopping else { return }
+    if enabled { individuallyPaused.insert(id) } else { individuallyPaused.remove(id) }
+    await sessions[id]?.setPauseReason(.userVolume, enabled: enabled); publish()
+  }
   public func stop(policy: ShutdownPolicy = .fast) async {
     stopping = true
     for task in observers.values { task.cancel() }; observers = [:]

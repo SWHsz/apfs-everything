@@ -223,6 +223,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   }
   public func search(_ request: SearchRequest) -> SearchResult { core.search(request) }
   public func search(_ query: String, limit: Int = 50) -> SearchResult { search(.init(query: query, limit: limit)) }
+  public func pause() { compactionScheduler.cancelPending(); core.pause() }
+  public func resume() throws { try core.resume(); namespaceChanged() }
 
   private func recordSnapshot(
     _ result: SnapshotWriteResult, cache: SnapshotStore, identity: VolumeIdentity

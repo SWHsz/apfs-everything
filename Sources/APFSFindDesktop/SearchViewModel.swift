@@ -52,6 +52,7 @@ final class SearchViewModel: ObservableObject {
     resultLimit += Self.pageSize
     scheduleQuery(resetLimit: false)
   }
+  func refreshQuery() { if !query.isEmpty { scheduleQuery(resetLimit: false) } }
   private func scheduleQuery(resetLimit: Bool = true) {
     if resetLimit {
       resultLimit = Self.pageSize; hasMoreResults = false

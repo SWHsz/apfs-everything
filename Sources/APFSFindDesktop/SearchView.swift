@@ -22,6 +22,9 @@ struct SearchView: View {
         if model.searching { ProgressView().controlSize(.small); Text("搜索中") }
       }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.bottom, 10)
       if model.accessStatus.hasIssues { PermissionStatusView(status: model.accessStatus) }
+      if model.sessions.contains(where: { $0.state == .paused }) {
+        Text("索引已暂停，结果可能不是最新").font(.caption).foregroundStyle(.orange).padding(8)
+      }
       if let warning = model.hotKeyWarning { Text(warning).font(.caption).foregroundStyle(.orange).padding(8) }
       if let message = model.message { Text(message).font(.caption).foregroundStyle(.orange).padding(8) }
       Divider()
@@ -74,7 +77,7 @@ struct SearchResultRow: View {
       Spacer(minLength: 8)
       VStack(alignment: .trailing) {
         Text(hit.volumeName).font(.caption)
-        if hit.freshness != .live { Text("正在更新").font(.caption2).foregroundStyle(.orange) }
+        if hit.freshness != .live { Text(hit.freshness == .pausedStale ? "已暂停" : "正在更新").font(.caption2).foregroundStyle(.orange) }
       }
     }.padding(10).background(selected ? Color.accentColor.opacity(0.18) : Color.clear)
       .clipShape(RoundedRectangle(cornerRadius: 6))

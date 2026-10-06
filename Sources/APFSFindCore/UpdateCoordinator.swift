@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 import CoreServices
 
-public enum IndexState: String, Sendable { case scanning, replaying, live, dirty, rebuilding, stopped, failed }
+public enum IndexState: String, Sendable { case scanning, replaying, live, dirty, rebuilding, paused, stopped, failed }
 /// A cheap lifecycle snapshot: it never acquires the index lock or waits for I/O.
 public struct StartupStatus: Sendable {
     public let state: IndexState
@@ -71,13 +71,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private let builder = DispatchQueue(label: "apfsfind.rebuild", qos: .utility)
     private let buildGroup = DispatchGroup()
     private let watcher = FSEventsWatcher()
+    private let streamControl = DispatchQueue(label: "apfsfind.stream-control", qos: .utility)
+    private var pauseRequested = false // streamControl-confined
     private let replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)?
     private let cancellation = CancellationToken()
     private let debugEvents = ProcessInfo.processInfo.environment["APFSFIND_DEBUG_EVENTS"] == "1"
     private let stateLock = NSLock()
     private var state: IndexState = .scanning
     private var readiness: IndexReadiness = .opening
-    private var baseAvailable = false
+    private var baseAvailableValue = false
+    private var baseAvailable: Bool {
+        get { stateLock.withLock { baseAvailableValue } }
+        set { stateLock.withLock { baseAvailableValue = newValue } }
+    }
     private var startupBegan = ProcessInfo.processInfo.systemUptime
     private var replayFloor: UInt64 = 0
     private let observation = SnapshotObservation<IndexReadinessSnapshot>()
@@ -154,6 +160,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
         switch value {
         case .live: setReadiness(.live)
+        case .paused: setReadiness(.paused)
         case .replaying: setReadiness(.catchingUp)
         case .dirty, .rebuilding: setReadiness(baseAvailable ? .rebuildingUsingOldBase : .scanning)
         case .failed: setReadiness(.failed)
@@ -174,7 +181,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public func readinessSnapshot(startupMode: StartupMode? = nil) -> IndexReadinessSnapshot {
         let status = startupStatus()
         let current = stateLock.withLock { readiness }
-        let available = [.baseReady, .catchingUp, .live, .rebuildingUsingOldBase].contains(current)
+        let available = [.baseReady, .catchingUp, .live, .rebuildingUsingOldBase, .paused].contains(current) && baseAvailable
         return .init(state: current, searchAvailable: available, resultsMayBeStale: current != .live,
                      startupMode: startupMode, indexedEntries: available ? index.stats().liveEntries : status.scannerEntries,
                      replayReceived: status.receivedEvents, replayProcessed: status.processedEvents,
@@ -312,7 +319,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     private func startWatcher(since id: UInt64) throws {
+      try streamControl.sync {
         guard !cancellation.isCancelled else { throw CocoaError(.userCancelled) }
+        guard !pauseRequested else { setState(.paused); return }
         if let replayStarter {
             try replayStarter(id, { [weak self] in self?.enqueue($0) }); return
         }
@@ -320,6 +329,37 @@ public final class UpdateCoordinator: @unchecked Sendable {
                           identity: volumeIdentity) { [weak self] events in
             self?.enqueue(events)
         }
+      }
+    }
+    /// Flush the service and delivery queue, then drain before fixing the memory fence.
+    /// The immutable base and dirty overlay remain searchable; no persistence here.
+    public func pause() {
+        streamControl.sync {
+            pauseRequested = true
+            watcher.flush(); watcher.stop()
+        }
+        writer.sync { drain(); setState(.paused) }
+        metrics.record("pause_requests")
+    }
+    public func resume() throws {
+        let identity = try identityProvider(root)
+        streamControl.sync { pauseRequested = false }
+        let cursor: UInt64? = writer.sync {
+            guard !cancellation.isCancelled else { return nil }
+            guard baseAvailable else { setState(.scanning); return nil }
+            if volumeIdentity != identity {
+                requestRebuild(invalidated: true, reason: "resume_identity_changed"); return nil
+            }
+            if needsStreamRestart && !building && !rebuildScheduled {
+                requestRebuild(invalidated: true, reason: "resume_pending_recovery"); return nil
+            }
+            if building || rebuildScheduled { setState(.dirty); return nil }
+            stateLock.withLock { historyDone = false }
+            replayFloor = lastProcessedEventID
+            setState(.replaying)
+            return lastProcessedEventID
+        }
+        if let cursor { try startWatcher(since: cursor); metrics.record("resume_replays") }
     }
     /// The callback copies only event information and queues it. No filesystem I/O.
     public func enqueue(_ events: [FileSystemEvent]) {
@@ -685,6 +725,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private func beginRebuild() {
         rebuildScheduled = false
         guard !building, !cancellation.isCancelled else { return }
+        guard currentState != .paused else { needsStreamRestart = true; return }
         building = true; rebuildEvents = []; rebuildOverflow = false
         lastRebuildStart = Date.timeIntervalSinceReferenceDate
         setState(.rebuilding)
@@ -900,13 +941,13 @@ public final class UpdateCoordinator: @unchecked Sendable {
     /// Stop delivery, then finish every received batch before an exit checkpoint.
     /// Filesystem changes after this fence are recovered from the saved cursor.
     public func quiesceForExit() {
-        watcher.stop()
+        streamControl.sync { pauseRequested = true; watcher.stop() }
         writer.sync { drain(); exitFrozen = true }
     }
 
     public func stop() {
         cancellation.cancel()
-        watcher.stop()
+        streamControl.sync { pauseRequested = true; watcher.stop() }
         // Establish that no writer can enter the rebuild group after wait begins.
         writer.sync {}
         buildGroup.wait()

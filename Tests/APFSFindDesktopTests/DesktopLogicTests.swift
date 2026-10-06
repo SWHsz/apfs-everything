@@ -39,6 +39,7 @@ private actor FilenameDesktopSearch: DesktopSearching {
   }
   func cancel() {}
   func requestedLimits() -> [Int] { limits }
+  func add(_ name: String) { index.apply([.upsert(.init(path: "/fixture/" + name, kind: .file))]) }
 }
 @MainActor
 private final class FakeFileRouting: FileActionRouting {
@@ -70,6 +71,18 @@ final class DesktopLogicTests: XCTestCase {
       try? await Task.sleep(for: .milliseconds(1))
     }
     let reached = await condition(); XCTAssertTrue(reached, "UI result was not published before deadline")
+  }
+  func testReopeningRefreshesAnUnchangedQuery() async {
+    let service = FilenameDesktopSearch(otherMatches: 0)
+    let model = SearchViewModel(service: service, actions: FileActionController(), debounce: .milliseconds(1))
+    model.query = "net"
+    await eventually { !model.pending && model.hits.count == 1 }
+    await service.add("Net-created-while-hidden")
+    model.refreshQuery()
+    await eventually { !model.pending && model.hits.count == 2 }
+    XCTAssertEqual(model.query, "net")
+    XCTAssertTrue(model.hits.contains { $0.path.hasSuffix("Net-created-while-hidden") })
+    await model.cancel()
   }
   func testDebounceAndLatestResultOnly() async throws {
     let service = FakeDesktopSearch(), model = SearchViewModel(service: service, actions: FileActionController())
