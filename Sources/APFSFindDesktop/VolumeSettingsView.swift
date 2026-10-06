@@ -9,6 +9,7 @@ final class VolumeSettingsViewModel: ObservableObject {
   @Published private(set) var sessions: [VolumeSessionSnapshot] = []
   private let coordinator: MultiVolumeCoordinator
   init(coordinator: MultiVolumeCoordinator) { self.coordinator = coordinator }
+  var accessStatus: DirectoryAccessStatus { .init(sessions: sessions) }
   func refresh(_ states: [VolumeSessionSnapshot]? = nil) async {
     let mounted = await coordinator.mountedVolumes()
     let values: [VolumeSessionSnapshot]
@@ -41,30 +42,40 @@ struct VolumeSettingsView: View {
               if let status {
                 Text("\(status.state.description) · \(status.indexedEntries) 项 · \(Double(status.snapshotBytes) / 1_000_000, specifier: "%.1f") MB")
                   .font(.caption)
-                if status.unreadableDirectories > 0 { Text("部分目录无法读取，搜索结果可能不完整").font(.caption).foregroundStyle(.orange) }
+                if status.state != .offline && status.unreadableDirectories > 0 {
+                  Text("本次运行累计 \(status.unreadableDirectories) 次读取未完成").font(.caption).foregroundStyle(.orange)
+                }
               } else { Text("未启用").font(.caption).foregroundStyle(.secondary) }
             }
             Divider()
           }
         }
       }
-      PermissionStatusView()
+      PermissionStatusView(status: model.accessStatus)
     }.padding(22).frame(width: 600, height: 430).task { await model.refresh() }
   }
 }
 struct PermissionStatusView: View {
+  let status: DirectoryAccessStatus
   var body: some View {
     HStack(alignment: .top) {
-      Image(systemName: "exclamationmark.shield").foregroundStyle(.orange)
+      Image(systemName: status.hasIssues ? "exclamationmark.triangle" : "info.circle")
+        .foregroundStyle(status.hasIssues ? Color.orange : Color.secondary)
       VStack(alignment: .leading) {
-        Text("部分目录无法读取时，搜索结果可能不完整。")
-        Text("系统设置 → 隐私与安全性 → 完全磁盘访问权限").foregroundStyle(.secondary)
+        Text(status.title)
+        if status.hasIssues { Text(status.details).foregroundStyle(.secondary) }
+        Text(status.guidance).foregroundStyle(.secondary)
+        if status.showsSettingsHelp {
+          Text("系统设置 → 隐私与安全性 → 完全磁盘访问权限").foregroundStyle(.secondary)
+        }
       }.font(.caption)
       Spacer()
-      Button("打开系统设置") {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"), NSWorkspace.shared.open(url) { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
-      }.controlSize(.small)
+      if status.showsSettingsHelp {
+        Button("打开系统设置") {
+          if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"), NSWorkspace.shared.open(url) { return }
+          NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+        }.controlSize(.small)
+      }
     }.padding(10)
   }
 }

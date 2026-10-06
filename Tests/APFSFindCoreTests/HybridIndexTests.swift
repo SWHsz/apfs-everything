@@ -15,6 +15,22 @@ final class HybridIndexTests: XCTestCase {
       cursor: 7, store: s)
     return try XCTUnwrap(s.reader(expectedIdentity: v).mappedBase)
   }
+  func testNetCaseFoldingAndExpandedLimitPreserveNarrowMatchesAcrossBaseAndOverlay() throws {
+    let cache = try TemporaryTree(cache: true), v = snapshotIdentity()
+    let ram = FileIndex(root: v.root)
+    ram.apply((0..<80).map {
+      .upsert(.init(path: v.root + String(format: "/net-%03d", $0), kind: .file))
+    } + [.upsert(.init(path: v.root + "/NetForensics-Bench", kind: .directory))])
+    let hybrid = HybridIndex(base: try base(cache, index: ram))
+    let added = NamespaceEntry(path: v.root + "/netforensic-notes.txt", kind: .file)
+    ram.apply([.upsert(added)]); hybrid.apply([.upsert(added)])
+    XCTAssertEqual(hybrid.search("Net").hits, hybrid.search("net").hits)
+    XCTAssertEqual(hybrid.search("NET", limit: 100).hits, ram.search("net", limit: 100).hits)
+    let narrow = Set(hybrid.search("netforensic", limit: 100).hits.map(\.path))
+    XCTAssertEqual(narrow.count, 2)
+    XCTAssertTrue(narrow.isDisjoint(with: Set(hybrid.search("Net").hits.map(\.path))))
+    XCTAssertTrue(narrow.isSubset(of: Set(hybrid.search("Net", limit: 100).hits.map(\.path))))
+  }
   func testV2TreeLookupFoldAndPayloadDeterminism() throws {
     let c = try TemporaryTree(cache: true)
     let v = snapshotIdentity()

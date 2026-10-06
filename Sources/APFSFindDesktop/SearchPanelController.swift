@@ -16,9 +16,9 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 550),
                     styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     super.init()
-    panel.title = "APFSFind"; panel.isReleasedWhenClosed = false; panel.isFloatingPanel = true
-    panel.hidesOnDeactivate = false; panel.level = .floating
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    panel.title = "APFSFind"; panel.isReleasedWhenClosed = false; panel.isFloatingPanel = false
+    panel.hidesOnDeactivate = false; panel.level = .normal
+    panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
     panel.contentView = NSHostingView(rootView: SearchView(model: model, settings: settings)); panel.delegate = self
     if rememberPosition {
       panel.setFrameAutosaveName("APFSFindSearchPanel")

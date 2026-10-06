@@ -1,5 +1,21 @@
 # v0.4.0 — Usable Desktop Alpha
 
+## 用户反馈修复（2026-10-06）
+
+- 修复短搜索词隐式截断为前 50 条且无法继续查看的问题：桌面明确显示“仍有更多”，列表底部可递增加载 50 条。
+  每次额外取 1 条判断是否截断；加载时保留选中项，换词复位分页并取消旧请求。
+  使用 `Net` / `net` / `netforensic`、超过 50 个匹配的真实 FileIndex 和 mmap+overlay 回归场景验证。
+  完整测试 Core 146 + Desktop 11 = **157 项**，0 failures、1 项可选挂载测试 skip（Core 51.237 s）。
+  含分页修复的发布 `.app` 已重新构建，Info.plist 与签名验证通过。
+- 修复设置页在没有读取失败时仍显示橙色警告的问题；无失败时只显示中性的目录访问帮助。
+- 读取提示改为本次运行累计次数，区分权限/系统保护拒绝、dataless 跳过和其他读取失败；离线卷历史不计入提示。
+  这些计数不是完全磁盘访问权限状态检测；仅有云端占位跳过时不建议修改权限。
+- 搜索窗口改为 `.normal`、`isFloatingPanel = false`，热键仍激活窗口并移至当前桌面，取消持续置顶。
+- README 说明 POSIX/系统保护边界，以及临时签名的 designated requirement 绑定 cdhash：重建后可能需要重新授权。
+- 本机完整测试 Core 145 + Desktop 8 = **153 项**，0 failures、1 项可选真实挂载测试 skip。
+  Core 53.643 s、Desktop 0.105 s；发布 `.app` 构建、Info.plist 和 `codesign --verify --deep --strict` 通过。
+  窗口层级修改尚未由用户实际重启验证；此次没有重扫全盘或改变持久索引格式。
+
 开始 HEAD：`a90920044806d2aca7d627a59963db4f0da67a8a`（main，工作区干净）。本轮仅本机 Mac 开发。
 三个顺序 milestone：A `27e3596`，B `9da1cbb`，C `a5af396`。
 验收结束代码 HEAD：`24eb0831d1f8e5c5aa201145d7700bf4dd0c5dd4`；后续提交只更新测量文档。snapshot v2 布局保持不变，原 127 项测试全部保留。

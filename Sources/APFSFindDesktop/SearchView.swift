@@ -21,7 +21,7 @@ struct SearchView: View {
         Spacer()
         if model.searching { ProgressView().controlSize(.small); Text("搜索中") }
       }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.bottom, 10)
-      if model.warningCount > 0 { PermissionStatusView() }
+      if model.accessStatus.hasIssues { PermissionStatusView(status: model.accessStatus) }
       if let warning = model.hotKeyWarning { Text(warning).font(.caption).foregroundStyle(.orange).padding(8) }
       if let message = model.message { Text(message).font(.caption).foregroundStyle(.orange).padding(8) }
       Divider()
@@ -34,6 +34,11 @@ struct SearchView: View {
                 .onTapGesture(count: 2) { Task { await model.perform(.open, hit: hit) } }
                 .onTapGesture { model.selectedIndex = index }
             }
+            if model.hasMoreResults {
+              Button(model.pending ? "正在加载…" : "加载更多结果") { model.loadMore() }
+                .disabled(model.pending).padding(12)
+                .accessibilityIdentifier("load-more-results")
+            }
           }.padding(8)
         }.onChange(of: model.selectedIndex) { _, _ in if let hit = model.selectedHit { reader.scrollTo(hit.id) } }
       }
@@ -43,7 +48,8 @@ struct SearchView: View {
       }
       Divider()
       HStack {
-        Text("\(model.hits.count) 条 · \(model.latency, specifier: "%.1f") ms")
+        Text(model.hasMoreResults ? "已显示 \(model.hits.count) 条，仍有更多" : "\(model.hits.count) 条")
+        Text("· \(model.latency, specifier: "%.1f") ms")
         Spacer()
         Text("↑↓ 选择   ↵ 打开   ⌘↵ Finder   ⌘C 路径   Esc 隐藏")
       }.font(.caption2).foregroundStyle(.secondary).padding(10)

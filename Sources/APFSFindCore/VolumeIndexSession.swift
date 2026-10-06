@@ -25,12 +25,17 @@ public struct VolumeSessionSnapshot: Sendable, Identifiable {
   public let indexedEntries: Int
   public let snapshotBytes: UInt64
   public let unreadableDirectories: Int
+  /// Cumulative read attempts in this session, not a Full Disk Access probe.
+  public let permissionDeniedReads: Int
+  public let datalessSkips: Int
   public let pendingReplayEvents: Int
   public init(volume: VolumeDescriptor, state: VolumeSessionState, searchAvailable: Bool, freshness: SearchFreshness,
-              indexedEntries: Int, snapshotBytes: UInt64, unreadableDirectories: Int, pendingReplayEvents: Int) {
+              indexedEntries: Int, snapshotBytes: UInt64, unreadableDirectories: Int, pendingReplayEvents: Int,
+              permissionDeniedReads: Int = 0, datalessSkips: Int = 0) {
     self.volume = volume; self.state = state; self.searchAvailable = searchAvailable; self.freshness = freshness
     self.indexedEntries = indexedEntries; self.snapshotBytes = snapshotBytes
     self.unreadableDirectories = unreadableDirectories; self.pendingReplayEvents = pendingReplayEvents
+    self.permissionDeniedReads = permissionDeniedReads; self.datalessSkips = datalessSkips
   }
 }
 public protocol VolumeSearching: AnyObject, Sendable {
@@ -59,12 +64,15 @@ public final class VolumeIndexSession: VolumeSearching, @unchecked Sendable {
   public func snapshot() -> VolumeSessionSnapshot {
     let status = coordinator.readinessSnapshot()
     let current = lock.withLock { state }
+    let counts = coordinator.metrics.snapshot()
     return .init(volume: volume, state: current,
                  searchAvailable: current != .offline && status.searchAvailable,
                  freshness: status.freshness, indexedEntries: status.indexedEntries,
                  snapshotBytes: coordinator.snapshotBytes,
-                 unreadableDirectories: coordinator.metrics.snapshot()["scanner_unreadable_directories", default: 0],
-                 pendingReplayEvents: status.replayPending)
+                 unreadableDirectories: counts["scanner_unreadable_directories", default: 0],
+                 pendingReplayEvents: status.replayPending,
+                 permissionDeniedReads: counts["scanner_permission_denied", default: 0],
+                 datalessSkips: counts["scanner_dataless_skips", default: 0])
   }
   public func changes() -> AsyncStream<VolumeSessionSnapshot> { observations.stream(initial: snapshot()) }
   public func start() {

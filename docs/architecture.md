@@ -14,6 +14,8 @@ SearchRequest 带 request ID 和取消 token；每 4096 records 检查取消。
 HybridIndex 在短锁内捕获 base 强引用、COW 位图与 delta，随后在锁外扫描。
 LatestSearchController 取消上个请求，并拒绝发布已过期的结果；UI 加 40 ms debounce。
 排序为 exact、prefix、substring，同级 folded basename、完整 path、卷名、UUID。
+桌面按 50 条递增展示，每次查询额外获取 1 条判断是否还有结果；加载更多扩大有界 top-k，
+保留选中项，更改查询恢复第一页。加载请求同样使用取消 token / latest ID，旧分页不能覆盖新查询。
 
 ## Replay 与持久 cursor
 
@@ -44,6 +46,9 @@ VolumeIndexSession 独立包装 PersistentIndexCoordinator。MultiVolumeCoordina
 NSWorkspace mount/unmount 通知重新枚举：卸载停止 watcher、取消维护并进入 offline，重新挂载恢复缓存。
 
 NSPanel 承载 SwiftUI，Carbon RegisterEventHotKey 注册 Option+Space，无 CGEventTap。
+搜索面板使用 normal level / 非 floating panel，热键显示时移动到当前 Space；不常驻其他应用之上。
+访问提示来自 session 的累计读取计数，单独提供 permission denied / dataless skips；排除 offline session 的历史失败。
+零失败只显示中性设置帮助，不将读取失败映射为 FDA 未授权状态。
 打开/Finder 前后台 lstat；不存在则移除当前结果并请求父目录 scoped reconcile。
 复制路径允许历史路径。使用 SF Symbols，无逐行同步真实图标读取。
 
@@ -88,4 +93,3 @@ FSEvents 使用 per-device stream，绑定 history UUID。时间参数保持目�
 
 `CompactionPolicy` 可注入较低阈值用于测试。delta 删除立即回收记录，整数槽复用；合并清空位图与 overlay。
 存储持续不可写时不能保证阈值内存上限，错误/重试状态会显示在 stats。
-

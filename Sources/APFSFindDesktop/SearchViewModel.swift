@@ -16,6 +16,7 @@ final class SearchViewModel: ObservableObject {
   @Published private(set) var sessions: [VolumeSessionSnapshot] = []
   @Published private(set) var searching = false
   @Published private(set) var pending = false
+  @Published private(set) var hasMoreResults = false
   @Published private(set) var latency = 0.0
   @Published var message: String?
   @Published var hotKeyWarning: String?
@@ -26,12 +27,15 @@ final class SearchViewModel: ObservableObject {
   private var cancellation = SearchCancellationToken()
   private var latestID: UInt64 = 0
   private let debounce: Duration
+  private static let pageSize = 50
+  private var resultLimit = SearchViewModel.pageSize
   var hide: () -> Void = {}
   init(service: any DesktopSearching, actions: FileActionController, debounce: Duration = .milliseconds(40)) {
     self.service = service; self.actions = actions; self.debounce = debounce
   }
   var selectedHit: VolumeSearchHit? { hits.indices.contains(selectedIndex) ? hits[selectedIndex] : nil }
-  var warningCount: Int { sessions.reduce(0) { $0 + $1.unreadableDirectories } }
+  var accessStatus: DirectoryAccessStatus { .init(sessions: sessions) }
+  var warningCount: Int { accessStatus.incompleteReads }
   var indexedVolumes: Int { sessions.filter(\.searchAvailable).count }
   var catchingUpVolumes: Int { sessions.filter { $0.searchAvailable && $0.freshness != .live }.count }
   var offlineVolumes: Int { sessions.filter { $0.state == .offline }.count }
@@ -43,8 +47,18 @@ final class SearchViewModel: ObservableObject {
     let available = Set(values.filter(\.searchAvailable).map(\.id))
     hits.removeAll { !available.contains($0.volumeUUID) }; clampSelection()
   }
-  private func scheduleQuery() {
+  func loadMore() {
+    guard hasMoreResults, !pending, !query.isEmpty else { return }
+    resultLimit += Self.pageSize
+    scheduleQuery(resetLimit: false)
+  }
+  private func scheduleQuery(resetLimit: Bool = true) {
+    if resetLimit {
+      resultLimit = Self.pageSize; hasMoreResults = false
+      hits = []; selectedIndex = 0
+    }
     latestID &+= 1; let id = latestID, text = query
+    let limit = resultLimit, selectedID = selectedHit?.id
     cancellation.cancel(); task?.cancel(); spinner?.cancel()
     cancellation = SearchCancellationToken(); let token = cancellation
     searching = false; pending = !text.isEmpty; message = nil
@@ -60,11 +74,15 @@ final class SearchViewModel: ObservableObject {
         do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
         if self?.latestID == id { self?.searching = true }
       }
-      let result = await service.submit(.init(id: id, query: text, limit: 50, cancellation: token))
+      // One extra hit distinguishes exactly one full page from truncated results.
+      let result = await service.submit(.init(id: id, query: text, limit: limit + 1, cancellation: token))
       guard latestID == id, !Task.isCancelled, !token.isCancelled else { return }
       spinner?.cancel(); searching = false; pending = false
       guard let result, result.requestID == id, !result.cancelled else { return }
-      hits = result.hits; selectedIndex = 0; latency = result.latencyMilliseconds
+      hasMoreResults = result.hits.count > limit
+      hits = Array(result.hits.prefix(limit))
+      selectedIndex = selectedID.flatMap { id in hits.firstIndex { $0.id == id } } ?? 0
+      latency = result.latencyMilliseconds
     }
   }
   func moveSelection(_ delta: Int) { selectedIndex += delta; clampSelection() }
