@@ -15,6 +15,31 @@ final class HybridIndexTests: XCTestCase {
       cursor: 7, store: s)
     return try XCTUnwrap(s.reader(expectedIdentity: v).mappedBase)
   }
+  func testSubtreeDeletionVisitsOnlyAttachedDeltaAndPreservesOldCapture() throws {
+    let cache=try TemporaryTree(cache:true),v=snapshotIdentity(),ram=FileIndex(root:v.root)
+    ram.apply([.upsert(.init(path:v.root+"/gone",kind:.directory)),.upsert(.init(path:v.root+"/gone/base-child",kind:.directory)),.upsert(.init(path:v.root+"/other",kind:.directory))])
+    let index=HybridIndex(base:try base(cache,index:ram))
+    index.apply((0..<20_000).map{.upsert(.init(path:v.root+"/other/u\($0)",kind:.file))} +
+      [.upsert(.init(path:v.root+"/gone/base-child/new-dir",kind:.directory)),.upsert(.init(path:v.root+"/gone/base-child/new-dir/file",kind:.file))])
+    _ = index.entry(at:v.root+"/gone");_ = index.entry(at:v.root+"/gone/base-child/new-dir")
+    let old=try XCTUnwrap(index.capture()),before=index.metrics.snapshot()["overlay_delete_descendants_visited",default:0]
+    index.apply([.remove(v.root+"/gone"),.upsert(.init(path:v.root+"/reborn",kind:.directory)),.upsert(.init(path:v.root+"/reborn/file",kind:.file))])
+    XCTAssertNil(index.entry(at:v.root+"/gone/base-child/new-dir/file"))
+    XCTAssertNotNil(old.resolver.entry(v.root+"/gone/base-child/new-dir/file"))
+    XCTAssertNotNil(index.entry(at:v.root+"/other/u19999"))
+    XCTAssertNotNil(index.entry(at:v.root+"/reborn/file"))
+    XCTAssertEqual(index.metrics.snapshot()["overlay_delete_descendants_visited",default:0]-before,2)
+    XCTAssertEqual(index.search("u",limit:25_000).hits.filter{$0.path.hasPrefix(v.root+"/other/u")}.count,20_000)
+  }
+  func testCachedDirectoryRefCannotSurviveReplacementWithinOneBatch() throws {
+    let cache=try TemporaryTree(cache:true),v=snapshotIdentity(),ram=FileIndex(root:v.root)
+    ram.apply([.upsert(.init(path:v.root+"/d",kind:.directory,fileID:1)),.upsert(.init(path:v.root+"/d/sub",kind:.directory,fileID:2))])
+    let index=HybridIndex(base:try base(cache,index:ram))
+    _=index.entry(at:v.root+"/d/sub")
+    index.apply([.remove(v.root+"/d"),.upsert(.init(path:v.root+"/d",kind:.directory,fileID:3)),.upsert(.init(path:v.root+"/d/new",kind:.file)),.upsert(.init(path:v.root+"/d/sub/ghost",kind:.file))])
+    XCTAssertNotNil(index.entry(at:v.root+"/d/new"));XCTAssertNil(index.entry(at:v.root+"/d/sub/ghost"))
+    XCTAssertEqual(index.entry(at:v.root+"/d")?.fileID,3)
+  }
   func testNetCaseFoldingAndExpandedLimitPreserveNarrowMatchesAcrossBaseAndOverlay() throws {
     let cache = try TemporaryTree(cache: true), v = snapshotIdentity()
     let ram = FileIndex(root: v.root)

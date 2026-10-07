@@ -213,23 +213,28 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     guard let ref = reference(path) else { return false }
     let old = item(ref, path: path)
     let isDir = old.kind == .directory
+    var removals:[UInt32]=[]
     if case .base(let id) = ref, let b = base {
-      if b.subtreeRange(of:id).count > 100_000 { overflowed = true; metrics.record("overlay_large_subtree_recovery"); return false }
-      for i in b.subtreeRange(of: id) where !deleted(i) {
+      let range=b.subtreeRange(of:id)
+      if range.count > 100_000 { overflowed = true; metrics.record("overlay_large_subtree_recovery"); return false }
+      for i in range {
+        // Delta descendants can attach to any immutable directory in this range.
+        // Follow existing adjacency links, never filter unrelated overlay paths.
+        if isDir {removals.append(contentsOf:deltaChildren[.base(i)]?.values.map{$0} ?? [])}
+        if deleted(i) {continue}
         words[Int(i) / 64] |= 1 << (Int(i) % 64)
         dead += 1
         let kind = b.record(at: i).kind
         if kind == .file { files -= 1 }
         if kind == .directory { dirs -= 1 }
       }
+    } else if case .delta(let id)=ref {removals.append(id)}
+    var position=0
+    while position<removals.count {
+      let id=removals[position];position+=1
+      removals.append(contentsOf:deltaChildren[.delta(id)]?.values.map{$0} ?? [])
     }
-    let removals =
-      isDir
-      ? delta.values.filter { PathCanonicalizer.isWithin($0.entry.path, root: path) }.map(\.id)
-      : {
-        if case .delta(let id) = ref { return [id] }
-        return []
-      }()
+    metrics.record("overlay_delete_descendants_visited",by:removals.count)
     for id in removals {
       guard let d = delta.removeValue(forKey: id) else { continue }
       freeIDs.append(id)
@@ -243,7 +248,9 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       if d.entry.kind == .file { files -= 1 }
       if d.entry.kind == .directory { dirs -= 1 }
     }
-    hotDirectoryCache.invalidate(prefix:path)
+    // Cached refs are checked against this capture's tombstones/delta identities.
+    // The completed batch replaces the cache epoch once, instead of scanning
+    // all cached paths for every removed directory.
     return true
   }
   private func estimate(_ d: DeltaEntry) -> Int {

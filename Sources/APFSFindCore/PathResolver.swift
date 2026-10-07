@@ -140,16 +140,20 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
         guard let id = base.lookupChild(parent:p,name:name),!deleted(id) else { return nil }
         return .base(id)
     }
+    private func validCached(_ ref:EntryRef,path:String)->Bool {
+        switch ref {case .base(let id):return !deleted(id)
+        case .delta(let id):return delta[id]?.entry.path == path}
+    }
     public func resolve(_ path:String) -> EntryRef? {
         metrics.record("path_resolver_calls")
         guard PathCanonicalizer.normalize(path) == path,PathCanonicalizer.isWithin(path,root:base.root) else { metrics.record("path_resolver_failures"); return nil }
         if path == base.root { return rootRef }
-        if let hit = cache?.lookup(path,version:version) { return hit }
+        if let hit = cache?.lookup(path,version:version),validCached(hit,path:path) { return hit }
         var prefix = base.root, ref = rootRef
         if let cache {
             var parent = PathCanonicalizer.parent(of:path)
             while parent != base.root && PathCanonicalizer.isWithin(parent,root:base.root) {
-                if let cached = cache.lookup(parent,version:version),kind(cached) == .directory {
+                if let cached = cache.lookup(parent,version:version),kind(cached) == .directory,validCached(cached,path:parent) {
                     prefix = parent; ref = cached; break
                 }
                 parent = PathCanonicalizer.parent(of:parent)
