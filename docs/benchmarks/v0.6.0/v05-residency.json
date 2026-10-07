@@ -1,0 +1,1196 @@
+{
+  "benchmark" : "residency-read-only",
+  "daily_cache_modified" : false,
+  "estimates" : "application map\/overlay byte estimates are separate from TASK_VM_INFO and rusage counters",
+  "idle" : {
+    "compressed_before_bytes" : 240467968,
+    "compressed_bytes" : 315883520,
+    "disk_bytes_read" : 397312,
+    "disk_bytes_written" : 0,
+    "idle_wakeups" : 0,
+    "interrupt_wakeups" : 2,
+    "logical_bytes_read" : null,
+    "logical_bytes_written" : 20480,
+    "major_faults" : 8,
+    "minor_faults" : 40,
+    "pageins" : 8,
+    "peak_compressed_bytes" : 427098112,
+    "peak_rss_bytes" : 1277820928,
+    "rss_after_bytes" : 5668864,
+    "rss_before_bytes" : 541016064,
+    "system_cpu_seconds" : 0.0010840000000058581,
+    "user_cpu_seconds" : 4.5999999997548002e-05,
+    "wall_ms" : 600007.61566666188
+  },
+  "phases" : [
+    {
+      "metadata" : [
+
+      ],
+      "namespace" : [
+
+      ],
+      "process" : {
+        "compressed_bytes" : 0,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 950272,
+        "disk_bytes_written" : 0,
+        "external_resident_bytes" : 5439488,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 1753088,
+        "interrupt_wakeups" : 4,
+        "logical_bytes_written" : 28672,
+        "major_faults" : 81,
+        "minor_faults" : 1199,
+        "pageins" : 81,
+        "peak_compressed_bytes" : 0,
+        "peak_physical_footprint" : 2097632,
+        "peak_rss_bytes" : 7192576,
+        "physical_footprint" : 2097632,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 7192576,
+        "system_cpu_seconds" : 0.0087740000000000005,
+        "uptime" : 424476.07398925,
+        "user_cpu_seconds" : 0.010604000000000001
+      },
+      "stage" : "process_start"
+    },
+    {
+      "metadata" : [
+
+      ],
+      "namespace" : [
+
+      ],
+      "process" : {
+        "compressed_bytes" : 868352,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 290586624,
+        "disk_bytes_written" : 0,
+        "external_resident_bytes" : 295927808,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 14843904,
+        "interrupt_wakeups" : 4,
+        "logical_bytes_written" : 28672,
+        "major_faults" : 17759,
+        "minor_faults" : 2239,
+        "pageins" : 17759,
+        "peak_compressed_bytes" : 1998848,
+        "peak_physical_footprint" : 16253696,
+        "peak_rss_bytes" : 310771712,
+        "physical_footprint" : 16253696,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 310771712,
+        "system_cpu_seconds" : 0.076978000000000005,
+        "uptime" : 424479.58597229171,
+        "user_cpu_seconds" : 2.953325
+      },
+      "stage" : "namespace_mmap_0"
+    },
+    {
+      "metadata" : [
+
+      ],
+      "namespace" : [
+
+      ],
+      "process" : {
+        "compressed_bytes" : 1720320,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 2825318400,
+        "disk_bytes_written" : 53760000,
+        "external_resident_bytes" : 243810304,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 332283904,
+        "interrupt_wakeups" : 8,
+        "logical_bytes_written" : 54222848,
+        "major_faults" : 20141,
+        "minor_faults" : 130253,
+        "pageins" : 20141,
+        "peak_compressed_bytes" : 424476672,
+        "peak_physical_footprint" : 537937144,
+        "peak_rss_bytes" : 787791872,
+        "physical_footprint" : 334906640,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 787791872,
+        "system_cpu_seconds" : 83.721410000000006,
+        "uptime" : 424556.1423905,
+        "user_cpu_seconds" : 114.040333
+      },
+      "stage" : "metadata_mmap_0"
+    },
+    {
+      "metadata" : [
+
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 1572864,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 2915348480,
+        "disk_bytes_written" : 53760000,
+        "external_resident_bytes" : 332857344,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 357842944,
+        "interrupt_wakeups" : 8,
+        "logical_bytes_written" : 54222848,
+        "major_faults" : 25576,
+        "minor_faults" : 132757,
+        "pageins" : 25576,
+        "peak_compressed_bytes" : 424476672,
+        "peak_physical_footprint" : 537937144,
+        "peak_rss_bytes" : 902397952,
+        "physical_footprint" : 360334632,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 902397952,
+        "system_cpu_seconds" : 83.755272000000005,
+        "uptime" : 424556.61064270837,
+        "user_cpu_seconds" : 114.266036
+      },
+      "stage" : "namespace_runtime_0"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 1507328,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 2915364864,
+        "disk_bytes_written" : 53760000,
+        "external_resident_bytes" : 332890112,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 506527744,
+        "interrupt_wakeups" : 8,
+        "logical_bytes_written" : 54222848,
+        "major_faults" : 25578,
+        "minor_faults" : 141824,
+        "pageins" : 25578,
+        "peak_compressed_bytes" : 424476672,
+        "peak_physical_footprint" : 537937144,
+        "peak_rss_bytes" : 1049870336,
+        "physical_footprint" : 509019528,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 1049870336,
+        "system_cpu_seconds" : 83.776720999999995,
+        "uptime" : 424557.15568820835,
+        "user_cpu_seconds" : 114.777292
+      },
+      "stage" : "metadata_runtime_0"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 50135040,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 3081605120,
+        "disk_bytes_written" : 53760000,
+        "external_resident_bytes" : 483164160,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 275234816,
+        "interrupt_wakeups" : 8,
+        "logical_bytes_written" : 54222848,
+        "major_faults" : 35780,
+        "minor_faults" : 158892,
+        "pageins" : 35780,
+        "peak_compressed_bytes" : 424476672,
+        "peak_physical_footprint" : 537937144,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 326354312,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 871677952,
+        "system_cpu_seconds" : 83.849447999999995,
+        "uptime" : 424560.63709379168,
+        "user_cpu_seconds" : 117.735601
+      },
+      "stage" : "namespace_mmap_1"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 274694144,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 4124819456,
+        "disk_bytes_written" : 80007168,
+        "external_resident_bytes" : 201719808,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 257687552,
+        "interrupt_wakeups" : 9,
+        "logical_bytes_written" : 80650240,
+        "major_faults" : 38394,
+        "minor_faults" : 206316,
+        "pageins" : 38394,
+        "peak_compressed_bytes" : 427098112,
+        "peak_physical_footprint" : 537937144,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 533431784,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 480985088,
+        "system_cpu_seconds" : 104.75953800000001,
+        "uptime" : 424593.2601206667,
+        "user_cpu_seconds" : 175.86729099999999
+      },
+      "stage" : "metadata_mmap_1"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        },
+        {
+          "base_directories" : 79461,
+          "base_mapped_bytes" : 150269185,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 1615001,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 79461,
+          "directory_map_estimated_bytes" : 14754535,
+          "hybrid_generation" : 396,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 201880,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 240697344,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 4142301184,
+        "disk_bytes_written" : 80007168,
+        "external_resident_bytes" : 217759744,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 294879232,
+        "interrupt_wakeups" : 9,
+        "logical_bytes_written" : 80650240,
+        "major_faults" : 39373,
+        "minor_faults" : 208677,
+        "pageins" : 39373,
+        "peak_compressed_bytes" : 427098112,
+        "peak_physical_footprint" : 537937144,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 536626664,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 534200320,
+        "system_cpu_seconds" : 104.772142,
+        "uptime" : 424593.35681420838,
+        "user_cpu_seconds" : 175.90157600000001
+      },
+      "stage" : "namespace_runtime_1"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        },
+        {
+          "metadata_directory_map_entries" : 79461,
+          "metadata_directory_map_estimated_bytes" : 14754535,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        },
+        {
+          "base_directories" : 79461,
+          "base_mapped_bytes" : 150269185,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 1615001,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 79461,
+          "directory_map_estimated_bytes" : 14754535,
+          "hybrid_generation" : 396,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 201880,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 240467968,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 4142301184,
+        "disk_bytes_written" : 80007168,
+        "external_resident_bytes" : 217759744,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 301711360,
+        "interrupt_wakeups" : 9,
+        "logical_bytes_written" : 80650240,
+        "major_faults" : 39373,
+        "minor_faults" : 209093,
+        "pageins" : 39373,
+        "peak_compressed_bytes" : 427098112,
+        "peak_physical_footprint" : 543229416,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 543229416,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 541016064,
+        "system_cpu_seconds" : 104.773929,
+        "uptime" : 424593.40840012504,
+        "user_cpu_seconds" : 175.95137600000001
+      },
+      "stage" : "metadata_runtime_1"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        },
+        {
+          "metadata_directory_map_entries" : 79461,
+          "metadata_directory_map_estimated_bytes" : 14754535,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        },
+        {
+          "base_directories" : 79461,
+          "base_mapped_bytes" : 150269185,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 1615001,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 79461,
+          "directory_map_estimated_bytes" : 14754535,
+          "hybrid_generation" : 396,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 201880,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 240467968,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 4142301184,
+        "disk_bytes_written" : 80007168,
+        "external_resident_bytes" : 217759744,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 301711360,
+        "interrupt_wakeups" : 9,
+        "logical_bytes_written" : 80650240,
+        "major_faults" : 39373,
+        "minor_faults" : 209093,
+        "pageins" : 39373,
+        "peak_compressed_bytes" : 427098112,
+        "peak_physical_footprint" : 543229416,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 543229416,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 541016064,
+        "system_cpu_seconds" : 104.773971,
+        "uptime" : 424593.40971633338,
+        "user_cpu_seconds" : 175.95265699999999
+      },
+      "stage" : "base_ready"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        },
+        {
+          "metadata_directory_map_entries" : 79461,
+          "metadata_directory_map_estimated_bytes" : 14754535,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        },
+        {
+          "base_directories" : 79461,
+          "base_mapped_bytes" : 150269185,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 1615001,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 79461,
+          "directory_map_estimated_bytes" : 14754535,
+          "hybrid_generation" : 396,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "tombstone_bitmap_bytes" : 201880,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 315768832,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 4142813184,
+        "disk_bytes_written" : 80007168,
+        "external_resident_bytes" : 5586944,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 245760,
+        "interrupt_wakeups" : 11,
+        "logical_bytes_written" : 80670720,
+        "major_faults" : 39383,
+        "minor_faults" : 209141,
+        "pageins" : 39383,
+        "peak_compressed_bytes" : 427098112,
+        "peak_physical_footprint" : 544065000,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 317031864,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 5832704,
+        "system_cpu_seconds" : 104.775312,
+        "uptime" : 425193.41881391668,
+        "user_cpu_seconds" : 175.95394300000001
+      },
+      "stage" : "hidden_read_only_idle"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        },
+        {
+          "metadata_directory_map_entries" : 79461,
+          "metadata_directory_map_estimated_bytes" : 14754535,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "query_base_records_scanned" : 3308276,
+          "query_base_scan_us" : 61225,
+          "query_delta_records_scanned" : 0,
+          "query_metadata_values_read" : 51,
+          "query_overlay_scan_us" : 0,
+          "query_path_reconstruction_us" : 624,
+          "query_retries" : 0,
+          "search_latest_completed_id" : 0,
+          "search_requests" : 30,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        },
+        {
+          "base_directories" : 79461,
+          "base_mapped_bytes" : 150269185,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 1615001,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 79461,
+          "directory_map_estimated_bytes" : 14754535,
+          "hybrid_generation" : 396,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "query_base_records_scanned" : 1615000,
+          "query_base_scan_us" : 28615,
+          "query_delta_records_scanned" : 0,
+          "query_metadata_values_read" : 51,
+          "query_overlay_scan_us" : 2,
+          "query_path_reconstruction_us" : 319,
+          "query_retries" : 0,
+          "search_latest_completed_id" : 0,
+          "search_requests" : 30,
+          "tombstone_bitmap_bytes" : 201880,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 274153472,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 4533735424,
+        "disk_bytes_written" : 80007168,
+        "external_resident_bytes" : 385548288,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 41992192,
+        "interrupt_wakeups" : 13,
+        "logical_bytes_written" : 80670720,
+        "major_faults" : 62575,
+        "minor_faults" : 211813,
+        "pageins" : 62575,
+        "peak_compressed_bytes" : 427098112,
+        "peak_physical_footprint" : 544065000,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 317162936,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 427540480,
+        "system_cpu_seconds" : 104.914541,
+        "uptime" : 425196.98509158334,
+        "user_cpu_seconds" : 178.52827600000001
+      },
+      "stage" : "after_30_broad_queries"
+    },
+    {
+      "metadata" : [
+        {
+          "metadata_directory_map_entries" : 551518,
+          "metadata_directory_map_estimated_bytes" : 105018168,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        },
+        {
+          "metadata_directory_map_entries" : 79461,
+          "metadata_directory_map_estimated_bytes" : 14754535,
+          "metadata_overlay_bytes" : 0,
+          "metadata_overlay_entries" : 0,
+          "rename_alias_bytes" : 0,
+          "rename_alias_count" : 0
+        }
+      ],
+      "namespace" : [
+        {
+          "base_directories" : 551518,
+          "base_mapped_bytes" : 289580862,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 3308277,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 551518,
+          "directory_map_estimated_bytes" : 105018168,
+          "hybrid_generation" : 809,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "query_base_records_scanned" : 3308276,
+          "query_base_scan_us" : 20431,
+          "query_delta_records_scanned" : 0,
+          "query_metadata_values_read" : 0,
+          "query_overlay_scan_us" : 0,
+          "query_path_reconstruction_us" : 0,
+          "query_retries" : 0,
+          "search_latest_completed_id" : 0,
+          "search_requests" : 590,
+          "tombstone_bitmap_bytes" : 413536,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        },
+        {
+          "base_directories" : 79461,
+          "base_mapped_bytes" : 150269185,
+          "base_materialized_file_entries" : 0,
+          "base_records" : 1615001,
+          "base_tombstone_ratio" : 0,
+          "base_tombstones" : 0,
+          "directory_map_entries" : 79461,
+          "directory_map_estimated_bytes" : 14754535,
+          "hybrid_generation" : 396,
+          "materialized_file_entries" : 0,
+          "overlay_deleted_entries" : 0,
+          "overlay_estimated_bytes" : 0,
+          "overlay_free_slots" : 0,
+          "overlay_live_entries" : 0,
+          "query_base_records_scanned" : 1615000,
+          "query_base_scan_us" : 9282,
+          "query_delta_records_scanned" : 0,
+          "query_metadata_values_read" : 0,
+          "query_overlay_scan_us" : 1,
+          "query_path_reconstruction_us" : 0,
+          "query_retries" : 0,
+          "search_latest_completed_id" : 0,
+          "search_requests" : 590,
+          "tombstone_bitmap_bytes" : 201880,
+          "writer_lock_wait_max_ms" : 0,
+          "writer_lock_wait_p50_ms" : 0,
+          "writer_lock_wait_p95_ms" : 0,
+          "writer_lock_wait_p99_ms" : 0
+        }
+      ],
+      "process" : {
+        "compressed_bytes" : 273661952,
+        "dirty_private_pages" : null,
+        "disk_bytes_read" : 4558057472,
+        "disk_bytes_written" : 80007168,
+        "external_resident_bytes" : 396312576,
+        "idle_wakeups" : 0,
+        "internal_resident_bytes" : 42745856,
+        "interrupt_wakeups" : 13,
+        "logical_bytes_written" : 80670720,
+        "major_faults" : 63232,
+        "minor_faults" : 211934,
+        "pageins" : 63232,
+        "peak_compressed_bytes" : 427098112,
+        "peak_physical_footprint" : 544065000,
+        "peak_rss_bytes" : 1277820928,
+        "physical_footprint" : 317425080,
+        "private_anonymous_footprint" : null,
+        "rss_bytes" : 439091200,
+        "system_cpu_seconds" : 105.08876600000001,
+        "uptime" : 425226.16247933335,
+        "user_cpu_seconds" : 220.39859899999999
+      },
+      "stage" : "after_query_benchmark"
+    }
+  ],
+  "scope" : "read-only namespace cache plus matched metadata; no live replay; stale paths may be unknown",
+  "sort_queries" : {
+    "modificationTime_ascending" : {
+      "exact" : {
+        "max" : 59.27545833401382,
+        "metadata_values_read" : 163,
+        "p50" : 57.34720837790519,
+        "p90" : 58.623624965548515,
+        "p95" : 59.195583336986601,
+        "p99" : 59.27545833401382,
+        "records_scanned" : 4923276
+      },
+      "no_result" : {
+        "max" : 20.65070834942162,
+        "metadata_values_read" : 0,
+        "p50" : 20.48545831348747,
+        "p90" : 20.576000039000064,
+        "p95" : 20.61704162042588,
+        "p99" : 20.65070834942162,
+        "records_scanned" : 4923276
+      },
+      "one_character" : {
+        "max" : 59.413000009953976,
+        "metadata_values_read" : 1573021,
+        "p50" : 56.55579169979319,
+        "p90" : 56.821541686076671,
+        "p95" : 56.906458339653909,
+        "p99" : 59.413000009953976,
+        "records_scanned" : 4923276
+      },
+      "substring" : {
+        "max" : 80.423666688147932,
+        "metadata_values_read" : 36477,
+        "p50" : 67.352333338931203,
+        "p90" : 69.22800000756979,
+        "p95" : 71.562916680704802,
+        "p99" : 80.423666688147932,
+        "records_scanned" : 4923276
+      }
+    },
+    "modificationTime_descending" : {
+      "exact" : {
+        "max" : 58.714874961879104,
+        "metadata_values_read" : 163,
+        "p50" : 57.813416700810194,
+        "p90" : 58.3995416527614,
+        "p95" : 58.443208341486752,
+        "p99" : 58.714874961879104,
+        "records_scanned" : 4923276
+      },
+      "no_result" : {
+        "max" : 20.859666692558676,
+        "metadata_values_read" : 0,
+        "p50" : 20.515625015832484,
+        "p90" : 20.760125014930964,
+        "p95" : 20.787250017747283,
+        "p99" : 20.859666692558676,
+        "records_scanned" : 4923276
+      },
+      "one_character" : {
+        "max" : 56.247750006150454,
+        "metadata_values_read" : 1573021,
+        "p50" : 55.875499965623021,
+        "p90" : 56.119833316188306,
+        "p95" : 56.155458325520158,
+        "p99" : 56.247750006150454,
+        "records_scanned" : 4923276
+      },
+      "substring" : {
+        "max" : 72.666208376176655,
+        "metadata_values_read" : 36477,
+        "p50" : 66.641625016927719,
+        "p90" : 67.010500002652407,
+        "p95" : 69.108833326026797,
+        "p99" : 72.666208376176655,
+        "records_scanned" : 4923276
+      }
+    },
+    "name_ascending" : {
+      "exact" : {
+        "max" : 73.59570829430595,
+        "metadata_values_read" : 54,
+        "p50" : 58.280833356548101,
+        "p90" : 58.564083359669894,
+        "p95" : 68.804916692897677,
+        "p99" : 73.59570829430595,
+        "records_scanned" : 4923276
+      },
+      "no_result" : {
+        "max" : 20.749499963130802,
+        "metadata_values_read" : 0,
+        "p50" : 20.501124963629991,
+        "p90" : 20.603166660293937,
+        "p95" : 20.651541650295258,
+        "p99" : 20.749499963130802,
+        "records_scanned" : 4923276
+      },
+      "one_character" : {
+        "max" : 78.560874972026795,
+        "metadata_values_read" : 102,
+        "p50" : 62.634625006467104,
+        "p90" : 63.772583322133869,
+        "p95" : 64.067374973092228,
+        "p99" : 78.560874972026795,
+        "records_scanned" : 4923276
+      },
+      "substring" : {
+        "max" : 84.052874997723848,
+        "metadata_values_read" : 102,
+        "p50" : 67.734541662503034,
+        "p90" : 68.210541678126901,
+        "p95" : 68.44816665397957,
+        "p99" : 84.052874997723848,
+        "records_scanned" : 4923276
+      }
+    },
+    "name_descending" : {
+      "exact" : {
+        "max" : 71.19645836064592,
+        "metadata_values_read" : 54,
+        "p50" : 58.298791642300785,
+        "p90" : 58.501791674643755,
+        "p95" : 58.553249982651323,
+        "p99" : 71.19645836064592,
+        "records_scanned" : 4923276
+      },
+      "no_result" : {
+        "max" : 22.483874985482544,
+        "metadata_values_read" : 0,
+        "p50" : 20.508916699327528,
+        "p90" : 20.915000000968575,
+        "p95" : 21.304041671101004,
+        "p99" : 22.483874985482544,
+        "records_scanned" : 4923276
+      },
+      "one_character" : {
+        "max" : 91.046291694510728,
+        "metadata_values_read" : 102,
+        "p50" : 64.934958354569972,
+        "p90" : 65.882583323400468,
+        "p95" : 66.780458379071206,
+        "p99" : 91.046291694510728,
+        "records_scanned" : 4923276
+      },
+      "substring" : {
+        "max" : 93.787708319723606,
+        "metadata_values_read" : 102,
+        "p50" : 68.043124978430569,
+        "p90" : 68.934833339881152,
+        "p95" : 69.008791644591838,
+        "p99" : 93.787708319723606,
+        "records_scanned" : 4923276
+      }
+    },
+    "relevance_ascending" : {
+      "exact" : {
+        "max" : 62.146291660610586,
+        "metadata_values_read" : 54,
+        "p50" : 57.419708289671689,
+        "p90" : 58.300041651818901,
+        "p95" : 60.50858338130638,
+        "p99" : 62.146291660610586,
+        "records_scanned" : 4923276
+      },
+      "no_result" : {
+        "max" : 20.732666656840593,
+        "metadata_values_read" : 0,
+        "p50" : 20.406625000759959,
+        "p90" : 20.678083295933902,
+        "p95" : 20.688583317678422,
+        "p99" : 20.732666656840593,
+        "records_scanned" : 4923276
+      },
+      "one_character" : {
+        "max" : 56.245374958962202,
+        "metadata_values_read" : 102,
+        "p50" : 55.674041679594666,
+        "p90" : 55.927916662767529,
+        "p95" : 56.028458348009735,
+        "p99" : 56.245374958962202,
+        "records_scanned" : 4923276
+      },
+      "substring" : {
+        "max" : 71.585291705559939,
+        "metadata_values_read" : 102,
+        "p50" : 67.197416676208377,
+        "p90" : 67.682749999221414,
+        "p95" : 67.704999994020909,
+        "p99" : 71.585291705559939,
+        "records_scanned" : 4923276
+      }
+    },
+    "size_ascending" : {
+      "exact" : {
+        "max" : 58.30066668568179,
+        "metadata_values_read" : 163,
+        "p50" : 57.551000034436584,
+        "p90" : 57.910916686523706,
+        "p95" : 58.090041624382138,
+        "p99" : 58.30066668568179,
+        "records_scanned" : 4923276
+      },
+      "no_result" : {
+        "max" : 23.629916657228023,
+        "metadata_values_read" : 0,
+        "p50" : 21.553083381149918,
+        "p90" : 22.416874999180436,
+        "p95" : 23.246791679412127,
+        "p99" : 23.629916657228023,
+        "records_scanned" : 4923276
+      },
+      "one_character" : {
+        "max" : 65.058166685048491,
+        "metadata_values_read" : 1573021,
+        "p50" : 61.779916635714471,
+        "p90" : 63.907291681971401,
+        "p95" : 64.255291654262692,
+        "p99" : 65.058166685048491,
+        "records_scanned" : 4923276
+      },
+      "substring" : {
+        "max" : 76.777874957770109,
+        "metadata_values_read" : 36477,
+        "p50" : 68.379708332940936,
+        "p90" : 70.328958332538605,
+        "p95" : 71.926666656509042,
+        "p99" : 76.777874957770109,
+        "records_scanned" : 4923276
+      }
+    },
+    "size_descending" : {
+      "exact" : {
+        "max" : 90.866499987896532,
+        "metadata_values_read" : 163,
+        "p50" : 59.021166642196476,
+        "p90" : 82.497125025838614,
+        "p95" : 84.577041678130627,
+        "p99" : 90.866499987896532,
+        "records_scanned" : 4923276
+      },
+      "no_result" : {
+        "max" : 20.695874991361052,
+        "metadata_values_read" : 0,
+        "p50" : 20.477624959312379,
+        "p90" : 20.541416655760258,
+        "p95" : 20.55912499781698,
+        "p99" : 20.695874991361052,
+        "records_scanned" : 4923276
+      },
+      "one_character" : {
+        "max" : 68.710124993231148,
+        "metadata_values_read" : 1573021,
+        "p50" : 59.859541652258486,
+        "p90" : 60.340999974869192,
+        "p95" : 62.666083336807787,
+        "p99" : 68.710124993231148,
+        "records_scanned" : 4923276
+      },
+      "substring" : {
+        "max" : 72.484000003896654,
+        "metadata_values_read" : 36477,
+        "p50" : 67.102541623171419,
+        "p90" : 67.478208336979151,
+        "p95" : 67.604166630189866,
+        "p99" : 72.484000003896654,
+        "records_scanned" : 4923276
+      }
+    }
+  },
+  "version" : "0.5-baseline",
+  "volumes" : [
+    {
+      "directories" : 551518,
+      "entries" : 3308277,
+      "metadata_bytes" : 53759774,
+      "namespace_bytes" : 289580862,
+      "root" : "\/",
+      "search_ready_ms" : 81082.347750023473
+    },
+    {
+      "directories" : 79461,
+      "entries" : 1615001,
+      "metadata_bytes" : 26244039,
+      "namespace_bytes" : 150269185,
+      "root" : "\/Volumes\/Data 1",
+      "search_ready_ms" : 36252.609999966808
+    }
+  ]
+}
