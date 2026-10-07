@@ -2,8 +2,9 @@
 """Prepare an independent, owned two-volume native acceptance instance.
 
 Daily indexes are read-only inputs. Logs below are explicitly benchmark captures.
-Launch the returned bundle executable with stdout redirected to its report directory;
-use the app's normal menu Quit, then --restart the same manifest for replay testing.
+Run scripts/run_native_smoke.py with the returned manifest. Benchmark captures
+belong inside the excluded owned cache, or their own writes prevent strict quiet.
+Use the app's normal menu Quit, then --restart the manifest for replay testing.
 """
 import argparse
 import hashlib

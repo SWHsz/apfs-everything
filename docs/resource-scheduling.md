@@ -30,8 +30,7 @@ discards staging, releases the lease and requeues. It never publishes a partial
 base. An existing metadata base remains readable during a retryable rebuild, and
 a dirty bootstrap prevents writing a falsely clean metadata cursor.
 
-Correctness overlays survive pressure. Each hot directory cache shrinks to 25%
-(minimum 1024) on warning, and root only on critical; no eager refill on normal.
+Correctness overlays survive pressure. Each hot directory cache replaces its storage with at most 2048 MRU entries on warning, and new root-only storage on critical; no eager refill on normal.
 After shrinking caches, the C shim asks malloc_zone_pressure_relief to return already freed allocator pages. This is best effort, affects no live objects, and does not replace kernel footprint measurements. A one-shot release also follows completed namespace builds after their temporary frame is released.
 
 Namespace overlay stops accepting changes at 500k entries or 128 MiB estimated
@@ -59,3 +58,15 @@ While recovery is scheduled/running, obsolete namespace reconciliation stops and
 Recovered scans are published as namespace v2 plus streamed metadata v1 under the scan maintenance lease before starting replay. The complete scan FileIndex is then released; catching-up queries use mmap rather than retaining a large Swift object graph until HistoryDone. The scan metadata seed is compact, and the namespace generation advances on recovery publication. A one-shot allocator relief follows the completed frame.
 
 Reconciliation checks a mapped directory’s old child count before reconstructing paths (100k cap), even when most old children have disappeared. Its cumulative atomic diff is strictly capped at 100k, including the final directory. A rejected plan publishes no partial mutations and requests fenced recovery.
+
+## v0.6.1 shutdown, diagnostics and strict quiet
+
+Fast shutdown first requests cancellation of active queries, retryable core/metadata maintenance and metadata lookups, before queue barriers. Queued leases are cancelled. Delivered ordinary namespace updates drain; reconciliation interrupted by exit discards its partial plan and pins the conservative cursor for restart replay. A metadata updater barrier cannot begin a new large pending subtree scan after cancellation. Running jobs join at page/chunk checkpoints, retaining old legal bases; already-entered atomic publication may finish its short critical section. State-only writes do not serialize the dirty overlay. A second stop joins the same shutdown rather than creating another teardown.
+
+Per-volume metrics report query cancellation, watcher stop, namespace drain, metadata updater, maintenance cancellation, both maintenance group waits, state write, session teardown and total wall time. The multi-volume total includes all volume stops. CLI `APFSFIND_SHUTDOWN_METRICS=1` emits a quit-request timestamp separately, allowing command backlog to be distinguished from actual engine teardown.
+
+Maintenance records retain kind/volume/urgency, queued/running time, checkpoints, yields/restarts, progress counters, peak gauges and termination reasons. CPU/I/O are **overlapping process intervals**, not exclusive per-task accounting; concurrent namespace/metadata work contributes to each interval and totals must not be summed. Repeated yielded/no-progress attempts use capped exponential one-shot backoff (1–30 seconds); emergency correctness bypasses the delay. Empty queues cancel the backoff timer and CPU sampler. Unmarked releases are reported honestly rather than assumed completed.
+
+Metadata parent enumeration now uses the same local-error policy as subtree reconciliation: descendant permission/dataless failures preserve known values, ordinary disappearance/boundary races do not invalidate an entire sidecar, and root/unexpected I/O failures still request recovery. Query/pressure yields keep deferred parents and do not advance the metadata cursor. Errno, recovery-request and yield counters expose these causes.
+
+Only an explicitly prepared smoke bundle polls the strict quiet gate. All volumes must be namespace live and metadata live, with no event/batch/metadata pending work, no scheduled compaction/metadata jobs, no queued/running maintenance, and 30 seconds of unchanged namespace/metadata generations. The deadline remains 20 minutes. Timeout emits blockers plus queues, tasks, overlays and cursors; it never starts or labels an idle measurement. A passing gate starts a hidden 600-second window, with a 60-second CPU checkpoint and final generation/resource checks. Benchmark captures live inside its excluded owned cache so their own stdout writes do not manufacture new filesystem events. Production has no such polling or capture files.
