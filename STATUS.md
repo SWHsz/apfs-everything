@@ -1,3 +1,15 @@
+## Milestone C (local, before final v0.6 validation)
+
+207 tests passed (187 Core + 20 Desktop; one optional mount test skipped).
+The final integration follow-up passed 43 targeted tests. Resource signals,
+hysteresis, utility scan worker reduction, chunked writers/CRC/validation,
+interaction preemption and bounded overlay recovery are implemented. Metadata
+builds preserve old readable bases and dirty fences across yield. Production
+multi-volume sessions use the shared resource scheduler. Fake signals are injected
+explicitly in deterministic tests; no production XCTest/environment shortcuts.
+Native two-volume soak, randomized sorting, rename caps and final sanitizers remain
+Milestone D work. See docs/resource-scheduling.md.
+
 # v0.6.0 — Lightweight Residency and Resource-Aware Maintenance (in progress)
 
 开始 HEAD `9295470152dbb4dd309d2582611111f01ea2074b`，main，起始工作区干净。用户明确授权完成后推送并验证 CI。Issue #1/#3 已发布开工说明；#2 外置索引存储未实现。

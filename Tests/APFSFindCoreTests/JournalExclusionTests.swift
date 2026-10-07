@@ -17,7 +17,7 @@ final class JournalExclusionTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree(), restored = FileIndex(root: tree.root)
         restored.apply([.upsert(.init(path: tree.path("excluded/ghost"), kind: .file))])
-        let core = try UpdateCoordinator(root: tree.root, excludedRoots: [tree.path("excluded")])
+        let core = try UpdateCoordinator(root: tree.root, excludedRoots: [tree.path("excluded")], maintenanceScheduler: .init())
         defer { core.stop() }
         let identity = try VolumeIdentity.discover(root: tree.root)
         try core.start(restored: restored, cursor: identity.currentEventID(), identity: identity)

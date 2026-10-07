@@ -51,9 +51,9 @@ public enum SnapshotV2Writer {
     cancellation: CancellationToken = .init(), beforePublish: @escaping () throws -> Void = {},
     fault: ((SnapshotFailurePoint) throws -> Void)? = nil,
     install: ((MMapBaseIndex, [String: EntryRef], () throws -> Void) throws -> Void)? = nil,
-    prepareMetadata: (([EntryRef], SnapshotHeader) -> Void)? = nil,
+    prepareMetadata: (([EntryRef], SnapshotHeader) throws -> Void)? = nil,
     completed: (([EntryRef], SnapshotHeader) -> Void)? = nil,
-    resourceMetrics: Metrics? = nil, resourceStage: String = "snapshot"
+    resourceMetrics: Metrics? = nil, resourceStage: String = "snapshot", checkpoint: @escaping () throws -> Void = {}
   ) throws -> SnapshotWriteResult {
     let started = ProcessInfo.processInfo.systemUptime
     let resourceStart = ProcessResourceSample.capture()
@@ -74,7 +74,7 @@ public enum SnapshotV2Writer {
     var nameLength: UInt64 = 0
     var foldLength: UInt64 = 0
     while let work = pending.popLast() {
-      if refs.count % 4096 == 0, cancellation.isCancelled { throw SnapshotError.cancelled }
+      if refs.count % 4096 == 0 { try checkpoint(); if cancellation.isCancelled { throw SnapshotError.cancelled } }
       if let close = work.closing {
         records[close].subtreeEnd = UInt32(records.count)
         continue
@@ -109,6 +109,7 @@ public enum SnapshotV2Writer {
       foldLength += UInt64(folded.utf8.count)
       pending.append(Work(ref: work.ref, parent: work.parent, slot: -1, path: "", closing: Int(id)))
       for (slot, child) in direct.enumerated().reversed() {
+        if slot % 4096 == 0 { try checkpoint() }
         let cm = try source.metadata(child, device: identity.deviceID)
         let path = cm.kind == .directory ? (work.path == "/" ? "" : work.path) + "/" + cm.name : ""
         pending.append(Work(ref: child, parent: id, slot: first + slot, path: path, closing: nil))
@@ -151,7 +152,7 @@ public enum SnapshotV2Writer {
         try emit(root)
         try emit(Data(repeating: 0, count: Int(tableOffset) - 256 - root.count))
         for start in stride(from: 0, to: records.count, by: 4096) {
-          guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
+          try checkpoint(); guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
           var data = Data()
           data.reserveCapacity(4096 * 40)
           for record in records[start..<min(start + 4096, records.count)] {
@@ -162,7 +163,7 @@ public enum SnapshotV2Writer {
         }
         for folded in [false, true] {
           for start in stride(from: 0, to: refs.count, by: 4096) {
-            guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
+            try checkpoint(); guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
             var data = Data()
             for i in start..<min(start + 4096, refs.count) {
               let name = i == 0 ? "" : try source.metadata(refs[i], device: identity.deviceID).name
@@ -172,6 +173,7 @@ public enum SnapshotV2Writer {
           }
         }
         for start in stride(from: 0, to: children.count, by: 4096) {
+          try checkpoint()
           var data = Data(repeating: 0, count: min(4096, children.count - start) * 4)
           for i in start..<min(start + 4096, children.count) {
             data.put(children[i], at: (i - start) * 4)
@@ -195,15 +197,15 @@ public enum SnapshotV2Writer {
         header.put(UInt32(0), at: 148)
         header.put(SnapshotFormat.crc(header), at: 148)
         try snapshotWriteAll(fd, header, offset: 0)
-        prepareMetadata?(refs,h)
+        try prepareMetadata?(refs,h)
       },
       beforePublish: {
-        guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
+        try checkpoint(); guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
         try beforePublish()
       }, fault: fault,
       validate: { fd in
         resourceMetrics?.set(resourceStage + ".rss_before_mmap", to: Int(Metrics.processUsage().residentBytes))
-        let b = try MMapBaseIndex(fileDescriptor: fd, identity: identity)
+        let b = try MMapBaseIndex(fileDescriptor: fd, identity: identity, checkpoint: checkpoint)
         resourceMetrics?.set(resourceStage + ".rss_after_mmap", to: Int(b.residentAfterMmap))
         resourceMetrics?.set(resourceStage + ".rss_after_validation", to: Int(b.residentAfterValidation))
         prepared = b

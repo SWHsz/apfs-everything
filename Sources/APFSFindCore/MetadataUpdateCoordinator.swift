@@ -127,6 +127,9 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 let parentKey = parentEntry?.fileID.map { "\(device):\($0)" } ?? parent
                 pending[parentKey,default:[]].insert(parent)
             }
+            if collapsed.count >= 16_384 || discoveredSubtrees.count >= 16_384 {
+                pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); invalidated(); return
+            }
             if pending.count >= policy.maxPendingEntries {
                 collapsed.formUnion(pending.values.flatMap { $0.map { PathCanonicalizer.parent(of:$0) } }); pending.removeAll()
                 metrics.record("metadata_parent_collapses")
@@ -142,7 +145,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         work = item; queue.asyncAfter(deadline:.now()+delay,execute:item)
     }
     private func drain() {
-        guard !pending.isEmpty || !collapsed.isEmpty else { index.advance(maximumID,historyDone:historyDone); return }
+        guard !pending.isEmpty || !collapsed.isEmpty || !discoveredSubtrees.isEmpty else { index.advance(maximumID,historyDone:historyDone); return }
         metrics.record("metadata_scheduler_wakeups")
         let now = ProcessInfo.processInfo.systemUptime
         if now-lookupWindow >= 1 { lookupWindow = now; lookupsInWindow = 0 }
@@ -234,9 +237,16 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         // namespace reconciliation has discovered its entire pre-populated tree.
         // Fill those delta descendants with bulk metadata, never per-file stat.
         let scanner = BulkScanner(root:root,workerCount:1,metrics:metrics)
-        for subtree in PathCanonicalizer.minimalRoots(Array(discoveredSubtrees)) {
+        let subtreeRoots = PathCanonicalizer.minimalRoots(Array(discoveredSubtrees))
+        var remainingSubtrees = Set<String>()
+        for (subtreeIndex,subtree) in subtreeRoots.enumerated() {
             var directories = [subtree]
             while let directory = directories.popLast(), !scanCancellation.isCancelled {
+                let resources = SystemResourceSignals.shared.current()
+                if resources.activeQueries > 0 || resources.memoryPressure == .critical {
+                    remainingSubtrees.formUnion([directory]+directories+Array(subtreeRoots.dropFirst(subtreeIndex+1)))
+                    metrics.record("metadata_subtree_yields"); break
+                }
                 do {
                     let entries = try scanner.readScannedDirectory(directory,rootDeviceID:device,cancellation:scanCancellation)
                     metrics.record("metadata_subtree_bulk_enumerations")
@@ -250,7 +260,11 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 }
             }
         }
-        discoveredSubtrees.removeAll(keepingCapacity:true)
+        discoveredSubtrees = remainingSubtrees
+        if remainingSubtrees.count > 16_384 { discoveredSubtrees.removeAll(); invalidated(); return }
+        if !remainingSubtrees.isEmpty {
+            for path in remainingSubtrees { deferredPaths.insert(path) }
+        }
         if recent.count > 4096 { recent.removeAll(keepingCapacity:true) }
         if renameOrigins.count > 4096 { renameOrigins.removeAll(keepingCapacity:true) }
         renameOnly.removeAll(keepingCapacity:true)

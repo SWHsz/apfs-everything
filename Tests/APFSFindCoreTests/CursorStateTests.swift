@@ -28,7 +28,7 @@ final class CursorStateTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.file("seed")
-        let c = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+        let c = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
         try c.start(); XCTAssertTrue(c.waitUntilLive()); XCTAssertTrue(c.waitForCheckpoint())
         let v = try VolumeIdentity.discover(root: tree.root), store = try SnapshotStore(directory: cache.root, identity: v)
         let h = try store.reader(expectedIdentity: v).header
@@ -43,7 +43,7 @@ final class CursorStateTests: XCTestCase {
         XCTAssertEqual(before.st_mtimespec.tv_sec, after.st_mtimespec.tv_sec)
         XCTAssertEqual(before.st_mtimespec.tv_nsec, after.st_mtimespec.tv_nsec)
         XCTAssertGreaterThanOrEqual(store.effectiveCursor(for: h).cursor, fence)
-        let next = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+        let next = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
         defer { next.stop(saveCheckpoint: false) }
         try next.start(); XCTAssertTrue(next.waitUntilLive())
         XCTAssertEqual(next.stats().dictionary["effective_cursor"] as? UInt64, store.effectiveCursor(for: h).cursor)
@@ -51,7 +51,7 @@ final class CursorStateTests: XCTestCase {
     func testStateCannotSkipUnpublishedNamespace() throws {
         try requireFSEvents()
         let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
-        let c = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+        let c = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
         try c.start(); XCTAssertTrue(c.waitUntilLive()); XCTAssertTrue(c.waitForCheckpoint())
         let store = try SnapshotStore(directory: cache.root, identity: VolumeIdentity.discover(root: tree.root))
         let h = try store.reader(expectedIdentity: VolumeIdentity.discover(root: tree.root)).header
@@ -63,7 +63,7 @@ final class CursorStateTests: XCTestCase {
         }))
         XCTAssertEqual(store.effectiveCursor(for: h).cursor, h.lastProcessedEventID)
         c.stop(saveCheckpoint: false)
-        let next = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+        let next = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
         defer { next.stop(saveCheckpoint: false) }
         try next.start(); XCTAssertTrue(next.waitUntilLive())
         waitFor("unpublished namespace replay") { next.index.entry(at: tree.path("pending")) != nil }
@@ -100,7 +100,7 @@ extension CursorStateTests {
         try requireFSEvents()
         let tree=try TemporaryTree(),counter=FenceCounter()
         let c=try UpdateCoordinator(root:tree.root,configuration:.init(fullRebuildMinInterval:0,rebuildDebounceMilliseconds:0),
-            fenceProvider:{counter.capture($0)})
+            fenceProvider:{counter.capture($0)}, maintenanceScheduler: .init())
         defer{c.stop()}
         try c.start();XCTAssertTrue(c.waitUntilLive());XCTAssertEqual(counter.count,1)
         c.rebuild()
@@ -113,9 +113,9 @@ extension CursorStateTests {
     func testPersistentCoordinatorForwardsFenceAndWarmUsesStoredCursor() throws {
         try requireFSEvents()
         let tree=try TemporaryTree(),cache=try TemporaryTree(cache:true),counter=FenceCounter()
-        let cold=try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,fenceProvider:{counter.capture($0)})
+        let cold=try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,maintenanceScheduler: .init(), fenceProvider:{counter.capture($0)})
         try cold.start();XCTAssertTrue(cold.waitUntilLive());XCTAssertEqual(counter.count,1);cold.stop()
-        let warm=try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,fenceProvider:{counter.capture($0)})
+        let warm=try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,maintenanceScheduler: .init(), fenceProvider:{counter.capture($0)})
         defer{warm.stop(saveCheckpoint:false)}
         try warm.start();XCTAssertTrue(warm.waitUntilLive());XCTAssertEqual(counter.count,1)
         XCTAssertEqual(warm.stats().dictionary["startup_mode"] as? String,"warm_snapshot")

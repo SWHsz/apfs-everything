@@ -10,7 +10,7 @@ final class CoordinatorBatchTests: XCTestCase {
         try tree.file("removed/old")
         let scanner = BulkScanner(root: tree.root)
         let device = try scanner.rootDeviceID()
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         // Device 0 deliberately permits direct patches before conflict handling.
         coordinator.index.apply(try scanner.scan().entries.filter { $0.path != tree.root }.map {
@@ -36,7 +36,7 @@ final class CoordinatorBatchTests: XCTestCase {
         let scanner = BulkScanner(root: tree.root)
         let device = try scanner.rootDeviceID()
         let actual = try XCTUnwrap(scanner.readDirectory(tree.root, rootDeviceID: device).first)
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         coordinator.index.apply([.upsert(actual)])
         let reconciler = DirectoryReconciler(scanner: scanner, index: coordinator.index,
@@ -56,7 +56,7 @@ final class CoordinatorBatchTests: XCTestCase {
         let tree = try TemporaryTree()
         try tree.file("seed")
         let scanner = BulkScanner(root: tree.root)
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         let reconciler = DirectoryReconciler(scanner: scanner, index: coordinator.index,
                                               rootDeviceID: try scanner.rootDeviceID(), metrics: coordinator.metrics)
@@ -72,7 +72,7 @@ final class CoordinatorBatchTests: XCTestCase {
         try tree.file("anchor")
         let scanner = BulkScanner(root: tree.root)
         let device = try scanner.rootDeviceID()
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         // Keep the synthetic index root's device 0, enabling the direct create
         // fast path without starting a real stream in this deterministic test.
@@ -94,7 +94,7 @@ final class CoordinatorBatchTests: XCTestCase {
         try tree.file("survivor")
         let scanner = BulkScanner(root: tree.root)
         let device = try scanner.rootDeviceID()
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         coordinator.index.apply(try scanner.readDirectory(tree.root, rootDeviceID: device).map { .upsert($0) })
         let reconciler = DirectoryReconciler(scanner: scanner, index: coordinator.index,
@@ -113,7 +113,7 @@ final class CoordinatorBatchTests: XCTestCase {
         try tree.directory("nested")
         let scanner = BulkScanner(root: tree.root)
         let device = try scanner.rootDeviceID()
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         var directory = try XCTUnwrap(scanner.readDirectory(tree.root, rootDeviceID: device).first)
         directory.deviceID = 0 // Enable a direct patch beneath the indexed child.
@@ -136,7 +136,7 @@ final class CoordinatorBatchTests: XCTestCase {
         try tree.file("gone/deep/ghost")
         let scanner = BulkScanner(root: tree.root)
         let scan = try scanner.scan()
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         coordinator.index.apply(scan.entries.map { .upsert($0) })
         let reconciler = DirectoryReconciler(scanner: scanner, index: coordinator.index,

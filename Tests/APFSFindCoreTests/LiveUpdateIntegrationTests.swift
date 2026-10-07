@@ -9,7 +9,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         try requireFSEvents()
         let tree = try OwnedBenchmarkDirectory(parent: "/private/tmp", prefix: "apfsfind-real-bench-")
         defer { try? tree.remove() }
-        let coordinator = try UpdateCoordinator(root: tree.path)
+        let coordinator = try UpdateCoordinator(root: tree.path, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())
@@ -76,7 +76,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         try tree.file("seed")
         try tree.directory("a")
         try tree.directory("b")
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())
@@ -103,7 +103,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         let outside = try TemporaryTree()
         try outside.directory("incoming/deep")
         try outside.file("incoming/deep/child")
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())
@@ -118,7 +118,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         let tree = try TemporaryTree()
         try tree.file("seed")
         let root = tree.root
-        let coordinator = try UpdateCoordinator(root: root)
+        let coordinator = try UpdateCoordinator(root: root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         // This path is created after the scan result is installed, before starting
         // the watcher. It can only be found by replaying from the pre-scan E0.
@@ -137,7 +137,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree()
         try tree.file("content")
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())
@@ -165,7 +165,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree()
         try tree.file("seed")
-        let coordinator = try UpdateCoordinator(root: tree.root, configuration: .init(fullRebuildMinInterval: 0))
+        let coordinator = try UpdateCoordinator(root: tree.root, configuration: .init(fullRebuildMinInterval: 0), maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())
@@ -184,7 +184,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         let tree = try TemporaryTree()
         try tree.file("old-seed")
         let coordinator = try UpdateCoordinator(root: tree.root, configuration: .init(
-            fullRebuildMinInterval: 0, maxConsecutiveRebuildFailures: 1))
+            fullRebuildMinInterval: 0, maxConsecutiveRebuildFailures: 1), maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())
@@ -210,7 +210,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         let tree = try TemporaryTree()
         try tree.file("seed")
         let coordinator = try UpdateCoordinator(root: tree.root, configuration: .init(
-            fullRebuildMinInterval: 0, rebuildDebounceMilliseconds: 250))
+            fullRebuildMinInterval: 0, rebuildDebounceMilliseconds: 250), maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())

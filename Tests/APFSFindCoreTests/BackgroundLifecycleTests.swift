@@ -37,7 +37,7 @@ final class BackgroundLifecycleTests: XCTestCase, @unchecked Sendable {
   func testPauseDrainsDeliveredEventsAndResumesFromMemoryFence() throws {
     let tree = try TemporaryTree(); try tree.file("before"); try tree.file("delivered")
     let starts = ReplayStarts()
-    let core = try UpdateCoordinator(root: tree.root, replayStarter: { [root = tree.root] id, sink in
+    let core = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init(), replayStarter: { [root = tree.root] id, sink in
       starts.record(id); sink([.init(path: root, flags: UInt32(kFSEventStreamEventFlagHistoryDone), id: id)])
     })
     defer { core.stop() }
@@ -58,7 +58,7 @@ final class BackgroundLifecycleTests: XCTestCase, @unchecked Sendable {
     try requireFSEvents()
     let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
     try tree.file("old")
-    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
     defer { p.stop(policy: .fast) }
     try p.start(); XCTAssertTrue(p.waitUntilLive()); XCTAssertTrue(p.waitForCheckpoint())
     let store = try SnapshotStore(directory: cache.root, identity: VolumeIdentity.discover(root: tree.root))
@@ -101,7 +101,7 @@ final class BackgroundLifecycleTests: XCTestCase, @unchecked Sendable {
     let core = try UpdateCoordinator(root: tree.root,
       configuration: .init(fullRebuildMinInterval: 0, rebuildDebounceMilliseconds: 1),
       identityProvider: { _ in identity.get() }, fenceProvider: { _ in 200 },
-      replayStarter: { [root = tree.root] id, sink in starts.record(id); sink([.init(path: root, flags: UInt32(kFSEventStreamEventFlagHistoryDone), id: id)]) })
+      maintenanceScheduler: .init(), replayStarter: { [root = tree.root] id, sink in starts.record(id); sink([.init(path: root, flags: UInt32(kFSEventStreamEventFlagHistoryDone), id: id)]) })
     defer { core.stop() }; try core.start(); XCTAssertTrue(core.waitUntilLive())
     core.pause(); identity.replaceHistory(); try tree.file("new")
     try core.resume()
@@ -114,7 +114,7 @@ final class BackgroundLifecycleTests: XCTestCase, @unchecked Sendable {
     let a = VolumeDescriptor(volumeUUID: UUID(), displayName: "A", mountPath: "/fixture", isSystemVolume: true)
     let b = VolumeDescriptor(volumeUUID: UUID(), displayName: "B", mountPath: "/Volumes/B")
     let provider = FakeVolumeProvider([a, b]), store = MemoryVolumeSelection([b.volumeUUID])
-    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, factory: { v, _ in FakeVolumeSession(v) })
+    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, maintenance:.init(), factory: { v, _ in FakeVolumeSession(v) })
     await c.start(); await c.setVolumePaused(b.volumeUUID, enabled: true)
     await c.setAllPaused(.userGlobal, enabled: true); await c.setAllPaused(.systemSleep, enabled: true)
     provider.values = [a]; await c.refreshMountedVolumes()

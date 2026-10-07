@@ -71,6 +71,10 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     private var floor: UInt64 = 0
     private var historyDone = false
     private var paused = false
+    private var bootstrapPending = false
+    private var overflowed = false
+    private var safetyBytes = 0
+    public var requiresRecovery: Bool { lock.withLock { overflowed } }
     public init() {}
     public func capture() -> MetadataQuerySnapshot {
         lock.withLock { .init(namespace:namespace,base:base,overlay:overlay,freshness:freshness,resolver:resolver,renamedDirectories:renamedDirectories) }
@@ -94,11 +98,12 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     public var isReplaying: Bool { lock.withLock { !historyDone } }
     public func restartReplay() { lock.withLock { floor = cursor; historyDone = false; freshness = base == nil ? .building : .catchingUp } }
     public var replayFloor: UInt64 { lock.withLock { floor } }
-    public var isDirty: Bool { lock.withLock { overlay.entryCount > 0 || !renamedDirectories.isEmpty } }
+    public var isDirty: Bool { lock.withLock { overflowed || bootstrapPending || overlay.entryCount > 0 || !renamedDirectories.isEmpty } }
     public func bind(namespace: MMapBaseIndex, mapped: MMapMetadataIndex? = nil, cursor: UInt64? = nil, retainOverlay: Bool = false) {
         let pathResolver = PathResolverSnapshot(base:namespace,cache:hotDirectoryCache)
         hotDirectoryCache.reset(version:pathResolver.version,root:namespace.root)
         lock.withLock {
+            overflowed = false; safetyBytes = 0; bootstrapPending = false
             self.namespace = namespace; resolver = pathResolver
             base = mapped?.header.matches(namespace.header) == true ? mapped : nil
             if !retainOverlay { overlay = .init(); renamedDirectories = [:] }
@@ -107,12 +112,12 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
             freshness = base == nil ? .building : .catchingUp
         }
     }
-    public func beginBootstrap(fence: UInt64) { lock.withLock { base = nil; overlay = .init(); renamedDirectories = [:]; floor = fence; cursor = fence; freshness = .building } }
+    public func beginBootstrap(fence: UInt64) { lock.withLock { bootstrapPending = true; floor = fence; if base == nil { cursor = fence }; freshness = .building } }
     public func install(_ mapped: MMapMetadataIndex, expectedGeneration: UInt64? = nil) throws {
         try lock.withLock {
             guard let namespace, mapped.header.matches(namespace.header) else { throw SnapshotError.generationChanged }
-            base = mapped
-            if expectedGeneration == overlay.generation { overlay.baseOverrides = [:]; overlay.deleted = []; overlay.generation &+= 1 }
+            base = mapped; bootstrapPending = false
+            if expectedGeneration == overlay.generation { overlay.baseOverrides = [:]; overlay.deleted = []; safetyBytes = overlay.deltaValues.reduce(0) { $0+96+$1.key.utf8.count }; overlay.generation &+= 1 }
             freshness = paused ? .pausedStale : (historyDone ? .live : .catchingUp)
         }
     }
@@ -129,12 +134,14 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
         }
     }
     private func updateLocked(path:String,value:FileMetadataValue?,ordinal:UInt32?) {
+            guard !overflowed else { return }
+            if safetyBytes + overlay.retainedRenameBytes >= 128*1024*1024 || overlay.entryCount >= 500_000 { overflowed = true; return }
             let old = overlay.deltaValues[path] ?? ordinal.map { overlay.baseOverrides[$0] ?? base?.value(at:$0) ?? .unknown } ?? .unknown
             if let value {
                 if old == value && !overlay.deleted.contains(path) { return }
                 overlay.deleted.remove(path)
-                if let ordinal { overlay.baseOverrides[ordinal] = value }
-                else { overlay.deltaValues[path] = value }
+                if let ordinal { if overlay.baseOverrides[ordinal] == nil { safetyBytes += 64 }; overlay.baseOverrides[ordinal] = value }
+                else { if overlay.deltaValues[path] == nil { safetyBytes += 96+path.utf8.count }; overlay.deltaValues[path] = value }
                 overlay.generation &+= 1
             } else {
                 if let old = renamedDirectories.removeValue(forKey:path) {
@@ -143,7 +150,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
                 }
                 let removed = overlay.deltaValues.removeValue(forKey:path)
                 guard ordinal != nil || removed != nil else { return }
-                if let ordinal { overlay.deleted.insert(path); overlay.baseOverrides[ordinal] = .unknown }
+                if let ordinal { if !overlay.deleted.contains(path) { safetyBytes += 112+path.utf8.count }; overlay.deleted.insert(path); overlay.baseOverrides[ordinal] = .unknown }
                 overlay.generation &+= 1
             }
     }
@@ -160,7 +167,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     public func markPending() { lock.withLock { if base != nil && !paused { freshness = .catchingUp } } }
     public func advance(_ id:UInt64, historyDone:Bool = false, pending:Bool = false) {
         lock.withLock {
-            if id != UInt64.max { cursor = max(cursor,id) }
+            if !overflowed, id != UInt64.max { cursor = max(cursor,id) }
             self.historyDone = self.historyDone || historyDone
             if base != nil { freshness = paused ? .pausedStale : (self.historyDone && !pending ? .live : .catchingUp) }
         }

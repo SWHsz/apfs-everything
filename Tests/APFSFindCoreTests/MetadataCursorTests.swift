@@ -17,7 +17,7 @@ final class MetadataCursorTests: XCTestCase {
             })
             try Data(repeating:1,count:5).write(to:URL(fileURLWithPath:tree.path("target")))
             let probe = MetadataReplayProbe(), path = tree.path("target")
-            let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,replayStarter:{ id,deliver in
+            let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,maintenanceScheduler: .init(), replayStarter:{ id,deliver in
                 probe.set(id); deliver([.init(path:path,flags:UInt32(kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemIsFile),id:90),
                     .init(path:path,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:110)])
             })
@@ -34,7 +34,7 @@ final class MetadataCursorTests: XCTestCase {
         let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true); try tree.file("target")
         let path = tree.path("target")
         var policy = MetadataUpdatePolicy(); policy.debounceSeconds = 60
-        let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,metadataUpdatePolicy:policy,replayStarter:{ id,deliver in
+        let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,metadataUpdatePolicy:policy,maintenanceScheduler: .init(), replayStarter:{ id,deliver in
             deliver([.init(path:path,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:id)])
         },fenceProvider:{_ in 100})
         try c.start(); XCTAssertTrue(c.waitUntilLive()); c.flushMetadata()
@@ -48,7 +48,7 @@ final class MetadataCursorTests: XCTestCase {
         XCTAssertEqual(store.effectiveMetadataCursor(for:header).cursor,100)
         XCTAssertEqual(c.metrics.snapshot()["metadata_lookups",default:0],0)
         let probe = MetadataReplayProbe()
-        let next = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,replayStarter:{ id,deliver in
+        let next = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,maintenanceScheduler: .init(), replayStarter:{ id,deliver in
             probe.set(id); deliver([.init(path:path,flags:UInt32(kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemIsFile),id:110),
                 .init(path:path,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:111)])
         })
@@ -61,7 +61,7 @@ final class MetadataCursorTests: XCTestCase {
         let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true); try tree.file("target")
         let original = try VolumeIdentity.discover(root:tree.root),identity = MetadataIdentityProbe(original)
         let path = tree.path("target")
-        let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,identityProvider:{_ in identity.value},replayStarter:{ id,deliver in
+        let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,identityProvider:{_ in identity.value},maintenanceScheduler: .init(), replayStarter:{ id,deliver in
             deliver([.init(path:path,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:id)])
         },fenceProvider:{_ in 100})
         defer { c.stop(policy:.fast) }; try c.start(); XCTAssertTrue(c.waitUntilLive()); c.flushMetadata()
@@ -80,7 +80,7 @@ final class MetadataCursorTests: XCTestCase {
     func testPureCursorFastExitWritesMetadataStateOnly() throws {
         let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true); try tree.file("target")
         let path = tree.path("target")
-        let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,replayStarter:{ id,deliver in
+        let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,maintenanceScheduler: .init(), replayStarter:{ id,deliver in
             deliver([.init(path:path,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:id)])
         },fenceProvider:{_ in 100})
         try c.start(); XCTAssertTrue(c.waitUntilLive()); c.flushMetadata()

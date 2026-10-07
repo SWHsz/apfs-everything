@@ -70,6 +70,7 @@ public final class Metrics: @unchecked Sendable {
         let delta = ProcessResourceSample.capture().delta(since: before)
         lock.withLock { resourceStages[stage] = delta }
     }
+    public func recordResourceGauge(_ stage: String, sample: ProcessResourceSample = .capture()) { lock.withLock { resourceStages[stage] = sample.dictionary } }
     public func resourceSnapshot() -> [String: [String: Any]] { lock.withLock { resourceStages } }
     public static func processUsage() -> ProcessUsage {
         var usage = rusage()

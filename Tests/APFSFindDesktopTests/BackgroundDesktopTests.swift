@@ -48,7 +48,7 @@ private struct DesktopLifecycleVolumes: MountedVolumeProvider {
 final class BackgroundDesktopTests: XCTestCase {
   func testStatusItemActionsRouteToLifecycleLoginAndQuit() async throws {
     let provider = DesktopLifecycleVolumes()
-    let coordinator = MultiVolumeCoordinator(provider: provider, factory: { v, _ in DesktopLifecycleSession(v) })
+    let coordinator = MultiVolumeCoordinator(provider: provider, maintenance:.init(), factory: { v, _ in DesktopLifecycleSession(v) })
     await coordinator.start()
     let loginService = FakeLoginService(), login = LaunchAtLoginController(service: loginService)
     var shown = 0, settings = 0, quits = 0
@@ -122,7 +122,7 @@ final class BackgroundDesktopTests: XCTestCase {
   }
   func testRepeatedSleepWakePreservesUserPauseAndStopsObservation() async {
     let provider = DesktopLifecycleVolumes()
-    let coordinator = MultiVolumeCoordinator(provider: provider, factory: { v, _ in DesktopLifecycleSession(v) })
+    let coordinator = MultiVolumeCoordinator(provider: provider, maintenance:.init(), factory: { v, _ in DesktopLifecycleSession(v) })
     await coordinator.start(); await coordinator.setVolumePaused(provider.volume.volumeUUID, enabled: true)
     let workspace = FakeWorkspace(), lifecycle = WorkspaceLifecycleController(coordinator: coordinator, provider: workspace)
     lifecycle.start(); workspace.handler?(.sleep); workspace.handler?(.sleep)

@@ -72,6 +72,11 @@ public final class DirectoryReconciler {
         var seen = Set<String>()
         var retryParents = Set<String>()
         while let work = pending.popLast(), !cancellation.isCancelled {
+            if plan.mutations.count >= 100_000 || seen.count >= 16_384 {
+                // Atomic diffs cannot grow without bound; recovery keeps the old
+                // cursor and scans on a resource-aware maintenance queue.
+                plan.mutations.removeAll(); plan.requiresRebuild = true; break
+            }
             let directory = work.path
             guard seen.insert(directory).inserted else { continue }
             do {
@@ -91,7 +96,7 @@ public final class DirectoryReconciler {
                     }
                 }
                 let endStamp = BulkScanner.directoryStamp(directory)
-                if let startStamp, startStamp == endStamp { stamps[directory] = startStamp }
+                if let startStamp, startStamp == endStamp { if stamps.count >= 8192 { stamps.removeAll(keepingCapacity:false) }; stamps[directory] = startStamp }
                 else { stamps.removeValue(forKey: directory) }
             } catch {
                 if cancellation.isCancelled { break }

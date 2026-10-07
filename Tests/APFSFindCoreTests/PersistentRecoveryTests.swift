@@ -8,7 +8,7 @@ final class PersistentRecoveryTests: XCTestCase {
     private func make(_ tree: TemporaryTree, _ cache: TemporaryTree, ephemeral: Bool = false,
                       rebuild: Bool = false) throws -> PersistentIndexCoordinator {
         try .init(root: tree.root, configuration: .init(fullRebuildMinInterval: 0),
-                  ephemeral: ephemeral, rebuildIndex: rebuild, cacheDirectory: cache.root)
+                  ephemeral: ephemeral, rebuildIndex: rebuild, cacheDirectory: cache.root, maintenanceScheduler:.init())
     }
     private func cold(_ tree: TemporaryTree, _ cache: TemporaryTree) throws {
         let c = try make(tree, cache)
@@ -100,7 +100,7 @@ final class PersistentRecoveryTests: XCTestCase {
         let real = try VolumeIdentity.discover(root: tree.root)
         let changed = VolumeIdentity(root: real.root, deviceID: real.deviceID, rootFileID: real.rootFileID,
             volumeUUID: real.volumeUUID, historyUUID: UUID(), mountPoint: real.mountPoint, relativeRoot: real.relativeRoot)
-        let c = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, identityProvider: { _ in changed })
+        let c = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, identityProvider: { _ in changed }, maintenanceScheduler: .init())
         try c.start(); XCTAssertTrue(c.waitUntilLive()); XCTAssertTrue(c.waitForCheckpoint())
         XCTAssertEqual(c.stats().dictionary["startup_mode"] as? String, "rebuild_fallback")
         XCTAssertEqual(c.metrics.snapshot()["full_scans"], 1)
@@ -133,7 +133,7 @@ final class PersistentRecoveryTests: XCTestCase {
         XCTAssertEqual(forced.metrics.snapshot()["full_scans"], 1)
         XCTAssertFalse(forced.stats().dictionary["snapshot_loaded"] as? Bool ?? true)
         forced.stop(saveCheckpoint: false)
-        let inside = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: tree.path("private-cache"))
+        let inside = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: tree.path("private-cache"), maintenanceScheduler: .init())
         defer { inside.stop(saveCheckpoint: false) }
         try inside.start(); XCTAssertTrue(inside.waitUntilLive()); XCTAssertTrue(inside.waitForCheckpoint())
         XCTAssertNil(inside.index.entry(at: tree.path("private-cache")))
@@ -180,7 +180,7 @@ final class PersistentRecoveryTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree()
         try tree.file("seed")
-        let c = try UpdateCoordinator(root: tree.root)
+        let c = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { c.stop() }
         try c.start(); XCTAssertTrue(c.waitUntilLive()); XCTAssertTrue(c.flushEvents())
         let before = try c.captureCheckpoint()

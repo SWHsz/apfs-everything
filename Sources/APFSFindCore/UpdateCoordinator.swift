@@ -114,6 +114,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var needsStreamRestart = false
     private var automaticRebuildSuspended = false
     private var volumeIdentity: VolumeIdentity?
+    private var activeMaintenance: MaintenanceLease?
+    public func maintenanceCheckpoint() throws { try stateLock.withLock { activeMaintenance }?.checkpoint() }
     private var lastProcessedEventID: UInt64 = 0 // Writer-confined, advanced only after mutations.
     private var persistenceEpoch: UInt64 = 0
     private var exitFrozen = false
@@ -249,10 +251,13 @@ public final class UpdateCoordinator: @unchecked Sendable {
             if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
             return
         }
+        while !cancellation.isCancelled {
         metrics.set("maintenance_queued", to: 1)
         setReadiness(.scanning)
         let lease = try maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .coldScan, priority: root == "/" ? 1 : 0, cancellation: cancellation)
-        defer { lease.release() }
+        lease.validateIdentity { [self] in guard try identityProvider(root) == identity else { throw SnapshotError.identity("source identity changed") } }
+        stateLock.withLock { activeMaintenance = lease }
+        defer { stateLock.withLock { activeMaintenance = nil }; lease.release() }
         metrics.set("maintenance_queued", to: 0)
         setReadiness(.scanning)
         // Capture before any directory enumeration: replay closes the initial scan gap.
@@ -272,7 +277,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         timer.resume()
         defer { timer.cancel(); progressQueue.sync {} }
         do {
-            let scanner = makeScanner()
+            let scanner = makeScanner(lease:lease)
             metrics.record("full_scans")
             let scanResources = ProcessResourceSample.capture()
             let result = try scanner.scan(cancellation: cancellation)
@@ -281,7 +286,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             metrics.set("initial_scan_ms", to: Int(result.elapsedMilliseconds))
             metrics.set("initial_index_building", to: 1)
             let buildStart = ProcessInfo.processInfo.systemUptime
-            let initial = makePrivateIndex(result.entries, counter: "initial_index_entries")
+            let initial = try makePrivateIndex(result.entries, counter: "initial_index_entries")
             metrics.set("initial_index_build_ms", to: Int((ProcessInfo.processInfo.systemUptime - buildStart) * 1000))
             metrics.set("initial_index_building", to: 0)
             guard !cancellation.isCancelled else { setState(.stopped); return }
@@ -303,21 +308,26 @@ public final class UpdateCoordinator: @unchecked Sendable {
             lease.release()
             try startWatcher(since: e0)
             if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
+            return
+        } catch is MaintenanceYield {
+            metrics.record("maintenance_yields"); continue
         } catch {
             setState(.failed, error: String(describing: error))
             throw error
         }
+        }
     }
 
-    private func makeScanner() -> BulkScanner {
-        BulkScanner(root: root, workerCount: configuration.workerCount, metrics: metrics, excludedRoots: excludedRoots)
+    private func makeScanner(lease: MaintenanceLease? = nil) -> BulkScanner {
+        BulkScanner(root: root, workerCount: min(configuration.workerCount,lease?.workerLimit ?? configuration.workerCount), metrics: metrics, excludedRoots: excludedRoots, checkpoint: { try lease?.checkpoint() })
     }
 
-    private func makePrivateIndex(_ entries: [NamespaceEntry], counter: String) -> FileIndex {
+    private func makePrivateIndex(_ entries: [NamespaceEntry], counter: String) throws -> FileIndex {
         let fresh = FileIndex(root: root)
         // Bounded chunks keep cancellation responsive during million-entry setup.
         // This private index is never visible to queries before the final swap.
         for offset in stride(from: 0, to: entries.count, by: 4096) {
+            try maintenanceCheckpoint()
             guard !cancellation.isCancelled else { break }
             let end = min(entries.count, offset + 4096)
             fresh.apply(entries[offset..<end].map { .upsert($0) })
@@ -458,7 +468,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if before != index.stats().generation { mutationHandler?() }
         // Include content-only IDs, but never advance a durable cursor ahead of
         // the namespace mutations corresponding to this batch.
-        if let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
+        if currentState != .dirty && currentState != .rebuilding, let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
             lastProcessedEventID = max(lastProcessedEventID, completedID)
         }
         if stateLock.withLock({ historyDone }), currentState == .replaying,
@@ -669,7 +679,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 }
             }
         }
-        target.apply(mutations) // One short write lock for the entire event microbatch.
+        target.apply(mutations)
+        if mayRebuild, (target as? HybridIndex)?.requiresRecovery == true { requestRebuild(invalidated:true,reason:"overlay_safety_limit") } // One short write lock for the entire event microbatch.
         // A vanished directory cannot be treated as an empty successful read.
         // Its surviving parent determines removal/type replacement authoritatively.
         repairDirectories(Array(retryParents), into: target, using: reconciler, mayRebuild: mayRebuild)
@@ -743,13 +754,15 @@ public final class UpdateCoordinator: @unchecked Sendable {
             guard let self else { return }
             let result = Result {
                 let identity = try self.identityProvider(self.root)
-                let lease = try self.maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .rebuild, cancellation: self.cancellation)
-                defer { lease.release() }
+                let lease = try self.maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .rebuild, urgency:(self.index as? HybridIndex)?.requiresRecovery == true ? .emergency : .required, cancellation: self.cancellation)
+                lease.validateIdentity { guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("source identity changed") } }
+                self.stateLock.withLock { self.activeMaintenance = lease }
+                defer { self.stateLock.withLock { self.activeMaintenance = nil }; lease.release() }
                 let e0 = self.fenceProvider(identity)
                 self.metrics.record("full_scans")
-                let scan = try self.makeScanner().scan(cancellation: self.cancellation)
+                let scan = try self.makeScanner(lease:lease).scan(cancellation: self.cancellation)
                 self.metrics.set("rebuild_index_entries", to: 0)
-                let fresh = self.makePrivateIndex(scan.entries, counter: "rebuild_index_entries")
+                let fresh = try self.makePrivateIndex(scan.entries, counter: "rebuild_index_entries")
                 guard try self.identityProvider(self.root)==identity else{throw SnapshotError.identity("root changed during recovery scan")}
                 return PreparedIndex(index: fresh, rootDeviceID: scan.rootDeviceID, cancelled: scan.cancelled,
                     identity: identity, fence: e0)
@@ -799,6 +812,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             failureCount = 0
             stateLock.withLock { errorDescription = nil; recoveryReason = nil }
             if rebuildOverflow { requestRebuild(invalidated: true, reason: "rebuild_buffer_overflow") }
+        } catch is MaintenanceYield {
+            metrics.record("maintenance_yields"); setState(.dirty); requestRebuild(invalidated:true,reason:"resource_yield")
         } catch {
             failureCount += 1
             metrics.record("rebuild_failures")
@@ -826,7 +841,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     public func verify() throws -> VerificationResult {
-        let scanner = makeScanner()
+        let identity = try identityProvider(root)
+        let lease = try maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.rebuild,urgency:.required,cancellation:cancellation)
+        defer { lease.release() }
+        let scanner = makeScanner(lease:lease)
         let scan = try scanner.scan(cancellation: cancellation)
         guard !scan.cancelled else { throw CocoaError(.userCancelled) }
         guard flushEvents(timeout: 120) else { throw SnapshotError.invalid("verification event flush timed out") }

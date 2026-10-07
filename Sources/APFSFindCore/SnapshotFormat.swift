@@ -39,6 +39,14 @@ public enum SnapshotFormat {
     static func crc(_ bytes: UnsafeRawBufferPointer, previous: UInt32 = 0) -> UInt32 {
         apfs_crc32(previous, bytes.baseAddress, bytes.count)
     }
+    static func checkedCRC(_ bytes: UnsafeRawBufferPointer, checkpoint: () throws -> Void) throws -> UInt32 {
+        var value: UInt32 = 0
+        for start in stride(from: 0, to: bytes.count, by: 65536) {
+            try checkpoint()
+            value = crc(UnsafeRawBufferPointer(rebasing: bytes[start..<min(start+65536,bytes.count)]), previous:value)
+        }
+        return value
+    }
     static func crc(_ data: Data, previous: UInt32 = 0) -> UInt32 {
         data.withUnsafeBytes { crc($0, previous: previous) }
     }

@@ -56,7 +56,7 @@ public actor MultiVolumeCoordinator {
   private let observations = SnapshotObservation<[VolumeSessionSnapshot]>()
   public init(provider: any MountedVolumeProvider = LocalMountedVolumeProvider(),
               selectionStore: any VolumeSelectionStore = DefaultsVolumeSelectionStore(),
-              maintenance: MaintenanceScheduler = .init(),
+              maintenance: MaintenanceScheduler = .shared,
               factory: @escaping SessionFactory = { try VolumeIndexSession(volume: $0, maintenanceScheduler: $1) }) {
     self.provider = provider; self.selectionStore = selectionStore; self.maintenance = maintenance
     self.factory = factory; selected = selectionStore.load()

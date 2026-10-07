@@ -69,7 +69,7 @@ final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
     let b = VolumeDescriptor(volumeUUID: UUID(), displayName: "B", mountPath: "/Volumes/B")
     let provider = FakeVolumeProvider([a, b]), store = MemoryVolumeSelection([b.volumeUUID])
     let probe = ParallelSearchProbe()
-    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, factory: { v, _ in FakeVolumeSession(v, probe: probe) })
+    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, maintenance:.init(), factory: { v, _ in FakeVolumeSession(v, probe: probe) })
     await c.start()
     let result = await c.search(.init(id: 1, query: "match", limit: 50))
     XCTAssertEqual(result.hits.count, 50); XCTAssertEqual(result.searchedVolumes, 2)
@@ -83,7 +83,7 @@ final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
     let b = VolumeDescriptor(volumeUUID: UUID(), displayName: "B", mountPath: "/Volumes/B")
     let bad = VolumeDescriptor(volumeUUID: UUID(), displayName: "Bad", mountPath: "/Volumes/Bad")
     let provider = FakeVolumeProvider([a, b, bad]), store = MemoryVolumeSelection([b.volumeUUID, bad.volumeUUID])
-    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, factory: { v, _ in
+    let c = MultiVolumeCoordinator(provider: provider, selectionStore: store, maintenance:.init(), factory: { v, _ in
       if v.displayName == "Bad" { throw CocoaError(.fileReadNoPermission) }; return FakeVolumeSession(v)
     })
     await c.start()
@@ -100,7 +100,7 @@ final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
   }
   func testLatestRequestCancelsPriorAndEmptyDoesNotScan() async throws {
     let a = VolumeDescriptor(volumeUUID: UUID(), displayName: "A", mountPath: "/", isSystemVolume: true)
-    let c = MultiVolumeCoordinator(provider: FakeVolumeProvider([a]), selectionStore: MemoryVolumeSelection(), factory: { v, _ in FakeVolumeSession(v, delay: 0.1) })
+    let c = MultiVolumeCoordinator(provider: FakeVolumeProvider([a]), selectionStore: MemoryVolumeSelection(), maintenance:.init(), factory: { v, _ in FakeVolumeSession(v, delay: 0.1) })
     await c.start(); let latest = LatestSearchController(coordinator: c)
     let token = SearchCancellationToken()
     let first = Task { await latest.submit(.init(id: 1, query: "match", cancellation: token)) }
@@ -129,7 +129,7 @@ final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
     let provider = FakeVolumeProvider([a, b]), selection = MemoryVolumeSelection([b.volumeUUID])
     let cachePath = cache.root
     let factory: MultiVolumeCoordinator.SessionFactory = { v, scheduler in try VolumeIndexSession(volume: v, cacheDirectory: cachePath, maintenanceScheduler: scheduler) }
-    let c = MultiVolumeCoordinator(provider: provider, selectionStore: selection, factory: factory)
+    let c = MultiVolumeCoordinator(provider: provider, selectionStore: selection, maintenance:.init(), factory: factory)
     await c.start(); try await waitReady(c, count: 2)
     var result = await c.search(.init(query: "same")); XCTAssertEqual(result.hits.count, 2)
     provider.values = [a]; await c.refreshMountedVolumes()
@@ -137,7 +137,7 @@ final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
     try bTree.file("offline-created")
     provider.values = [a, b]; await c.refreshMountedVolumes(); try await waitReady(c, count: 2)
     await c.stop(policy: .fast)
-    let restarted = MultiVolumeCoordinator(provider: provider, selectionStore: selection, factory: factory)
+    let restarted = MultiVolumeCoordinator(provider: provider, selectionStore: selection, maintenance:.init(), factory: factory)
     await restarted.start(); try await waitReady(restarted, count: 2)
     for _ in 0..<500 {
       result = await restarted.search(.init(query: "offline-created")); if result.hits.count == 1 { break }
@@ -147,7 +147,7 @@ final class MultiVolumeTests: XCTestCase, @unchecked Sendable {
     let values = await restarted.sessionsSnapshot(); XCTAssertTrue(values.allSatisfy { $0.searchAvailable })
     await restarted.stop(policy: .fast)
     for tree in [aTree, bTree] {
-      let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+      let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
       try p.start(); XCTAssertTrue(p.waitUntilLive()); XCTAssertTrue(try p.verify().isConsistent)
       XCTAssertEqual(p.metrics.snapshot()["full_scans", default: 0], 0); p.stop(policy: .fast)
     }

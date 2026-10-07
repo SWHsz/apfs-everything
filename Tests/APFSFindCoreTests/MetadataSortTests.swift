@@ -48,7 +48,7 @@ final class MetadataSortTests: XCTestCase {
     func testMultiVolumeHasMoreMetadataCompletenessAndGlobalSort() async {
         let a = VolumeDescriptor(volumeUUID:UUID(),displayName:"A",mountPath:"/",isSystemVolume:true)
         let b = VolumeDescriptor(volumeUUID:UUID(),displayName:"B",mountPath:"/b")
-        let c = MultiVolumeCoordinator(provider:FakeVolumeProvider([a,b]),selectionStore:MemoryVolumeSelection([b.volumeUUID]),factory:{ v,_ in SortVolumeSession(v) })
+        let c = MultiVolumeCoordinator(provider:FakeVolumeProvider([a,b]),selectionStore:MemoryVolumeSelection([b.volumeUUID]),maintenance:.init(), factory:{ v,_ in SortVolumeSession(v) })
         await c.start(); let result = await c.search(.init(query:"match",limit:50,sort:.init(key:.size)))
         XCTAssertTrue(result.hasMore); XCTAssertFalse(result.metadataComplete); XCTAssertEqual(result.hits.count,50)
         XCTAssertEqual(result.hits.first?.logicalSize,1099)

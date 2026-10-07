@@ -38,3 +38,16 @@ int apfs_process_resources(APFSProcessResources *output) {
     return -1;
 #endif
 }
+
+int apfs_system_cpu(APFSCPUCounter *output) {
+    if (!output) { errno = EINVAL; return -1; }
+    host_cpu_load_info_data_t info = {0};
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    mach_port_t host = mach_host_self();
+    kern_return_t result = host_statistics(host, HOST_CPU_LOAD_INFO, (host_info_t)&info, &count);
+    mach_port_deallocate(mach_task_self(), host);
+    if (result != KERN_SUCCESS || count < HOST_CPU_LOAD_INFO_COUNT) { errno = EIO; return -1; }
+    output->user = info.cpu_ticks[CPU_STATE_USER]; output->system = info.cpu_ticks[CPU_STATE_SYSTEM];
+    output->nice = info.cpu_ticks[CPU_STATE_NICE]; output->idle = info.cpu_ticks[CPU_STATE_IDLE];
+    return 0;
+}

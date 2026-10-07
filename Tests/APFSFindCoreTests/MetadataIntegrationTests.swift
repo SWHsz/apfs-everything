@@ -7,7 +7,7 @@ import XCTest
 final class MetadataIntegrationTests: XCTestCase {
     private func coordinator(_ tree:TemporaryTree,_ cache:TemporaryTree) throws -> PersistentIndexCoordinator {
         var policy = CompactionPolicy(); policy.liveLimit = 1_000_000; policy.overlayRatio = 10_000; policy.tombstoneRatio = 10_000
-        return try .init(root:tree.root,cacheDirectory:cache.root,compactionPolicy:policy)
+        return try .init(root:tree.root,cacheDirectory:cache.root,compactionPolicy:policy,maintenanceScheduler:.init())
     }
     private func ready(_ c:PersistentIndexCoordinator) throws {
         try c.start(); XCTAssertTrue(c.waitUntilLive(timeout:30)); XCTAssertTrue(c.waitForMetadata(timeout:30))
@@ -97,7 +97,7 @@ final class MetadataIntegrationTests: XCTestCase {
         let fault = MetadataFaultSwitch()
         let c = try PersistentIndexCoordinator(root:tree.root,cacheDirectory:cache.root,metadataFault:{ point in
             if fault.enabled && point == .beforeRename { throw SnapshotError.cancelled }
-        })
+        }, maintenanceScheduler: .init())
         defer { c.stop(policy:.fast) }; try ready(c)
         let oldUUID = (c.index as? HybridIndex)?.mappedBase?.header.snapshotUUID
         try tree.file("added")

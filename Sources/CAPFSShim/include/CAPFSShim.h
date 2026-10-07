@@ -64,6 +64,10 @@ typedef struct APFSProcessResources {
 } APFSProcessResources;
 /* Actual per-process counters from the SDK's rusage_info_v4, no estimates. */
 int apfs_process_resources(APFSProcessResources *output);
+typedef struct APFSCPUCounter {
+    uint32_t user, system, nice, idle;
+} APFSCPUCounter;
+int apfs_system_cpu(APFSCPUCounter *output);
 /* Incremental IEEE CRC32, pass 0 for the first chunk. */
 uint32_t apfs_crc32(uint32_t previous, const void *bytes, size_t length);
 /* Component-wise O_NOFOLLOW cache directory walk. Creates only when requested. */

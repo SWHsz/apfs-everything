@@ -86,16 +86,22 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   private var freeIDs: [UInt32] = []
   private var generation: UInt64 = 0
   private var files = 0, dirs = 0, dead = 0, overlayBytes = 0
+  private let maximumOverlayEntries: Int
+  private let maximumOverlayBytes: Int
+  private var overflowed = false
+  public var requiresRecovery: Bool { lock.withLock { overflowed } }
   private var activeQueries = 0
   private var writerWaits: [Double] = []
   private var writerWaitSlot = 0
   private var writerWaitMaximum = 0.0
   private var lastMutation = ProcessInfo.processInfo.systemUptime
-  public init(root: String) {
+  public init(root: String, maximumOverlayEntries:Int = 500_000, maximumOverlayBytes:Int = 128*1024*1024) {
+    self.maximumOverlayEntries = maximumOverlayEntries; self.maximumOverlayBytes = maximumOverlayBytes
     self.root = root
     bootstrap = FileIndex(root: root)
   }
-  public init(base: MMapBaseIndex) {
+  public init(base: MMapBaseIndex, maximumOverlayEntries:Int = 500_000, maximumOverlayBytes:Int = 128*1024*1024) {
+    self.maximumOverlayEntries = maximumOverlayEntries; self.maximumOverlayBytes = maximumOverlayBytes
     root = base.root
     bootstrap = nil
     install(base: base)
@@ -112,7 +118,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     base: MMapBaseIndex, directoryMap: [String: EntryRef]? = nil, generation: UInt64? = nil
   ) {
     lock.withLock {
-      self.base = base
+      overflowed = false
+    self.base = base
       words = Array(repeating: 0, count: (base.count + 63) / 64)
       bootstrap = nil
       delta = [:]
@@ -206,6 +213,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     let old = item(ref, path: path)
     let isDir = old.kind == .directory
     if case .base(let id) = ref, let b = base {
+      if b.subtreeRange(of:id).count > 100_000 { overflowed = true; metrics.record("overlay_large_subtree_recovery"); return false }
       for i in b.subtreeRange(of: id) where !deleted(i) {
         words[Int(i) / 64] |= 1 << (Int(i) % 64)
         dead += 1
@@ -266,6 +274,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     }
     var changed = false
     for m in mutations {
+      if overflowed { continue }
+      if delta.count >= maximumOverlayEntries || overlayBytes >= maximumOverlayBytes { overflowed = true; metrics.record("overlay_safety_stops"); continue }
       switch m {
       case .remove(let path): changed = remove(path) || changed
       case .upsert(let e):
@@ -274,7 +284,11 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
         else { continue }
         if let r = reference(e.path), item(r, path: e.path) == e { continue }
         guard e.path != root, let parent = reference(PathCanonicalizer.parent(of:e.path)), item(parent,path:PathCanonicalizer.parent(of:e.path)).kind == .directory else { continue }
+        let parentEntry = item(parent,path:PathCanonicalizer.parent(of:e.path))
+        guard !parentEntry.isMountPoint, parentEntry.deviceID == 0 || parentEntry.deviceID == base?.header.rootDeviceID else { continue }
+        if overlayBytes + 192 + e.path.utf8.count*2 + e.path.split(separator:"/").last!.utf8.count + FileEntry.fold(String(e.path.split(separator:"/").last!)).utf8.count > maximumOverlayBytes { overflowed = true; metrics.record("overlay_safety_stops"); continue }
         _ = remove(e.path)
+        if overflowed { continue }
         let name = e.path == root ? "" : String(e.path.split(separator: "/").last!)
         let d = DeltaEntry(
           id: freeIDs.popLast() ?? nextID, entry: e, name: name, foldedName: FileEntry.fold(name))
@@ -383,6 +397,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     return search(.init(query: query, limit: limit))
   }
   public func search(_ request: SearchRequest) -> SearchResult {
+    InteractiveActivityController.shared.beginQuery()
+    defer { InteractiveActivityController.shared.endQuery() }
     metrics.record("search_requests")
     let start = ProcessInfo.processInfo.systemUptime
     let limit = request.limit

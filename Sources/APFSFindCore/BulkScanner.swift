@@ -39,8 +39,10 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     public let workerCount: Int
     private let metrics: Metrics
     private let excludedRoots: [String]
+    private let checkpoint: @Sendable () throws -> Void
 
-    public init(root: String, workerCount: Int = 4, metrics: Metrics = Metrics(), excludedRoots: [String] = []) {
+    public init(root: String, workerCount: Int = 4, metrics: Metrics = Metrics(), excludedRoots: [String] = [], checkpoint: @escaping @Sendable () throws -> Void = {}) {
+        self.checkpoint = checkpoint
         requestedRoot = root
         self.workerCount = min(16, max(1, workerCount))
         self.metrics = metrics
@@ -117,7 +119,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     }
 
     public func readScannedDirectory(_ path: String, rootDeviceID: UInt64,
-                               cancellation: CancellationToken? = nil) throws -> [ScannedEntry] {
+                               cancellation: CancellationToken? = nil, collectEntries:Bool = true, visit:(@Sendable ([ScannedEntry])->Void)? = nil) throws -> [ScannedEntry] {
         applyThreadPolicy()
         var error: Int32 = 0
         guard let reader = apfs_bulk_reader_open(path, rootDeviceID, 1, &error) else {
@@ -128,6 +130,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         }
         var result: [ScannedEntry] = []
         while cancellation?.isCancelled != true {
+            try checkpoint()
             var records: UnsafePointer<APFSDirectoryEntry>?
             var count = 0
             guard apfs_bulk_reader_next(reader, &records, &count) == 0 else {
@@ -135,6 +138,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
             }
             if count == 0 { break }
             guard let records else { throw ScannerError(path: path, code: EIO) }
+            var page: [ScannedEntry] = []
             for record in UnsafeBufferPointer(start: records, count: count) {
                 if cancellation?.isCancelled == true { break }
                 if record.error_code != 0 {
@@ -156,14 +160,16 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                 case UInt32(APFS_OBJECT_SYMLINK.rawValue): kind = .symlink
                 default: kind = .other
                 }
-                result.append(ScannedEntry(namespace: NamespaceEntry(path: childPath,
+                page.append(ScannedEntry(namespace: NamespaceEntry(path: childPath,
                                              kind: kind, deviceID: record.device_id,
                                              fileID: record.has_file_id != 0 ? record.file_id : nil,
                                              isMountPoint: record.is_mount_point != 0), metadata: FileMetadataValue(record)))
             }
+            visit?(page)
+            result += collectEntries ? page : page.filter { Self.shouldTraverse(entry:$0.namespace,rootDeviceID:rootDeviceID) }
+            metrics.record("scanner_entries",by:page.count)
         }
         metrics.record("scanner_directories")
-        metrics.record("scanner_entries", by: result.count)
         return result
     }
 
@@ -206,13 +212,13 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         }
         // A root failure is fatal. Never publish an empty replacement after EACCES/EIO.
         let children: [ScannedEntry]
-        do { children = try readScannedDirectory(root, rootDeviceID: info.device_id, cancellation: cancellation) }
+        do { children = try readScannedDirectory(root, rootDeviceID: info.device_id, cancellation:cancellation,collectEntries:collectEntries,visit:collectEntries ? nil : visit) }
         catch let error as ScannerError { recordFailure(error.code); throw error }
-        visit?([rootEntry] + children)
+        visit?(collectEntries ? [rootEntry]+children : [rootEntry])
         let work = ScanWork(entries: collectEntries ? [rootEntry] + children : [],
                             directories: children.filter { Self.shouldTraverse(entry: $0.namespace, rootDeviceID: info.device_id) }.map(\.namespace.path))
         let group = DispatchGroup()
-        let queue = DispatchQueue(label: "apfsfind.scan", qos: .userInitiated, attributes: .concurrent)
+        let queue = DispatchQueue(label: "apfsfind.scan", qos: .utility, attributes: .concurrent)
         for _ in 0..<workerCount {
             group.enter()
             queue.async { [self] in
@@ -221,14 +227,16 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                 while let directory = work.next(cancellation: cancellation) {
                     do {
                         let entries = try readScannedDirectory(directory, rootDeviceID: info.device_id,
-                                                        cancellation: cancellation)
+                                                        cancellation:cancellation,collectEntries:collectEntries,visit:collectEntries ? nil : visit)
                         let directories = cancellation.isCancelled ? [] : entries.filter {
                             Self.shouldTraverse(entry: $0.namespace, rootDeviceID: info.device_id)
                         }.map(\.namespace.path)
-                        visit?(entries)
+                        if collectEntries { visit?(entries) }
                         work.complete(entries: collectEntries ? entries : [], directories: directories, unreadable: false)
                     } catch let error as ScannerError {
                         work.complete(entries: [], directories: [], unreadable: recordFailure(error.code))
+                    } catch let error as MaintenanceYield {
+                        work.abort(error); work.complete(entries: [], directories: [], unreadable: false)
                     } catch {
                         metrics.record("scanner_unreadable_directories")
             metrics.record("scanner_errors")
@@ -239,6 +247,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         }
         group.wait()
         let final = work.result()
+        if let error = final.error { throw error }
         return ScanResult(scannedEntries: final.entries, unreadableDirectories: final.unreadable,
                           elapsedMilliseconds: Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6,
                           rootDeviceID: info.device_id, cancelled: cancellation.isCancelled)
@@ -253,6 +262,7 @@ private final class ScanWork: @unchecked Sendable {
     private var nextIndex = 0
     private var active = 0
     private var unreadable = 0
+    private var error: (any Error)?
 
     init(entries: [ScannedEntry], directories: [String]) {
         self.entries = entries
@@ -262,10 +272,10 @@ private final class ScanWork: @unchecked Sendable {
     func next(cancellation: CancellationToken) -> String? {
         condition.lock()
         defer { condition.unlock() }
-        while nextIndex == directories.count && active > 0 && !cancellation.isCancelled {
+        while nextIndex == directories.count && active > 0 && !cancellation.isCancelled && error == nil {
             condition.wait()
         }
-        guard !cancellation.isCancelled, nextIndex < directories.count else { return nil }
+        guard error == nil, !cancellation.isCancelled, nextIndex < directories.count else { return nil }
         let path = directories[nextIndex]
         nextIndex += 1
         active += 1
@@ -286,9 +296,11 @@ private final class ScanWork: @unchecked Sendable {
         condition.unlock()
     }
 
-    func result() -> (entries: [ScannedEntry], unreadable: Int) {
+    func abort(_ error: any Error) { condition.lock(); if self.error == nil { self.error = error }; condition.broadcast(); condition.unlock() }
+
+    func result() -> (entries: [ScannedEntry], unreadable: Int, error: (any Error)?) {
         condition.lock()
         defer { condition.unlock() }
-        return (entries, unreadable)
+        return (entries, unreadable, error)
     }
 }

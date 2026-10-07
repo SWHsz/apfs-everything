@@ -49,6 +49,7 @@ final class SearchViewModel: ObservableObject {
     return nil
   }
   func selectSort(_ key: SearchSortKey) {
+    InteractiveActivityController.shared.interaction()
     guard !key.requiresMetadata || metadataAvailable else { return }
     deferredSort = nil
     let direction:SortDirection = key == .relevance ? .ascending : (sort.key == key ? (sort.direction == .ascending ? .descending : .ascending) : key.defaultDirection)
@@ -58,6 +59,7 @@ final class SearchViewModel: ObservableObject {
   }
   func sortTitle(_ key:SearchSortKey,_ title:String)->String { sort.key == key ? title + (sort.direction == .ascending ? " ↑" : " ↓") : title }
   func setSearchVisible(_ visible:Bool) {
+    InteractiveActivityController.shared.visibility(visible)
     searchVisible = visible
     if !visible {
       latestID &+= 1; cancellation.cancel(); task?.cancel(); spinner?.cancel()
@@ -85,12 +87,14 @@ final class SearchViewModel: ObservableObject {
     hits.removeAll { !available.contains($0.volumeUUID) }; clampSelection()
   }
   func loadMore() {
+    InteractiveActivityController.shared.interaction()
     guard hasMoreResults, !pending, !query.isEmpty else { return }
     resultLimit += Self.pageSize
     scheduleQuery(resetLimit: false)
   }
   func refreshQuery() { if !query.isEmpty { scheduleQuery(resetLimit: false) } }
   private func scheduleQuery(resetLimit: Bool = true) {
+    InteractiveActivityController.shared.interaction()
     if resetLimit {
       resultLimit = Self.pageSize; hasMoreResults = false
       hits = []; selectedIndex = 0
@@ -115,7 +119,9 @@ final class SearchViewModel: ObservableObject {
         if self?.latestID == id { self?.searching = true }
       }
       // One extra hit distinguishes exactly one full page from truncated results.
+      InteractiveActivityController.shared.beginQuery()
       let result = await service.submit(.init(id: id, query: text, limit: limit + 1, cancellation: token, sort:order))
+      InteractiveActivityController.shared.endQuery()
       guard latestID == id, !Task.isCancelled, !token.isCancelled else { return }
       spinner?.cancel(); searching = false; pending = false
       guard let result, result.requestID == id, !result.cancelled else { return }
@@ -128,6 +134,7 @@ final class SearchViewModel: ObservableObject {
   func moveSelection(_ delta: Int) { selectedIndex += delta; clampSelection() }
   private func clampSelection() { selectedIndex = max(0, min(selectedIndex, max(0, hits.count - 1))) }
   func perform(_ action: FileAction, hit: VolumeSearchHit? = nil) async {
+    InteractiveActivityController.shared.interaction()
     guard let hit = hit ?? selectedHit else { return }
     switch await actions.perform(action, hit: hit) {
     case .success:

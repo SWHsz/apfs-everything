@@ -9,7 +9,7 @@ final class HybridRecoveryTests: XCTestCase {
   private func seed(_ tree: TemporaryTree, _ cache: TemporaryTree) throws -> (
     SnapshotStore, VolumeIdentity
   ) {
-    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
     defer { p.stop(saveCheckpoint: false) }
     try p.start()
     XCTAssertTrue(p.waitUntilLive())
@@ -23,7 +23,7 @@ final class HybridRecoveryTests: XCTestCase {
     let b = try XCTUnwrap(store.reader(expectedIdentity: v).mappedBase)
     let h = HybridIndex(base: b)
     let c = try UpdateCoordinator(
-      root: v.root, configuration: .init(maxPendingEvents: capacity), index: h)
+      root: v.root, configuration: .init(maxPendingEvents: capacity), index: h, maintenanceScheduler: .init())
     try c.start(restored: h, cursor: store.effectiveCursor(for: b.header).cursor, identity: v)
     XCTAssertTrue(c.waitUntilLive())
     XCTAssertTrue(c.flushEvents())
@@ -39,7 +39,7 @@ final class HybridRecoveryTests: XCTestCase {
     let i = FileIndex(root: tree.root)
     i.apply([.upsert(.init(path: tree.path("old"), kind: .file, deviceID: v.deviceID))])
     _ = try SnapshotWriter.write(index: i, identity: v, cursor: v.currentEventID(), store: s)
-    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
     try p.start()
     XCTAssertTrue(p.waitUntilLive())
     XCTAssertTrue(p.waitForCheckpoint())
@@ -47,7 +47,7 @@ final class HybridRecoveryTests: XCTestCase {
     XCTAssertEqual(p.metrics.snapshot()["full_scans"], 1)
     XCTAssertEqual(p.stats().dictionary["materialized_file_entries"] as? Int, 0)
     p.stop()
-    let next = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+    let next = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
     defer { next.stop(saveCheckpoint: false) }
     try next.start()
     XCTAssertTrue(next.waitUntilLive())
@@ -273,7 +273,7 @@ extension HybridRecoveryTests {
             throw SnapshotError.cancelled
           }
         }
-      })
+      }, maintenanceScheduler: .init())
     defer {
       release.signal()
       p.stop(saveCheckpoint: false)
@@ -301,7 +301,7 @@ extension HybridRecoveryTests {
     policy.liveLimit = 2
     policy.quietSeconds = 0.05
     let p = try PersistentIndexCoordinator(
-      root: tree.root, cacheDirectory: cache.root, compactionPolicy: policy)
+      root: tree.root, cacheDirectory: cache.root, compactionPolicy: policy, maintenanceScheduler: .init())
     defer { p.stop(saveCheckpoint: false) }
     try p.start()
     XCTAssertTrue(p.waitUntilLive())

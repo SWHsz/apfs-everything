@@ -48,7 +48,7 @@ public struct MetadataHeader: Sendable, Equatable {
         }
         d.put(SnapshotFormat.crc(d), at:188); return d
     }
-    static func decode(_ raw: UnsafeRawBufferPointer, base: SnapshotHeader) throws -> MetadataHeader {
+    static func decode(_ raw: UnsafeRawBufferPointer, base: SnapshotHeader, checkpoint: () throws -> Void = {}) throws -> MetadataHeader {
         guard raw.count >= 272 else { throw SnapshotError.invalid("metadata truncated") }
         func n<T: FixedWidthInteger>(_ o:Int,_ t:T.Type)->T { T(littleEndian:raw.loadUnaligned(fromByteOffset:o,as:t)) }
         guard Array(raw.prefix(8)) == Array("APFSMETA".utf8), n(8,UInt32.self) == 1, n(12,UInt32.self) == 256,
@@ -68,7 +68,7 @@ public struct MetadataHeader: Sendable, Equatable {
         }
         guard h.fileLength == UInt64(raw.count), Array(raw[(raw.count-16)..<(raw.count-8)]) == Array("APFMTEND".utf8),
               n(raw.count-8,UInt64.self) == h.fileLength else { throw SnapshotError.invalid("metadata footer/length") }
-        guard SnapshotFormat.crc(UnsafeRawBufferPointer(rebasing:raw[256..<(raw.count-16)])) == h.payloadCRC else {
+        guard try SnapshotFormat.checkedCRC(UnsafeRawBufferPointer(rebasing:raw[256..<(raw.count-16)]),checkpoint:checkpoint) == h.payloadCRC else {
             throw SnapshotError.invalid("metadata payload CRC")
         }
         if h.count % 4 != 0 {
@@ -91,7 +91,7 @@ public final class MMapMetadataIndex: @unchecked Sendable {
         try self.init(fileDescriptor:fd,base:base)
     }
     /// Owns descriptor, also on validation failure.
-    public init(fileDescriptor fd: Int32, base: SnapshotHeader) throws {
+    public init(fileDescriptor fd: Int32, base: SnapshotHeader, checkpoint: () throws -> Void = {}) throws {
         defer { close(fd) }
         var st = stat()
         guard fcntl(fd,F_GETFL) & O_ACCMODE == O_RDONLY, fstat(fd,&st) == 0,
@@ -103,9 +103,10 @@ public final class MMapMetadataIndex: @unchecked Sendable {
         guard let p = mmap(nil,size,PROT_READ,MAP_PRIVATE,fd,0), p != MAP_FAILED else { throw SnapshotError.io("mmap metadata",errno) }
         do {
             let raw = UnsafeRawBufferPointer(start:p,count:size)
-            let h = try MetadataHeader.decode(raw,base:base)
+            let h = try MetadataHeader.decode(raw,base:base,checkpoint:checkpoint)
             // Invalid values have canonical zero columns, never sentinel values.
             for id in 0..<Int(h.count) {
+                if id % 4096 == 0 { try checkpoint() }
                 let bits = (raw[Int(h.validityOffset)+id/4] >> ((id%4)*2)) & 3
                 if bits & 1 == 0 && raw.loadUnaligned(fromByteOffset:256+id*8,as:UInt64.self) != 0 {
                     throw SnapshotError.invalid("metadata unknown size column")
@@ -175,11 +176,11 @@ public enum MetadataWriter {
     public static func write(store:SnapshotStore,base:SnapshotHeader,cursor:UInt64,
         metadataUUID:UUID = UUID(),createdAtUnixSeconds:UInt64 = UInt64(Date().timeIntervalSince1970),
         value:(UInt32)->FileMetadataValue,beforePublish:()throws->Void = {},fault:((SnapshotFailurePoint)throws->Void)? = nil,
-        cancellation:CancellationToken = .init(),checkpoint:()throws->Void = {}) throws -> MetadataHeader {
+        cancellation:CancellationToken = .init(),checkpoint:@escaping ()throws->Void = {}) throws -> MetadataHeader {
         let provisional = try MetadataHeader(base:base,cursor:cursor,metadataUUID:metadataUUID,createdAtUnixSeconds:createdAtUnixSeconds)
         func check() throws { guard !cancellation.isCancelled else { throw SnapshotError.cancelled }; try checkpoint() }
         return try store.publish(name:store.metadataFilename,write:{ fd in
             try emit(fd:fd,base:base,provisional:provisional,value:value,fault:fault,checkpoint:check)
-        },beforePublish:{ try check(); try beforePublish() },fault:fault,validate:{fd in _ = try MMapMetadataIndex(fileDescriptor:fd,base:base)})
+        },beforePublish:{ try check(); try beforePublish() },fault:fault,validate:{fd in _ = try MMapMetadataIndex(fileDescriptor:fd,base:base,checkpoint:check)})
     }
 }

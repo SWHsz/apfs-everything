@@ -7,7 +7,7 @@ final class BurstIntegrationTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree()
         try tree.directory("burst")
-        let coordinator = try UpdateCoordinator(root: tree.root)
+        let coordinator = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init())
         defer { coordinator.stop() }
         try coordinator.start()
         XCTAssertTrue(coordinator.waitUntilLive())

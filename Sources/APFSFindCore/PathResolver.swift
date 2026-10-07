@@ -57,6 +57,7 @@ public final class HotDirectoryCache: @unchecked Sendable {
     }
     public func setPressure(_ level: MemoryPressureLevel, root:String) {
         lock.withLock {
+            if rootPath.isEmpty { rootPath = root }
             pressure = level
             capacity = level == .normal ? configuredCapacity : (level == .warning ? max(1024,configuredCapacity/4) : 1)
             if level == .critical { entries = [:]; first = nil; last = nil; append(rootPath,ref:rootRef) }
@@ -95,7 +96,7 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
         self.cache = cache; self.metrics = metrics
     }
     public func deleted(_ id:UInt32) -> Bool {
-        !tombstones.isEmpty && tombstones[Int(id)/64] & (1 << (Int(id)%64)) != 0
+        Int(id) >= base.count || (!tombstones.isEmpty && (Int(id)/64 >= tombstones.count || tombstones[Int(id)/64] & (1 << (Int(id)%64)) != 0))
     }
     public func kind(_ ref:EntryRef) -> EntryKind? {
         switch ref { case .base(let id): return deleted(id) ? nil : base.record(at:id).kind
@@ -147,6 +148,7 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
         case .base(let id): let r = base.record(at:id); return .init(path:path,kind:r.kind,deviceID:base.header.rootDeviceID,fileID:r.fileID == 0 ? nil : r.fileID,isMountPoint:r.flags != 0) }
     }
     public func children(of ref:EntryRef) -> [EntryRef] {
+        guard traversable(ref) else { return [] }
         var children: [EntryRef] = []
         if case .base(let id) = ref { children = base.directChildren(of:id).filter { !deleted($0) }.map { .base($0) } }
         children += (overlayChildren[ref] ?? [:]).values.compactMap { delta[$0] == nil ? nil : .delta($0) }

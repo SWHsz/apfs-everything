@@ -54,7 +54,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
     guard fd >= 0 else { throw SnapshotError.io("open base", errno) }
     try self.init(fileDescriptor: fd, identity: identity)
   }
-  public init(fileDescriptor: Int32, identity: VolumeIdentity) throws {
+  public init(fileDescriptor: Int32, identity: VolumeIdentity, checkpoint: () throws -> Void = {}) throws {
     let started = ProcessInfo.processInfo.systemUptime
     var st = stat()
     guard fcntl(fileDescriptor, F_GETFL) & O_ACCMODE == O_RDONLY, fstat(fileDescriptor, &st) == 0,
@@ -130,9 +130,9 @@ public final class MMapBaseIndex: @unchecked Sendable {
         n(size - 4, UInt32.self) == 0
       else { throw SnapshotError.invalid("v2 padding/footer") }
       guard
-        SnapshotFormat.crc(UnsafeRawBufferPointer(rebasing: raw[256..<(size - 16)]))
+        try SnapshotFormat.checkedCRC(UnsafeRawBufferPointer(rebasing: raw[256..<(size - 16)]), checkpoint:checkpoint)
           == n(size - 8, UInt32.self),
-        SnapshotFormat.crc(UnsafeRawBufferPointer(rebasing: raw[256..<size])) == h.payloadCRC32
+        try SnapshotFormat.checkedCRC(UnsafeRawBufferPointer(rebasing: raw[256..<size]), checkpoint:checkpoint) == h.payloadCRC32
       else { throw SnapshotError.invalid("v2 payload/footer CRC") }
       guard let root = String(bytes: raw[256..<Int(256 + h.rootPathLength)], encoding: .utf8),
         PathCanonicalizer.normalize(root) == root, !root.utf8.contains(0),
@@ -159,6 +159,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
       var fileCount = 0
       var dirCount = 0
       for i in 0..<Int(h.recordCount) {
+        if i % 4096 == 0 { try checkpoint() }
         let r = try record(i)
         guard UInt64(r.nameOffset) == nameEnd, UInt64(r.foldedOffset) == foldEnd,
           UInt64(r.firstChild) == childEnd, UInt64(r.subtreeEnd) > i,
@@ -204,6 +205,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
         var next = UInt32(i + 1)
         var previous: (String, String, UInt8)?
         for j in 0..<Int(r.childCount) {
+          if j % 4096 == 0 { try checkpoint() }
           let child = n(Int(childrenOffset) + (Int(r.firstChild) + j) * 4, UInt32.self)
           guard child == next, child < h.recordCount else {
             throw SnapshotError.invalid("v2 child coverage/order")

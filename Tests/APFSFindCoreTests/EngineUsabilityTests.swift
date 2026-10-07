@@ -12,7 +12,7 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
     let volume = try VolumeIdentity.discover(root: tree.root)
     let ram = FileIndex(root: tree.root)
     ram.apply([.upsert(.init(path: tree.path("needle"), kind: .file))])
-    let core = try UpdateCoordinator(root: tree.root, replayStarter: { _, _ in })
+    let core = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init(), replayStarter: { _, _ in })
     defer { core.stop() }
     try core.start(restored: ram, cursor: 100, identity: volume)
     XCTAssertTrue(core.readinessSnapshot().searchAvailable)
@@ -29,7 +29,7 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
     let tree = try TemporaryTree(); try tree.file("old"); try tree.file("new")
     let ram = FileIndex(root: tree.root)
     ram.apply([.upsert(.init(path: tree.path("old"), kind: .file))])
-    let core = try UpdateCoordinator(root: tree.root, replayStarter: { _, _ in })
+    let core = try UpdateCoordinator(root: tree.root, maintenanceScheduler: .init(), replayStarter: { _, _ in })
     defer { core.stop() }
     try core.start(restored: ram, cursor: 100)
     let generation = core.index.stats().generation
@@ -53,7 +53,7 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
                  kFSEventStreamEventFlagEventIdsWrapped, kFSEventStreamEventFlagRootChanged] {
       let tree = try TemporaryTree(); try tree.file("old")
       let ram = FileIndex(root: tree.root); ram.apply([.upsert(.init(path: tree.path("old"), kind: .file))])
-      let core = try UpdateCoordinator(root: tree.root, configuration: .init(rebuildDebounceMilliseconds: 5000), replayStarter: { _, _ in })
+      let core = try UpdateCoordinator(root: tree.root, configuration: .init(rebuildDebounceMilliseconds: 5000), maintenanceScheduler: .init(), replayStarter: { _, _ in })
       defer { core.stop() }
       try core.start(restored: ram, cursor: 100)
       core.enqueue([.init(path: tree.root, flags: UInt32(flag), id: 1)])
@@ -66,7 +66,7 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
   func testColdInstallReadyWithoutHistoryDoneAndUnknownIDApplied() throws {
     let tree = try TemporaryTree(); let cache = try TemporaryTree(cache: true)
     try tree.file("seed")
-    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, replayStarter: { _, _ in })
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init(), replayStarter: { _, _ in })
     defer { p.stop(policy: .fast) }; try p.start()
     XCTAssertTrue(p.readinessSnapshot().searchAvailable)
     XCTAssertEqual(p.search("seed").hits.count, 1)
@@ -78,7 +78,7 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
     try requireFSEvents()
     let tree = try TemporaryTree(); let cache = try TemporaryTree(cache: true)
     for i in 0..<100 { try tree.file("old-\(i)") }
-    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
     try p.start(); XCTAssertTrue(p.waitUntilLive()); XCTAssertTrue(p.waitForCheckpoint())
     let volume = try VolumeIdentity.discover(root: tree.root)
     let store = try SnapshotStore(directory: cache.root, identity: volume)
@@ -91,14 +91,14 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
     XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 0.5)
     XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: store.path)), bytes)
     XCTAssertEqual(store.effectiveCursor(for: before).cursor, before.lastProcessedEventID)
-    let warm = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root)
+    let warm = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init())
     defer { warm.stop(policy: .fast) }; try warm.start(); XCTAssertTrue(warm.waitUntilLive())
     XCTAssertTrue(try warm.verify().isConsistent)
     XCTAssertEqual(warm.metrics.snapshot()["full_scans", default: 0], 0)
   }
   func testContentCursorFastExitWritesBoundStateOnly() throws {
     let tree = try TemporaryTree(); let cache = try TemporaryTree(cache: true); try tree.file("seed")
-    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, replayStarter: { _, sink in sink([.init(path: "/", flags: UInt32(kFSEventStreamEventFlagHistoryDone))]) })
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init(), replayStarter: { _, sink in sink([.init(path: "/", flags: UInt32(kFSEventStreamEventFlagHistoryDone))]) })
     try p.start(); XCTAssertTrue(p.waitUntilLive())
     let volume = try VolumeIdentity.discover(root: tree.root), store = try SnapshotStore(directory: cache.root, identity: volume)
     let bytes = try Data(contentsOf: URL(fileURLWithPath: store.path)), header = try store.reader(expectedIdentity: volume).header
@@ -171,7 +171,7 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
       var policy = CompactionPolicy(); policy.liveLimit = reached ? 1 : 1000
       policy.quietSeconds = 3600; policy.overlayRatio = 2; policy.tombstoneRatio = 2
       let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root,
-        compactionPolicy: policy, replayStarter: { _, sink in sink([.init(path: "/", flags: UInt32(kFSEventStreamEventFlagHistoryDone))]) })
+        compactionPolicy: policy, maintenanceScheduler: .init(), replayStarter: { _, sink in sink([.init(path: "/", flags: UInt32(kFSEventStreamEventFlagHistoryDone))]) })
       try p.start(); XCTAssertTrue(p.waitUntilLive())
       p.index.apply([.upsert(.init(path: tree.path("change"), kind: .file))])
       p.stop(policy: .compactIfThresholdReached)
@@ -180,7 +180,7 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
   }
   func testOverlayCancellationAndPersistentReadinessStreamMode() async throws {
     let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
-    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, replayStarter: { _, _ in })
+    let p = try PersistentIndexCoordinator(root: tree.root, cacheDirectory: cache.root, maintenanceScheduler: .init(), replayStarter: { _, _ in })
     defer { p.stop(policy: .fast) }; try p.start()
     var iterator = p.readinessStream().makeAsyncIterator()
     let status = await iterator.next()

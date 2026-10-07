@@ -65,6 +65,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private var progress: (@Sendable (String) -> Void)?
   private var persistenceError: String?
   private var interrupts = 0
+  private var pressureObserver: UUID?
+  private var lastPressure: MemoryPressureLevel = .normal
 
   public init(
     root: String, configuration: APFSFindConfiguration = .init(),
@@ -113,10 +115,21 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     core.setLifecycleHandlers(
       live: { [weak self] in self?.becameLive() },
       recovery: { [weak self] reason in self?.beganRecovery(reason) })
+    pressureObserver = maintenanceScheduler.signals?.observe { [weak self] value in
+      guard let self else { return }
+      let changed = self.lock.withLock { if self.lastPressure == value.memoryPressure { return false }; self.lastPressure = value.memoryPressure; return true }
+      if changed {
+        self.metrics.recordResourceGauge("pressure_before")
+        (self.index as? HybridIndex)?.hotDirectoryCache.setPressure(value.memoryPressure,root:self.root)
+        self.metadata.hotDirectoryCache.setPressure(value.memoryPressure,root:self.root)
+        self.metrics.recordResourceGauge("pressure_after")
+      }
+    }
     core.setMutationHandler { [weak self] in self?.namespaceChanged() }
     if !ephemeral {
       core.setBaseInstaller { [weak self] initial, cursor, identity in
         guard let self, let hybrid = self.index as? HybridIndex else { return }
+        defer { self.lock.withLock { self.metadataSeeds = nil } }
         let cache = try SnapshotStore(directory: self.cacheDirectory, identity: identity)
         var staged: StagedMetadataFile?
         let result = try SnapshotV2Writer.write(
@@ -131,12 +144,13 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
             hybrid.install(base: base, directoryMap: map)
           }, prepareMetadata: { refs,header in
             let seed = self.lock.withLock { let values = self.metadataSeeds; self.metadataSeeds = nil; return values }
-            staged = try? MetadataWriter.stage(store:cache,base:header,cursor:cursor,value:{ ordinal in
+            do { staged = try MetadataWriter.stage(store:cache,base:header,cursor:cursor,value:{ ordinal in
               if case .base(let id) = refs[Int(ordinal)], let seed, Int(id) < seed.count { return seed.value(Int(id)) }
               return .unknown
-            },fault:self.metadataFault)
+            },fault:self.metadataFault,checkpoint:{ try self.core.maintenanceCheckpoint() }) }
+            catch let yield as MaintenanceYield { throw yield } catch { self.metrics.record("metadata_stage_failures") }
           }, completed: { _,header in self.installStagedMetadata(staged,cache:cache,header:header,cursor:cursor)
-          }, resourceMetrics: self.metrics, resourceStage: "initial_snapshot")
+          }, resourceMetrics: self.metrics, resourceStage: "initial_snapshot", checkpoint:{ try self.core.maintenanceCheckpoint() })
         self.recordSnapshot(result, cache: cache, identity: identity)
       }
     }
@@ -238,13 +252,23 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   }
   private func namespaceChanged() {
     guard persistenceEnabled, currentState == .live, let hybrid = index as? HybridIndex else { return }
+    let ns = hybrid.stats(), meta = metadata.capture().overlay
+    var pressure = InternalResourcePressure()
+    pressure.namespaceEntries = hybrid.hybridStats()["overlay_live_entries"] as? Int ?? 0
+    pressure.namespaceBytes = hybrid.hybridStats()["overlay_estimated_bytes"] as? Int ?? 0
+    pressure.metadataEntries = meta.entryCount; pressure.metadataBytes = meta.estimatedBytes
+    pressure.tombstones = ns.tombstones; pressure.tombstoneRatio = Double(ns.tombstones)/Double(max(1,ns.totalEntries))
+    pressure.eventQueueDepth = core.startupStatus().pendingEvents
+    pressure.cursorGap = 0 // Host event IDs are not an event count; replay risk is represented by recovery state.
+    pressure.storageError = lock.withLock { persistenceError != nil || metadataError != nil }
+    if let volume = hybrid.mappedBase?.header.volumeUUID { Task { await maintenanceScheduler.updatePressure(pressure,volumeID:volume) } }
     let trigger = hybrid.compactionTrigger(compactionPolicy)
     guard trigger.threshold else { return }
     let retry = lock.withLock { retryAfter - ProcessInfo.processInfo.systemUptime }
     let delay = max(trigger.safety ? 0 : compactionPolicy.quietSeconds, retry)
     compactionScheduler.schedule(delay: delay, safety: trigger.safety, backoff: retry > 0) { [weak self] in
       guard let self, !self.lock.withLock({ self.shuttingDown }) else { return }
-      if self.compact() { _ = self.group.wait(timeout: .now() + 3600) }
+      if self.compact(urgency:trigger.safety ? .emergency : .opportunistic) { _ = self.group.wait(timeout: .now() + 3600) }
     }
   }
   public var metadataAvailable: Bool { let captured = metadata.capture(); return captured.available && captured.namespace?.header.snapshotUUID == (index as? HybridIndex)?.mappedBase?.header.snapshotUUID }
@@ -325,7 +349,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   /// Returns false when disabled or already active. Completion is reported on
   /// stderr via the progress callback; failures never terminate online queries.
   @discardableResult
-  public func checkpoint(forceCompact: Bool = false) -> Bool {
+  public func checkpoint(forceCompact: Bool = false, urgency: MaintenanceUrgency = .required) -> Bool {
     let shouldStart = lock.withLock {
       if !persistenceEnabled || active || shuttingDown || checkpointCancellation.isCancelled {
         return false
@@ -335,14 +359,15 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       return true
     }
     guard shouldStart else { return false }
-    queue.async { [weak self] in self?.performCheckpoint(forceCompact: forceCompact) }
+    queue.async { [weak self] in self?.performCheckpoint(forceCompact: forceCompact,urgency:urgency) }
     return true
   }
-  private func performCheckpoint(forceCompact: Bool = false) {
+  private func performCheckpoint(forceCompact: Bool = false,urgency:MaintenanceUrgency = .required) {
+    var yielded = false
     defer {
       lock.withLock { active = false }
       group.leave()
-      namespaceChanged()
+      if yielded { _ = checkpoint(forceCompact:forceCompact,urgency:urgency) } else { namespaceChanged() }
     }
     do {
       let capture = try core.captureCheckpoint()
@@ -365,7 +390,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         }
         return
       }
-      let lease = try maintenanceScheduler.acquireBlocking(volumeID: capture.identity.volumeUUID, kind: .compaction, cancellation: checkpointCancellation)
+      let lease = try maintenanceScheduler.acquireBlocking(volumeID: capture.identity.volumeUUID, kind: .compaction, urgency:urgency,cancellation: checkpointCancellation)
+      lease.validateIdentity { [self] in guard try identityProvider(root) == capture.identity else { throw SnapshotError.identity("source identity changed") } }
       defer { lease.release() }
       let result: SnapshotWriteResult
       if let hybrid = index as? HybridIndex, hybrid.mappedBase != nil {
@@ -388,14 +414,15 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
             try core.finishCompaction(ticket, base: base, directories: map, publish: publish)
           }, prepareMetadata:{ refs,header in
             guard metadataCapture.available else { return }
-            staged = try? MetadataWriter.stage(store:cache,base:header,cursor:min(self.metadata.processedCursor,ticket.checkpoint.cursor),value:{ ordinal in
+            do { staged = try MetadataWriter.stage(store:cache,base:header,cursor:min(self.metadata.processedCursor,ticket.checkpoint.cursor),value:{ ordinal in
               switch refs[Int(ordinal)] {
               case .base(let id): return metadataCapture.value(at:id)
               case .delta(let id): return ticket.snapshot.delta[id].map { metadataCapture.value(path:$0.entry.path) } ?? .unknown
               }
-            },fault:self.metadataFault)
+            },fault:self.metadataFault,checkpoint:{ try lease.checkpoint() }) }
+            catch let yield as MaintenanceYield { throw yield } catch { self.metrics.record("metadata_stage_failures") }
           }, completed:{ _,header in self.installStagedMetadata(staged,cache:cache,header:header,cursor:header.lastProcessedEventID)
-          }, resourceMetrics: metrics, resourceStage: "full_compaction")
+          }, resourceMetrics: metrics, resourceStage: "full_compaction",checkpoint:{ try lease.checkpoint() })
         metrics.record("compactions")
         metrics.set("compaction_ms", to: Int(result.durationMilliseconds))
         metrics.set("compaction_bytes_written", to: Int(result.header.fileLength))
@@ -406,7 +433,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           cancellation: checkpointCancellation,
           install: { [core] base, map, publish in
             try core.installRecoveredBase(capture, base: base, map: map, publish: publish)
-          }, resourceMetrics: metrics, resourceStage: "recovery_snapshot")
+          }, resourceMetrics: metrics, resourceStage: "recovery_snapshot",checkpoint:{ try lease.checkpoint() })
       } else {
         throw SnapshotError.invalid("persistent runtime is not hybrid")
       }
@@ -427,6 +454,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         String(
           format: "[info] Checkpoint saved: %llu bytes, %llu records, %.1f ms",
           result.header.fileLength, result.header.recordCount, result.durationMilliseconds))
+    } catch is MaintenanceYield {
+      yielded = true; metrics.record("maintenance_yields")
     } catch {
       let aborted: Bool
       switch error {
@@ -449,7 +478,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
   }
 
-  @discardableResult public func compact() -> Bool { checkpoint(forceCompact: true) }
+  @discardableResult public func compact(urgency:MaintenanceUrgency = .required) -> Bool { checkpoint(forceCompact:true,urgency:urgency) }
 
   public func waitForCheckpoint(timeout: TimeInterval = 30) -> Bool {
     core.synchronizeWriter()
@@ -490,10 +519,12 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       return true
     }
     guard first else { return }
+    if let pressureObserver { maintenanceScheduler.signals?.removeObserver(pressureObserver); self.pressureObserver = nil }
     compactionScheduler.stop()
     metadataScheduler.stop()
     metadataCancellation.cancel()
     if policy == .fast { checkpointCancellation.cancel() }
+    if let identity = lock.withLock({identity}) { Task { await maintenanceScheduler.cancelQueued(volumeID:identity.volumeUUID) } }
     if saveCheckpoint && persistenceEnabled {
       core.quiesceForExit()
       group.wait()
@@ -542,7 +573,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       metrics.record("metadata_publish_failures"); scheduleMetadataBootstrap()
     }
   }
-  private func scheduleMetadataBootstrap() {
+  private func scheduleMetadataBootstrap(urgency:MaintenanceUrgency = .opportunistic) {
     guard persistenceEnabled else { return }
     let allowed = lock.withLock {
       guard !shuttingDown, !metadataBootstrapActive else { return false }
@@ -551,7 +582,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     guard allowed else { return }
     metadataQueue.async { [weak self] in
       guard let self else { return }
-      defer { self.lock.withLock { self.metadataBootstrapActive = false }; self.metadataGroup.leave() }
+      var yielded = false
+      defer { self.lock.withLock { self.metadataBootstrapActive = false }; self.metadataGroup.leave(); if yielded { self.scheduleMetadataBootstrap(urgency:urgency) } }
       guard self.currentState != .paused, !self.metadataCancellation.isCancelled,
             let base = (self.index as? HybridIndex)?.mappedBase else { return }
       do {
@@ -560,21 +592,22 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
               identity.deviceID == base.header.rootDeviceID, identity.rootFileID == base.header.rootFileID else {
           throw SnapshotError.identity("metadata awaits matching namespace identity")
         }
-        let lease = try self.maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.metadataBootstrap,cancellation:self.metadataCancellation)
+        let lease = try self.maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.metadataBootstrap,urgency:urgency,cancellation:self.metadataCancellation)
+        lease.validateIdentity { guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("source identity changed") } }
         defer { lease.release() }
         guard self.currentState != .paused else { return }
         guard (self.index as? HybridIndex)?.mappedBase?.header.snapshotUUID == base.header.snapshotUUID else { throw SnapshotError.generationChanged }
         let resources = ProcessResourceSample.capture()
         self.metadataUpdater?.suspend()
         let fence = identity.currentEventID()
-        self.metadata.bind(namespace:base)
+        if self.metadata.capture().namespace?.header.snapshotUUID != base.header.snapshotUUID { self.metadata.bind(namespace:base) }
         self.metadata.beginBootstrap(fence:fence)
         self.metadataUpdater?.resume()
         self.core.notifyMetadataChanged()
         let lookup = self.metadata.capture()
         let values = try MetadataBuildBuffer(count:base.count,directory:self.cacheDirectory)
-        let scan = try BulkScanner(root:self.root,workerCount:self.core.configuration.workerCount,metrics:self.metrics,
-          excludedRoots:[self.cacheDirectory]).scan(cancellation:self.metadataCancellation,collectEntries:false,visit:{ entries in
+        let scan = try BulkScanner(root:self.root,workerCount:min(self.core.configuration.workerCount,lease.workerLimit),metrics:self.metrics,
+          excludedRoots:[self.cacheDirectory],checkpoint:{ try lease.checkpoint() }).scan(cancellation:self.metadataCancellation,collectEntries:false,visit:{ entries in
             var pairs:[(Int,FileMetadataValue)] = []
             for entry in entries {
               if let ordinal = lookup.ordinal(entry.namespace.path) {
@@ -596,13 +629,15 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           guard !self.metadataCancellation.isCancelled else { throw SnapshotError.cancelled }
           guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("root changed during metadata maintenance") }
           guard (self.index as? HybridIndex)?.mappedBase?.header.snapshotUUID == base.header.snapshotUUID else { throw SnapshotError.generationChanged }
-        },fault:self.metadataFault)
+        },fault:self.metadataFault,cancellation:self.metadataCancellation,checkpoint:{ try lease.checkpoint() })
         try self.metadata.install(cache.metadataReader(base:base.header))
         self.metadataUpdater?.flush()
         self.metrics.record("metadata_bootstraps")
         self.metrics.recordResources("metadata_bootstrap",since:resources)
         self.lock.withLock { self.metadataError = nil; self.lastMetadataCheckpoint = ProcessInfo.processInfo.systemUptime }
         self.core.notifyMetadataChanged()
+      } catch is MaintenanceYield {
+        yielded = true; self.metrics.record("maintenance_yields"); self.core.notifyMetadataChanged()
       } catch {
         if !self.metadataCancellation.isCancelled {
           self.metadata.fail(); self.lock.withLock { self.metadataError = String(describing:error) }
@@ -618,12 +653,13 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private func metadataChanged() {
     core.notifyMetadataChanged()
     let capture = metadata.capture()
+    if metadata.requiresRecovery { _ = compact(urgency:.emergency); scheduleMetadataBootstrap(urgency:.emergency); return }
     guard capture.available, capture.overlay.entryCount > 0, currentState != .paused else { return }
     let safety = capture.overlay.estimatedBytes >= metadataPolicy.safetyBytes
-    if safety && metadata.hasUnpersistedPaths { _ = compact(); return }
+    if safety && metadata.hasUnpersistedPaths { _ = compact(urgency:.emergency); return }
     guard safety || capture.overlay.entryCount >= metadataPolicy.entryLimit || capture.overlay.estimatedBytes >= metadataPolicy.byteLimit else { return }
     let interval = lock.withLock { lastMetadataCheckpoint + metadataPolicy.minimumInterval - ProcessInfo.processInfo.systemUptime }
-    metadataScheduler.schedule(delay:safety ? 0 : max(metadataPolicy.quietSeconds,interval),safety:safety) { [weak self] in self?.checkpointMetadata() }
+    metadataScheduler.schedule(delay:safety ? 0 : max(metadataPolicy.quietSeconds,interval),safety:safety) { [weak self] in self?.checkpointMetadata(urgency:safety ? .emergency : .opportunistic) }
   }
   public func waitForMetadata(timeout: Double = 30) -> Bool {
     let deadline = ProcessInfo.processInfo.systemUptime + timeout
@@ -634,9 +670,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
     return false
   }
-  public func rebuildMetadata() { scheduleMetadataBootstrap() }
+  public func rebuildMetadata() { scheduleMetadataBootstrap(urgency:.required) }
   public func flushMetadata() { metadataUpdater?.flush() }
-  public func checkpointMetadata() {
+  public func checkpointMetadata(urgency:MaintenanceUrgency = .required) {
     let allowed = lock.withLock {
       guard !shuttingDown, !metadataCheckpointActive else { return false }
       metadataCheckpointActive = true; metadataGroup.enter(); return true
@@ -644,10 +680,12 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     guard allowed else { return }
     metadataQueue.async { [weak self] in
       guard let self else { return }
-      defer { self.lock.withLock { self.metadataCheckpointActive = false }; self.metadataGroup.leave() }
+      var yielded = false
+      defer { self.lock.withLock { self.metadataCheckpointActive = false }; self.metadataGroup.leave(); if yielded { self.checkpointMetadata(urgency:urgency) } }
       do {
         let identity = try self.identityProvider(self.root)
-        let lease = try self.maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.metadataCheckpoint,cancellation:self.metadataCancellation)
+        let lease = try self.maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.metadataCheckpoint,urgency:urgency,cancellation:self.metadataCancellation)
+        lease.validateIdentity { guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("source identity changed") } }
         defer { lease.release() }
         guard self.currentState != .paused else { return }
         self.metadataUpdater?.suspend(); defer { self.metadataUpdater?.resume() }
@@ -664,12 +702,13 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           guard !self.metadataCancellation.isCancelled else { throw SnapshotError.cancelled }
           guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("root changed during metadata maintenance") }
           guard (self.index as? HybridIndex)?.mappedBase?.header.snapshotUUID == base.header.snapshotUUID else { throw SnapshotError.generationChanged }
-        },fault:self.metadataFault)
+        },fault:self.metadataFault,cancellation:self.metadataCancellation,checkpoint:{ try lease.checkpoint() })
         try self.metadata.install(cache.metadataReader(base:base.header),expectedGeneration:captured.overlay.generation)
         // Delta entries have no ordinal until namespace compaction. They remain dirty and keep a conservative fence.
         self.lock.withLock { self.lastMetadataCheckpoint = ProcessInfo.processInfo.systemUptime }
         self.metrics.record("metadata_checkpoints"); self.metrics.recordResources("metadata_checkpoint",since:resources)
-      } catch { self.metrics.record("metadata_checkpoint_failures"); self.lock.withLock { self.metadataError = String(describing:error) } }
+      } catch is MaintenanceYield { yielded = true; self.metrics.record("maintenance_yields") }
+      catch { self.metrics.record("metadata_checkpoint_failures"); self.lock.withLock { self.metadataError = String(describing:error) } }
     }
   }
   private func saveMetadataStateIfClean() {

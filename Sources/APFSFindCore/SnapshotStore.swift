@@ -171,7 +171,7 @@ public final class SnapshotStore: @unchecked Sendable {
 
     /// Called while the namespace publisher already holds this store's advisory lock.
     func stageMetadata(base:SnapshotHeader, write:(Int32)throws->MetadataHeader,
-                       fault:((SnapshotFailurePoint)throws->Void)?) throws -> StagedMetadataFile {
+                       fault:((SnapshotFailurePoint)throws->Void)?,checkpoint:()throws->Void = {}) throws -> StagedMetadataFile {
         guard activityLock.withLock({publishing}) else { throw SnapshotError.invalid("metadata staging requires namespace publication") }
         let temporary = metadataFilename + "." + UUID().uuidString + ".tmp"
         var fd = openat(directoryFD,temporary,O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC|O_NOFOLLOW,0o600)
@@ -184,7 +184,7 @@ public final class SnapshotStore: @unchecked Sendable {
             guard result == 0 else { throw SnapshotError.io("close staged metadata",errno) }
             let readerFD = openat(directoryFD,temporary,O_RDONLY|O_CLOEXEC|O_NOFOLLOW)
             guard readerFD >= 0 else { throw SnapshotError.io("open staged metadata",errno) }
-            _ = try MMapMetadataIndex(fileDescriptor:readerFD,base:base)
+            _ = try MMapMetadataIndex(fileDescriptor:readerFD,base:base,checkpoint:checkpoint)
             return StagedMetadataFile(store:self,temporary:temporary,header:header,fault:fault)
         } catch {
             if fd >= 0 { close(fd) }; _ = unlinkat(directoryFD,temporary,0); throw error
