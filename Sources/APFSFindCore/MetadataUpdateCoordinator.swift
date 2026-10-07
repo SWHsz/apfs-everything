@@ -27,6 +27,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private let metrics: Metrics
     private let invalidated: @Sendable () -> Void
     private let changed: @Sendable () -> Void
+    private let readDirectory: @Sendable (String, CancellationToken) throws -> [ScannedEntry]
     private var pending: [String: Set<String>] = [:]
     private var collapsed: Set<String> = []
     private var discoveredSubtrees = Set<String>()
@@ -46,9 +47,14 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private var lookupsInWindow = 0
     public init(root:String,device:UInt64,index:MetadataIndexCoordinator,namespace:any NamespaceIndex,
                 metrics:Metrics,policy:MetadataUpdatePolicy = .init(),
-                invalidated:@escaping @Sendable ()->Void,changed:@escaping @Sendable ()->Void = {}) {
+                invalidated:@escaping @Sendable ()->Void,changed:@escaping @Sendable ()->Void = {},
+                readDirectory:(@Sendable (String,CancellationToken) throws -> [ScannedEntry])? = nil) {
         self.root = root; self.device = device; self.index = index; self.namespace = namespace
         self.metrics = metrics; self.policy = policy; self.invalidated = invalidated; self.changed = changed
+        let scanner = BulkScanner(root:root,workerCount:1,metrics:metrics)
+        self.readDirectory = readDirectory ?? { path,cancellation in
+            try scanner.readScannedDirectory(path,rootDeviceID:device,cancellation:cancellation,maximumEntries:100_000,yieldToQueries:true)
+        }
     }
     public func enqueue(_ events:[FileSystemEvent]) {
         let schedule = inboxLock.withLock {
@@ -156,6 +162,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         if now-lookupWindow >= 1 { lookupWindow = now; lookupsInWindow = 0 }
         let paths = Set(pending.values.flatMap { $0 })
         var deferredPaths = Set<String>()
+        var deferredParents = Set<String>()
         if paths.count <= policy.smallBatchLimit && collapsed.isEmpty {
             let budget = max(1,policy.maxLookupsPerSecond)
             var reusedIdentities: [String:FileMetadataValue] = [:]
@@ -195,7 +202,6 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             for (parent,items) in groups where items.count >= policy.stormParentCollapseThreshold {
                 collapsed.insert(parent); metrics.record("metadata_parent_collapses")
             }
-            let scanner = BulkScanner(root:root,workerCount:1,metrics:metrics)
             for parent in Set(groups.keys).union(collapsed) {
                 guard !scanCancellation.isCancelled else { return }
                 let requestedPaths = groups[parent] ?? []
@@ -230,7 +236,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 }
                 metrics.record("metadata_parent_bulk_enumerations")
                 do {
-                    let entries = try scanner.readScannedDirectory(parent,rootDeviceID:device,cancellation:scanCancellation,maximumEntries:100_000,yieldToQueries:true)
+                    let entries = try readDirectory(parent,scanCancellation)
                     let requested = Set(groups[parent] ?? [])
                     var found = Set<String>()
                     for entry in entries where collapsed.contains(parent) || requested.contains(entry.namespace.path) {
@@ -241,13 +247,27 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                         index.update(path:entry.namespace.path,value:entry.metadata); found.insert(entry.namespace.path)
                     }
                     for path in requested.subtracting(found) { index.update(path:path,value:nil) }
-                } catch { if scanCancellation.isCancelled { return }; invalidated() }
+                } catch is MaintenanceYield {
+                    // A query/pressure yield is retryable work, not a corrupt
+                    // sidecar. Keep the collapsed parent even without item events.
+                    deferredPaths.formUnion(requestedPaths); deferredParents.insert(parent)
+                    metrics.record("metadata_parent_yields")
+                } catch {
+                    if scanCancellation.isCancelled { return }
+                    let code = (error as? ScannerError)?.code ?? EIO
+                    metrics.record("metadata_parent_read_failures")
+                    metrics.record("metadata_parent_errno_\(code)")
+                    if DirectoryReconciler.recovery(for:code,isRoot:parent == root) == .rebuild {
+                        metrics.record("metadata_parent_recovery_requests"); invalidated()
+                    }
+                    // Permission exclusions and disappearance races do not
+                    // justify rescanning millions of unrelated metadata records.
+                }
             }
         }
         // A directory moved into the watched root can arrive as one event, although
         // namespace reconciliation has discovered its entire pre-populated tree.
         // Fill those delta descendants with bulk metadata, never per-file stat.
-        let scanner = BulkScanner(root:root,workerCount:1,metrics:metrics)
         let subtreeRoots = PathCanonicalizer.minimalRoots(Array(discoveredSubtrees))
         var remainingSubtrees = Set<String>()
         for (subtreeIndex,subtree) in subtreeRoots.enumerated() {
@@ -259,7 +279,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     metrics.record("metadata_subtree_yields"); break
                 }
                 do {
-                    let entries = try scanner.readScannedDirectory(directory,rootDeviceID:device,cancellation:scanCancellation,maximumEntries:100_000,yieldToQueries:true)
+                    let entries = try readDirectory(directory,scanCancellation)
                     metrics.record("metadata_subtree_bulk_enumerations")
                     for entry in entries {
                         guard !scanCancellation.isCancelled else { return }
@@ -289,10 +309,10 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         if recent.count > 4096 { recent.removeAll(keepingCapacity:true) }
         if renameOrigins.count > 4096 { renameOrigins.removeAll(keepingCapacity:true) }
         renameOnly.removeAll(keepingCapacity:true)
-        pending.removeAll(keepingCapacity:true); collapsed.removeAll(keepingCapacity:true)
-        if !deferredPaths.isEmpty {
+        pending.removeAll(keepingCapacity:true); collapsed = deferredParents
+        if !deferredPaths.isEmpty || !deferredParents.isEmpty {
             for path in deferredPaths { pending[path] = [path] }
-            metrics.set("pending_metadata_lookups",to:pending.count+discoveredSubtrees.count)
+            metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count)
             schedule(after:max(0.001,1-(ProcessInfo.processInfo.systemUptime-lookupWindow))); changed(); return
         }
         metrics.set("pending_metadata_lookups",to:0); index.advance(maximumID,historyDone:historyDone); changed()

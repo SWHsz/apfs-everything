@@ -1,10 +1,61 @@
 import CAPFSShim
 import CoreServices
+import Darwin
 import Foundation
 import XCTest
 @testable import APFSFindCore
 
 final class MetadataIntegrationTests: XCTestCase {
+    func testParentPermissionAndDisappearanceDoNotRestartWholeMetadataBuild() throws {
+        let root = "/metadata-error-test", parent = root+"/protected", path = parent+"/child"
+        for code in [EPERM,EACCES,ENODATA,ENOENT,ENOTDIR,ELOOP,EXDEV,EIO,EOVERFLOW] {
+            let ns = FileIndex(root:root), meta = MetadataIndexCoordinator(), metrics = Metrics()
+            ns.apply([.upsert(.init(path:parent,kind:.directory)),.upsert(.init(path:path,kind:.file))])
+            meta.update(path:path,value:.init(logicalSize:123))
+            let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,
+                invalidated:{ metrics.record("test_recoveries") },readDirectory:{ directory,_ in
+                    if directory != parent { return [] }
+                    throw ScannerError(path:directory,code:code)
+                })
+            for id in 1...20 {
+                updater.enqueue([.init(path:parent,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:UInt64(id))]); updater.flush()
+            }
+            let fatal = code == EIO || code == EOVERFLOW
+            XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],fatal ? 20 : 0,"errno \(code)")
+            XCTAssertEqual(metrics.snapshot()["metadata_parent_errno_\(code)"],20)
+            XCTAssertEqual(meta.capture().value(path:path).logicalSize,123,"unreadable metadata must survive")
+            XCTAssertEqual(updater.pendingCount,0)
+            updater.stop()
+        }
+        // A root failure still requires authoritative recovery.
+        let ns = FileIndex(root:root), meta = MetadataIndexCoordinator(), metrics = Metrics()
+        let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,
+            invalidated:{ metrics.record("test_recoveries") },readDirectory:{ directory,_ in throw ScannerError(path:directory,code:EPERM) })
+        updater.enqueue([.init(path:root+"/missing",flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:1)]); updater.flush()
+        XCTAssertEqual(metrics.snapshot()["test_recoveries"],1); updater.stop()
+    }
+
+    func testParentQueryYieldRetriesWithoutMetadataBootstrapOrCursorAdvance() {
+        let root = "/metadata-yield-test", parent = root+"/incoming", path = parent+"/child"
+        let ns = FileIndex(root:root), meta = MetadataIndexCoordinator(), metrics = Metrics()
+        ns.apply([.upsert(.init(path:parent,kind:.directory)),.upsert(.init(path:path,kind:.file))])
+        var policy = MetadataUpdatePolicy(); policy.debounceSeconds = 60
+        let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,policy:policy,
+            invalidated:{ metrics.record("test_recoveries") },readDirectory:{ _,_ in
+                metrics.record("test_reads")
+                if metrics.snapshot()["test_reads"] == 1 { throw MaintenanceYield(reason:"active query") }
+                return [.init(namespace:.init(path:path,kind:.file),metadata:.init(logicalSize:456))]
+            })
+        updater.enqueue([.init(path:parent,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:101)]); updater.flush()
+        XCTAssertEqual(metrics.snapshot()["metadata_parent_yields"],1)
+        XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],0)
+        XCTAssertGreaterThan(updater.pendingCount,0); XCTAssertEqual(meta.processedCursor,0)
+        updater.flush()
+        XCTAssertEqual(meta.capture().value(path:path).logicalSize,456)
+        XCTAssertEqual(meta.processedCursor,101); XCTAssertEqual(updater.pendingCount,0)
+        updater.stop()
+    }
+
     private func coordinator(_ tree:TemporaryTree,_ cache:TemporaryTree) throws -> PersistentIndexCoordinator {
         var policy = CompactionPolicy(); policy.liveLimit = 1_000_000; policy.overlayRatio = 10_000; policy.tombstoneRatio = 10_000
         return try .init(root:tree.root,cacheDirectory:cache.root,compactionPolicy:policy,maintenanceScheduler:.init())
