@@ -138,8 +138,9 @@ final class HybridRecoveryTests: XCTestCase {
       let ticket = try c.beginCompaction()
       if invalidate {
         c.enqueue([.init(path: tree.root, flags: UInt32(kFSEventStreamEventFlagKernelDropped))])
-        c.synchronizeWriter()
-        Thread.sleep(forTimeInterval: 0.02)
+        // A writer barrier does not run an asyncAfter drain that is not yet
+        // eligible. Wait for actual delivery/drain before attempting publish.
+        XCTAssertTrue(c.flushEvents())
       } else {
         for _ in 0..<2 {
           c.enqueue(
