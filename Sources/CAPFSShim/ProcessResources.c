@@ -25,6 +25,8 @@ int apfs_process_resources(APFSProcessResources *output) {
     mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &count) == KERN_SUCCESS
         && count >= TASK_VM_INFO_REV0_COUNT) {
+        output->internal_resident_bytes = vm.internal;
+        output->external_resident_bytes = vm.external;
         output->compressed_bytes = vm.compressed;
         output->peak_compressed_bytes = vm.compressed_peak;
         output->memory_info_valid = 1;

@@ -81,6 +81,8 @@ public struct MetadataHeader: Sendable, Equatable {
 
 public final class MMapMetadataIndex: @unchecked Sendable {
     public let header: MetadataHeader
+    public let residentAfterValidation: UInt64
+    public let residentAfterRuntimeRemap: UInt64
     private let address: UnsafeMutableRawPointer
     private let length: Int
     public convenience init(path: String, base: SnapshotHeader) throws {
@@ -112,10 +114,15 @@ public final class MMapMetadataIndex: @unchecked Sendable {
                     throw SnapshotError.invalid("metadata unknown time column")
                 }
             }
-            header = h; address = p; length = size
+            residentAfterValidation = Metrics.processUsage().residentBytes
+            guard let runtime = mmap(nil,size,PROT_READ,MAP_PRIVATE,fd,0),runtime != MAP_FAILED else { throw SnapshotError.io("remap runtime metadata",errno) }
+            munmap(p,size)
+            header = h; address = runtime; length = size
+            residentAfterRuntimeRemap = Metrics.processUsage().residentBytes
         } catch { munmap(p,size); throw error }
     }
     deinit { munmap(address,length) }
+    @discardableResult public func reclaimPages() -> Bool { madvise(address,length,MADV_DONTNEED) == 0 }
     public func value(at ordinal: UInt32) -> FileMetadataValue {
         guard UInt64(ordinal) < header.count else { return .unknown }
         let i = Int(ordinal)
@@ -127,43 +134,52 @@ public final class MMapMetadataIndex: @unchecked Sendable {
 }
 
 public enum MetadataWriter {
-    static func stage(store:SnapshotStore,base:SnapshotHeader,cursor:UInt64,
-                      value:(UInt32)->FileMetadataValue,fault:((SnapshotFailurePoint)throws->Void)?) throws -> StagedMetadataFile {
-        let provisional = try MetadataHeader(base:base,cursor:cursor)
-        var payload = Data(repeating:0,count:Int(provisional.fileLength)-272)
-        for id in 0..<Int(provisional.count) {
-            let v = value(UInt32(id)); var flags:UInt8 = 0
-            if let size = v.logicalSize { payload.put(size,at:id*8); flags |= 1 }
-            if let time = v.modificationTimeNanoseconds { payload.put(time,at:Int(provisional.timeOffset)-256+id*8); flags |= 2 }
-            payload[Int(provisional.validityOffset)-256+id/4] |= flags << ((id%4)*2)
+    public static let maximumChunkBytes = 65536
+    private static func emit(fd:Int32,base:SnapshotHeader,provisional:MetadataHeader,value:(UInt32)->FileMetadataValue,
+                             fault:((SnapshotFailurePoint)throws->Void)?,checkpoint:()throws->Void) throws -> MetadataHeader {
+        try snapshotWriteAll(fd,Data(repeating:0,count:256)); try fault?(.afterHeader)
+        var crc:UInt32 = 0
+        func chunk(_ data:Data) throws { try checkpoint(); try snapshotWriteAll(fd,data); crc = SnapshotFormat.crc(data,previous:crc) }
+        let count = Int(provisional.count)
+        for time in [false,true] {
+            for start in stride(from:0,to:count,by:8192) {
+                var bytes = Data(repeating:0,count:min(8192,count-start)*8)
+                for id in start..<min(start+8192,count) {
+                    let v = value(UInt32(id))
+                    if time { bytes.put(v.modificationTimeNanoseconds ?? 0,at:(id-start)*8) }
+                    else { bytes.put(v.logicalSize ?? 0,at:(id-start)*8) }
+                }
+                try chunk(bytes)
+            }
         }
-        let header = try MetadataHeader(base:base,cursor:cursor,metadataUUID:provisional.metadataUUID,
-            createdAtUnixSeconds:provisional.createdAtUnixSeconds,payloadCRC:SnapshotFormat.crc(payload))
+        for start in stride(from:0,to:count,by:16384) {
+            var bytes = Data(repeating:0,count:(min(16384,count-start)+3)/4)
+            for id in start..<min(start+16384,count) {
+                let v = value(UInt32(id)), flags:UInt8 = (v.logicalSize == nil ? 0 : 1) | (v.modificationTimeNanoseconds == nil ? 0 : 2)
+                bytes[(id-start)/4] |= flags << (((id-start)%4)*2)
+            }
+            try chunk(bytes)
+        }
+        let header = try MetadataHeader(base:base,cursor:provisional.cursor,
+            metadataUUID:provisional.metadataUUID,createdAtUnixSeconds:provisional.createdAtUnixSeconds,payloadCRC:crc)
         var footer = Data("APFMTEND".utf8); footer.append(Data(repeating:0,count:8)); footer.put(header.fileLength,at:8)
-        return try store.stageMetadata(header:header,base:base,payload:payload,footer:footer,fault:fault)
+        try snapshotWriteAll(fd,footer); try snapshotWriteAll(fd,header.encoded(),offset:0)
+        return header
+    }
+    static func stage(store:SnapshotStore,base:SnapshotHeader,cursor:UInt64,value:(UInt32)->FileMetadataValue,
+                      fault:((SnapshotFailurePoint)throws->Void)?,checkpoint:()throws->Void = {}) throws -> StagedMetadataFile {
+        let provisional = try MetadataHeader(base:base,cursor:cursor)
+        return try store.stageMetadata(base:base,write:{ fd in try emit(fd:fd,base:base,provisional:provisional,value:value,fault:fault,checkpoint:checkpoint) },fault:fault)
     }
     @discardableResult
-    public static func write(store: SnapshotStore, base: SnapshotHeader, cursor: UInt64,
-                             metadataUUID: UUID = UUID(), createdAtUnixSeconds: UInt64 = UInt64(Date().timeIntervalSince1970),
-                             value: (UInt32) -> FileMetadataValue, beforePublish: () throws -> Void = {},
-                             fault: ((SnapshotFailurePoint) throws -> Void)? = nil) throws -> MetadataHeader {
+    public static func write(store:SnapshotStore,base:SnapshotHeader,cursor:UInt64,
+        metadataUUID:UUID = UUID(),createdAtUnixSeconds:UInt64 = UInt64(Date().timeIntervalSince1970),
+        value:(UInt32)->FileMetadataValue,beforePublish:()throws->Void = {},fault:((SnapshotFailurePoint)throws->Void)? = nil,
+        cancellation:CancellationToken = .init(),checkpoint:()throws->Void = {}) throws -> MetadataHeader {
         let provisional = try MetadataHeader(base:base,cursor:cursor,metadataUUID:metadataUUID,createdAtUnixSeconds:createdAtUnixSeconds)
-        // Transient column buffer only; no per-file Swift objects retained in the mapped index.
-        var payload = Data(repeating:0,count:Int(provisional.fileLength)-272)
-        for id in 0..<Int(provisional.count) {
-            let v = value(UInt32(id)); var flags:UInt8 = 0
-            if let size = v.logicalSize { payload.put(size,at:id*8); flags |= 1 }
-            if let time = v.modificationTimeNanoseconds { payload.put(time,at:Int(provisional.timeOffset)-256+id*8); flags |= 2 }
-            payload[Int(provisional.validityOffset)-256+id/4] |= flags << ((id%4)*2)
-        }
-        let header = try MetadataHeader(base:base,cursor:cursor,metadataUUID:metadataUUID,
-            createdAtUnixSeconds:createdAtUnixSeconds,payloadCRC:SnapshotFormat.crc(payload))
-        var footer = Data("APFMTEND".utf8); footer.append(Data(repeating:0,count:8)); footer.put(header.fileLength,at:8)
+        func check() throws { guard !cancellation.isCancelled else { throw SnapshotError.cancelled }; try checkpoint() }
         return try store.publish(name:store.metadataFilename,write:{ fd in
-            try snapshotWriteAll(fd,header.encoded()); try fault?(.afterHeader)
-            try snapshotWriteAll(fd,payload); try snapshotWriteAll(fd,footer); return header
-        },beforePublish:beforePublish,fault:fault,validate:{ fd in
-            _ = try MMapMetadataIndex(fileDescriptor:fd,base:base)
-        })
+            try emit(fd:fd,base:base,provisional:provisional,value:value,fault:fault,checkpoint:check)
+        },beforePublish:{ try check(); try beforePublish() },fault:fault,validate:{fd in _ = try MMapMetadataIndex(fileDescriptor:fd,base:base)})
     }
 }

@@ -23,14 +23,12 @@ public struct MetadataQuerySnapshot: Sendable {
     public let base: MMapMetadataIndex?
     public let overlay: MetadataOverlay
     public let freshness: MetadataFreshness
-    let directories: [String: UInt32]
+    let resolver: PathResolverSnapshot?
     let renamedDirectories: [String: MetadataRenameSource]
     public var available: Bool { base != nil && base?.header.baseUUID == namespace?.header.snapshotUUID }
     public func ordinal(_ path: String) -> UInt32? {
-        guard let namespace else { return nil }
-        if path == namespace.root { return 0 }
-        guard let parent = directories[PathCanonicalizer.parent(of:path)] else { return nil }
-        return namespace.lookupChild(parent:parent,name:(path as NSString).lastPathComponent)
+        guard case .base(let id)? = resolver?.resolve(path) else { return nil }
+        return id
     }
     public func value(at id: UInt32) -> FileMetadataValue { overlay.baseOverrides[id] ?? base?.value(at:id) ?? .unknown }
     public func value(path: String) -> FileMetadataValue {
@@ -64,7 +62,8 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     private let lock = NSLock()
     private var namespace: MMapBaseIndex?
     private var base: MMapMetadataIndex?
-    private var directories: [String: UInt32] = [:]
+    private var resolver: PathResolverSnapshot?
+    public let hotDirectoryCache = HotDirectoryCache()
     private var overlay = MetadataOverlay()
     private var renamedDirectories: [String:MetadataRenameSource] = [:]
     private var freshness: MetadataFreshness = .unavailable
@@ -74,14 +73,22 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     private var paused = false
     public init() {}
     public func capture() -> MetadataQuerySnapshot {
-        lock.withLock { .init(namespace:namespace,base:base,overlay:overlay,freshness:freshness,directories:directories,renamedDirectories:renamedDirectories) }
+        lock.withLock { .init(namespace:namespace,base:base,overlay:overlay,freshness:freshness,resolver:resolver,renamedDirectories:renamedDirectories) }
     }
     func baseDirectoryMatches(path:String,fileID:UInt64?) -> Bool {
-        lock.withLock {
-            guard let namespace,let ordinal = directories[path] else { return false }
-            let record = namespace.record(at:ordinal)
-            return record.kind == .directory && record.fileID == fileID && !overlay.deleted.contains(path)
-        }
+        let snapshot = capture()
+        guard let namespace = snapshot.namespace,case .base(let ordinal)? = snapshot.resolver?.resolveDirectory(path) else { return false }
+        let record = namespace.record(at:ordinal)
+        return record.kind == .directory && record.fileID == fileID && !snapshot.overlay.deleted.contains(path)
+    }
+    public func residencyStatistics() -> [String: Any] {
+        lock.withLock { ["metadata_directory_map_entries":0,
+            "metadata_directory_map_estimated_bytes":0,
+            "metadata_hot_directory_cache_entries":hotDirectoryCache.statistics["hot_directory_cache_entries",default:0],
+            "metadata_hot_directory_cache_bytes":hotDirectoryCache.statistics["hot_directory_cache_bytes",default:0],
+            "metadata_hot_directory_cache_capacity":hotDirectoryCache.statistics["hot_directory_cache_capacity",default:0],
+            "metadata_overlay_entries":overlay.entryCount,"metadata_overlay_bytes":overlay.estimatedBytes,
+            "rename_alias_count":renamedDirectories.count,"rename_alias_bytes":overlay.retainedRenameBytes] }
     }
     public var processedCursor: UInt64 { lock.withLock { cursor } }
     public var isReplaying: Bool { lock.withLock { !historyDone } }
@@ -89,9 +96,10 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     public var replayFloor: UInt64 { lock.withLock { floor } }
     public var isDirty: Bool { lock.withLock { overlay.entryCount > 0 || !renamedDirectories.isEmpty } }
     public func bind(namespace: MMapBaseIndex, mapped: MMapMetadataIndex? = nil, cursor: UInt64? = nil, retainOverlay: Bool = false) {
-        let dirs = namespace.directoryMap().compactMapValues { ref -> UInt32? in if case .base(let id) = ref { return id }; return nil }
+        let pathResolver = PathResolverSnapshot(base:namespace,cache:hotDirectoryCache)
+        hotDirectoryCache.reset(version:pathResolver.version,root:namespace.root)
         lock.withLock {
-            self.namespace = namespace; directories = dirs
+            self.namespace = namespace; resolver = pathResolver
             base = mapped?.header.matches(namespace.header) == true ? mapped : nil
             if !retainOverlay { overlay = .init(); renamedDirectories = [:] }
             let c = cursor ?? mapped?.header.cursor ?? 0
@@ -109,12 +117,18 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
         }
     }
     public func update(path:String,value:FileMetadataValue?) {
-        lock.withLock {
+        for _ in 0..<2 {
+            let lookup = lock.withLock { resolver }
             let ordinal:UInt32?
-            if path == namespace?.root { ordinal = 0 }
-            else if let namespace, let parent = directories[PathCanonicalizer.parent(of:path)] {
-                ordinal = namespace.lookupChild(parent:parent,name:(path as NSString).lastPathComponent)
-            } else { ordinal = nil }
+            if case .base(let id)? = lookup?.resolve(path) { ordinal = id } else { ordinal = nil }
+            let applied = lock.withLock {
+                guard lookup?.base.header.snapshotUUID == namespace?.header.snapshotUUID else { return false }
+                updateLocked(path:path,value:value,ordinal:ordinal); return true
+            }
+            if applied { return }
+        }
+    }
+    private func updateLocked(path:String,value:FileMetadataValue?,ordinal:UInt32?) {
             let old = overlay.deltaValues[path] ?? ordinal.map { overlay.baseOverrides[$0] ?? base?.value(at:$0) ?? .unknown } ?? .unknown
             if let value {
                 if old == value && !overlay.deleted.contains(path) { return }
@@ -132,7 +146,6 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
                 if let ordinal { overlay.deleted.insert(path); overlay.baseOverrides[ordinal] = .unknown }
                 overlay.generation &+= 1
             }
-        }
     }
     public func reuseDirectoryRename(original:String,destination:String,from snapshot:MetadataQuerySnapshot) {
         lock.withLock {

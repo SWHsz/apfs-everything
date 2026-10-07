@@ -26,4 +26,20 @@ public final class ReadOnlyIndexCache {
         }
         throw SnapshotError.invalid("no matching read-only namespace v2 cache")
     }
+    public func mappedMetadata(base: SnapshotHeader) throws -> MMapMetadataIndex {
+        let listing = openat(fd,".",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW)
+        guard listing >= 0 else { throw SnapshotError.io("enumerate metadata cache",errno) }
+        guard let directory = fdopendir(listing) else { close(listing); throw SnapshotError.io("fdopendir metadata",errno) }
+        defer { closedir(directory) }
+        while let record = readdir(directory) {
+            let name = withUnsafeBytes(of:record.pointee.d_name) { String(decoding:$0.prefix { $0 != 0 },as:UTF8.self) }
+            guard name.hasSuffix(".apfsmeta"),name.utf8.count == 73,
+                name.dropLast(9).utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { continue }
+            let readerFD = openat(fd,name,O_RDONLY|O_CLOEXEC|O_NOFOLLOW)
+            guard readerFD >= 0 else { continue }
+            if let metadata = try? MMapMetadataIndex(fileDescriptor:readerFD,base:base) { return metadata }
+        }
+        throw SnapshotError.invalid("no matching read-only metadata cache")
+    }
+
 }

@@ -39,7 +39,7 @@ public enum V2Source: Sendable {
   var rootRef: EntryRef {
     switch self {
     case .ram: return .base(0)
-    case .hybrid(let c): return c.directories[c.base.root]!
+    case .hybrid: return .base(0)
     }
   }
 }
@@ -207,7 +207,7 @@ public enum SnapshotV2Writer {
         resourceMetrics?.set(resourceStage + ".rss_after_mmap", to: Int(b.residentAfterMmap))
         resourceMetrics?.set(resourceStage + ".rss_after_validation", to: Int(b.residentAfterValidation))
         prepared = b
-        directoryMap = b.directoryMap()
+        directoryMap = [:] // Compatibility argument only; runtime resolves components.
         resourceMetrics?.set(resourceStage + ".rss_after_directory_map", to: Int(Metrics.processUsage().residentBytes))
         peak = max(peak, Metrics.processUsage().residentBytes)
       },

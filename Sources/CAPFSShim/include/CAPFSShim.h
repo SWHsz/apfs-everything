@@ -58,6 +58,8 @@ typedef struct APFSProcessResources {
     uint64_t pageins;
     uint64_t compressed_bytes;
     uint64_t peak_compressed_bytes;
+    uint64_t internal_resident_bytes;
+    uint64_t external_resident_bytes;
     int memory_info_valid;
 } APFSProcessResources;
 /* Actual per-process counters from the SDK's rusage_info_v4, no estimates. */

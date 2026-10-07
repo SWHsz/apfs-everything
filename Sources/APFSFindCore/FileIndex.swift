@@ -81,10 +81,10 @@ public final class FileIndex: @unchecked Sendable {
         }
     }
 
-    func metadataSeed(_ entries: [ScannedEntry]) -> [FileMetadataValue] {
-        lock.withReadLock {
-            var values = [FileMetadataValue](repeating:.unknown,count:storage.entries.count)
-            for entry in entries { if let id = storage.pathToID[entry.namespace.path] { values[Int(id)] = entry.metadata } }
+    func metadataSeed(_ entries: [ScannedEntry],directory:String) throws -> MetadataBuildBuffer {
+        try lock.withReadLock {
+            let values = try MetadataBuildBuffer(count:storage.entries.count,directory:directory)
+            for entry in entries { if let id = storage.pathToID[entry.namespace.path] { values.update(entry.metadata,at:Int(id)) } }
             return values
         }
     }

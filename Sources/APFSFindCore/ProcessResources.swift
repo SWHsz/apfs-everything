@@ -20,6 +20,9 @@ public struct ProcessResourceSample: Codable, Sendable {
     public let idleWakeups: UInt64?
     public let interruptWakeups: UInt64?
     public let pageins: UInt64?
+    /// TASK_VM_INFO internal/external resident gauges; not a guessed allocation size.
+    public let internalResidentBytes: UInt64?
+    public let externalResidentBytes: UInt64?
     public let compressedBytes: UInt64?
     public let peakCompressedBytes: UInt64?
     public let apiError: Int32?
@@ -42,6 +45,8 @@ public struct ProcessResourceSample: Codable, Sendable {
             idleWakeups: status == 0 ? info.idle_wakeups : nil,
             interruptWakeups: status == 0 ? info.interrupt_wakeups : nil,
             pageins: status == 0 ? info.pageins : nil,
+            internalResidentBytes: info.memory_info_valid == 1 ? info.internal_resident_bytes : nil,
+            externalResidentBytes: info.memory_info_valid == 1 ? info.external_resident_bytes : nil,
             compressedBytes: info.memory_info_valid == 1 ? info.compressed_bytes : nil,
             peakCompressedBytes: info.memory_info_valid == 1 ? info.peak_compressed_bytes : nil, apiError: error)
     }
@@ -72,6 +77,9 @@ public struct ProcessResourceSample: Codable, Sendable {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try! encoder.encode(self)
-        return try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        var result = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        result["dirty_private_pages"] = NSNull()
+        result["private_anonymous_footprint"] = NSNull() // Internal resident + compressed are reported separately, not relabelled as a ledger.
+        return result
     }
 }

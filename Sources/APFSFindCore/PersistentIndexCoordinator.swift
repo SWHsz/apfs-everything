@@ -24,7 +24,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private let metadataCancellation = CancellationToken()
   private var metadataBootstrapActive = false
   private var metadataCheckpointActive = false
-  private var metadataSeeds: [FileMetadataValue] = []
+  private var metadataSeeds: MetadataBuildBuffer?
   private let metadataScheduler: CompactionScheduler
   private let metadataPolicy: MetadataCheckpointPolicy
   private var lastMetadataCheckpoint: Double = -.infinity
@@ -107,7 +107,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       changed:{ [weak self] in self?.metadataChanged() })
     core.setMetadataHandlers(scan:{ [weak self] entries,initial in
       guard let self, self.persistenceEnabled else { return }
-      let seed = initial.metadataSeed(entries)
+      let seed = try? initial.metadataSeed(entries,directory:self.cacheDirectory)
       self.lock.withLock { self.metadataSeeds = seed }
     },events:{ [weak self] events in self?.metadataUpdater?.enqueue(events) })
     core.setLifecycleHandlers(
@@ -130,9 +130,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
             try publish()
             hybrid.install(base: base, directoryMap: map)
           }, prepareMetadata: { refs,header in
-            let seed = self.lock.withLock { let values = self.metadataSeeds; self.metadataSeeds = []; return values }
+            let seed = self.lock.withLock { let values = self.metadataSeeds; self.metadataSeeds = nil; return values }
             staged = try? MetadataWriter.stage(store:cache,base:header,cursor:cursor,value:{ ordinal in
-              if case .base(let id) = refs[Int(ordinal)], Int(id) < seed.count { return seed[Int(id)] }
+              if case .base(let id) = refs[Int(ordinal)], let seed, Int(id) < seed.count { return seed.value(Int(id)) }
               return .unknown
             },fault:self.metadataFault)
           }, completed: { _,header in self.installStagedMetadata(staged,cache:cache,header:header,cursor:cursor)
@@ -572,7 +572,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         self.metadataUpdater?.resume()
         self.core.notifyMetadataChanged()
         let lookup = self.metadata.capture()
-        let values = MetadataBuildValues(count:base.count)
+        let values = try MetadataBuildBuffer(count:base.count,directory:self.cacheDirectory)
         let scan = try BulkScanner(root:self.root,workerCount:self.core.configuration.workerCount,metrics:self.metrics,
           excludedRoots:[self.cacheDirectory]).scan(cancellation:self.metadataCancellation,collectEntries:false,visit:{ entries in
             var pairs:[(Int,FileMetadataValue)] = []
@@ -740,12 +740,4 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
     return .init(dictionary: values)
   }
-}
-
-private final class MetadataBuildValues: @unchecked Sendable {
-  private let lock = NSLock()
-  private var values: [FileMetadataValue]
-  init(count:Int) { values = .init(repeating:.unknown,count:count) }
-  func update(_ pairs:[(Int,FileMetadataValue)]) { lock.withLock { for (i,v) in pairs { values[i] = v } } }
-  func value(_ i:Int) -> FileMetadataValue { lock.withLock { values[i] } }
 }

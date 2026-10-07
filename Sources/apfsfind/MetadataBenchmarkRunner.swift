@@ -102,7 +102,7 @@ struct RealMetadataBenchmarkRunner {
             let base = try dailyCache.mappedBase(identity:identity)
             TerminalOutput.info("Read-only metadata benchmark: \(root), \(base.count) records")
             let meta = MetadataIndexCoordinator(); meta.bind(namespace:base)
-            let lookup = meta.capture(), values = BenchmarkMetadataValues(count:base.count)
+            let lookup = meta.capture(), values = try MetadataBuildBuffer(count:base.count,directory:scratch.url.path)
             let start = ProcessInfo.processInfo.systemUptime, resources = ProcessResourceSample.capture()
             _ = try BulkScanner(root:root,excludedRoots:[cacheDirectory,scratch.url.path]).scan(collectEntries:false,visit:{ entries in
                 values.update(entries.compactMap { e in
@@ -126,13 +126,6 @@ struct RealMetadataBenchmarkRunner {
             "sort_queries":metadataQueries(runtimes,exact:exact),"scope":"fresh metadata mapped to existing snapshot ordinals; cache may contain stale paths; no replay of daily namespace"]
         print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]),as:UTF8.self)); return 0
     }
-}
-private final class BenchmarkMetadataValues: @unchecked Sendable {
-    private let lock = NSLock(); private var values:[FileMetadataValue]
-    init(count:Int) { values = .init(repeating:.unknown,count:count) }
-    func update(_ entries:[(Int,FileMetadataValue)]) { lock.withLock { for (i,v) in entries { values[i] = v } } }
-    func value(_ i:Int)->FileMetadataValue { lock.withLock { values[i] } }
-    var unknownSizes:Int { lock.withLock { values.filter { $0.logicalSize == nil }.count } }
 }
 private final class QueryBatch: @unchecked Sendable {
     private let lock = NSLock(); private var hits:[SearchHit] = []

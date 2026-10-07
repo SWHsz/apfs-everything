@@ -1,3 +1,28 @@
+# v0.6.0 — Lightweight Residency and Resource-Aware Maintenance (in progress)
+
+开始 HEAD `9295470152dbb4dd309d2582611111f01ea2074b`，main，起始工作区干净。用户明确授权完成后推送并验证 CI。Issue #1/#3 已发布开工说明；#2 外置索引存储未实现。
+
+## Milestone A — v0.5 基线
+
+独立源码副本完整 ordinary/ASan/TSan 都是 Core176 + Desktop20 =196项，0 failures，1项可选挂载skip；release desktop/app/signature通过。开始 CI run [37558381259](https://github.com/SWHsz/apfs-everything/actions/runs/37558381259) 四项成功。
+
+只读两卷缓存诊断：系统卷3,308,277 entries/551,518 directories、第二卷1,615,001 entries/79,461 directories。Namespace snapshot合计439,850,047 bytes，metadata合计80,003,813 bytes。日用cache未写入；缺失metadata在owned scratch构建。**此资源诊断不启动live replay，不作为 namespace freshness验证。**
+
+两份full directory maps各有630,979 entries，每份估算119,772,703 bytes，合计239,545,406 bytes。估算包含path UTF-8及每项80byte overhead，不冒充精确allocation ledger。加载完成footprint543,229,416 bytes；600秒空闲末端footprint317,031,864 bytes、compressed315,768,832 bytes、RSS5,832,704 bytes；这是系统压缩后的结果，不能只用RSS比较。30次广泛查询后RSS427,540,480 bytes，footprint317,162,936 bytes。独立vmmap摘要另测physical302.3MiB、malloc allocated291.4MiB。
+
+600秒idle实际CPU0.001130s、disk writes0、logical writes20,480 bytes、idle wakeups0、interrupt wakeups2。logical writes非零如实保留，未称作全计数零。TASK_VM_INFO internal/external resident及compressed、rusage physical/peak footprint分别记录；dirty private pages与独立private/anonymous footprint ledger标为unavailable。原始聚合数据：[v05-residency.json](docs/benchmarks/v0.6.0/v05-residency.json)。
+
+## Milestone B — implementation
+
+共享component-walk PathResolverSnapshot从root逐级检查overlay parent EntryRef子表、mapped child ordinal table、tombstone和类型/边界。Metadata先迁移，namespace随后删除全目录path字典。默认warm runtime双full-map计数均0；changed paths只在bounded overlay内。每种resolver的HotDirectoryCache默认8192、最小1024、最大16384，O(1) LRU、generation/base UUID隔离、rename/delete invalidation；warning缩至25%/1024、critical仅root，恢复后按访问填充。
+
+路径查询capture后锁外解析，单entry最多重试一次generation/base变更；old captures固定映射生命周期。Metadata更新也在锁外解析ordinal。MetadataBuildBuffer使用紧凑temporary private mmap columns（16.25 bytes/entry），无per-entrySwift对象数组；writer以最大64KiB chunks增量CRC写v1。Cold seed/bootstrap/真实benchmark均使用紧凑buffer。验证映射完整校验后unmap，再建立runtime只读映射；reclaim advisory不参与正确性。
+
+新增5项PathResolver/Streaming tests；最终冻结B源码的全量201项通过（Core181/Desktop20，0 failures，1可选skip）；最后锁外metadata解析与benchmark流式化的23项针对性测试也通过。B初次两卷复测：双full-map计数均0；30次broad queries后footprint14,140,496 bytes（较v0.5同阶段317,162,936 bytes降低95.5%），internal resident11,649,024 + compressed1,720,320 bytes。RSS544,210,944 bytes，主要为file-backed外部resident501,645,312 bytes；MADV_DONTNEED advisory后RSS仍531,349,504 bytes，未满足250MiB软目标，不虚称回收有效。各sort最慢p95：relevance76.94ms、name asc/desc75.01/75.63ms、mtime asc/desc73.83/76.65ms、size asc/desc74.78/73.49ms。此处idle-seconds=0，600秒最终soak仍留待D。metadata缺失时fresh scratch scan+writer耗时125.80s/59.62s，比v0.5旧lookup更慢（81.08s/36.25s），保留资源/性能tradeoff。原始：[milestone-b-residency.json](docs/benchmarks/v0.6.0/milestone-b-residency.json)。
+后续Milestone C/D未完成，当前版本尚未发布。
+
+---
+
 # v0.5.0 — Metadata Index and Sorting
 
 本轮开始 HEAD：`712ede5814cae259cd24029dc92551144e8ac766`，main、起始工作区干净。Milestone A 独立提交 `1d6e9cd`（`feat: add background lifecycle controls`）；Milestone B 使用 `feat: add metadata indexing and result sorting` 独立提交。用户随后明确授权完成后 push；本机最终验收通过，用户授权推送 main；提交对应四个 required jobs 的结果以 GitHub Actions 为准。版本 0.5.0 / bundle build 500。

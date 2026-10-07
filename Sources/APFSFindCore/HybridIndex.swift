@@ -10,8 +10,10 @@ public struct HybridCapture: Sendable {
   public let base: MMapBaseIndex
   public let tombstones: [UInt64]
   public let delta: [UInt32: DeltaEntry]
-  public let directories: [String: EntryRef]
-  public let deltaChildren: [String: Set<UInt32>]
+  public let deltaChildren: [EntryRef: [String: UInt32]]
+  public let hotDirectoryCache: HotDirectoryCache
+  public let metrics: Metrics
+  public var resolver: PathResolverSnapshot { .init(base:base,tombstones:tombstones,delta:delta,overlayChildren:deltaChildren,generation:generation,cache:hotDirectoryCache,metrics:metrics) }
   public let generation: UInt64
   public func deleted(_ id: UInt32) -> Bool {
     tombstones[Int(id) / 64] & (1 << (Int(id) % 64)) != 0
@@ -43,7 +45,7 @@ public struct HybridCapture: Sendable {
     if case .base(let id) = directory {
       refs = base.directChildren(of: id).filter { !deleted($0) }.map { .base($0) }
     }
-    refs += (deltaChildren[path] ?? []).compactMap { delta[$0] == nil ? nil : .delta($0) }
+    refs += (deltaChildren[directory] ?? [:]).values.compactMap { delta[$0] == nil ? nil : .delta($0) }
     return refs.sorted {
       let a = name($0)
       let b = name($1)
@@ -64,8 +66,8 @@ public struct CompactionPolicy: Sendable {
   public init() {}
 }
 
-/// Base records stay mapped. Only directories and changed paths are retained in
-/// RAM. A cold/recovery build temporarily owns the reference index until mapped.
+/// Base records stay mapped. Only changed paths and bounded hot directories
+/// remain in RAM. Cold/recovery builds temporarily own the reference index.
 public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   public let root: String
   public let metrics = Metrics()
@@ -77,8 +79,9 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   private var words: [UInt64] = []
   private var delta: [UInt32: DeltaEntry] = [:]
   private var deltaPaths: [String: UInt32] = [:]
-  private var deltaChildren: [String: Set<UInt32>] = [:]
-  private var directoryPaths: [String: EntryRef] = [:]
+  private var deltaChildren: [EntryRef: [String:UInt32]] = [:]
+  private var deltaParents: [UInt32:EntryRef] = [:]
+  public let hotDirectoryCache = HotDirectoryCache()
   private var nextID: UInt32 = 0
   private var freeIDs: [UInt32] = []
   private var generation: UInt64 = 0
@@ -108,7 +111,6 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   public func install(
     base: MMapBaseIndex, directoryMap: [String: EntryRef]? = nil, generation: UInt64? = nil
   ) {
-    let map = directoryMap ?? base.directoryMap()
     lock.withLock {
       self.base = base
       words = Array(repeating: 0, count: (base.count + 63) / 64)
@@ -116,7 +118,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       delta = [:]
       deltaPaths = [:]
       deltaChildren = [:]
-      directoryPaths = map
+      deltaParents = [:]
+      hotDirectoryCache.reset(version:.init(baseUUID:base.header.snapshotUUID!,generation:generation ?? base.header.indexGeneration),root:root)
       nextID = 0
       freeIDs = []
       dead = 0
@@ -128,7 +131,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   }
   public func installSnapshot(_ replacement: any NamespaceIndex) {
     if let h = replacement as? HybridIndex, let c = h.capture() {
-      install(base: c.base, directoryMap: c.directories)
+      install(base: c.base)
     } else if let f = replacement as? FileIndex {
       lock.withLock {
         bootstrap = f
@@ -147,21 +150,16 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       delta = [:]
       deltaPaths = [:]
       deltaChildren = [:]
-      directoryPaths = [:]
+      deltaParents = [:]
       dead = 0
       overlayBytes = 0
     }
   }
   private func deleted(_ id: UInt32) -> Bool { words[Int(id) / 64] & (1 << (Int(id) % 64)) != 0 }
   private func reference(_ path: String) -> EntryRef? {
-    if let id = deltaPaths[path] { return .delta(id) }
-    if let ref = directoryPaths[path] { return ref }
-    guard let b = base,
-      case .base(let parent)? = directoryPaths[PathCanonicalizer.parent(of: path)],
-      let id = b.lookupChild(parent: parent, name: String(path.split(separator: "/").last ?? "")),
-      !deleted(id)
-    else { return nil }
-    return .base(id)
+    guard let base else { return nil }
+    return PathResolverSnapshot(base:base,tombstones:words,delta:delta,overlayChildren:deltaChildren,
+        generation:generation,cache:hotDirectoryCache,metrics:metrics).resolve(path)
   }
   private func item(_ ref: EntryRef, path: String) -> NamespaceEntry {
     switch ref {
@@ -175,45 +173,32 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     }
   }
   public func entry(at path: String) -> NamespaceEntry? {
-    lock.withLock {
-      if let b = bootstrap { return b.entry(at: path) }
-      guard let r = reference(path) else { return nil }
-      return item(r, path: path)
+    if let bootstrap = lock.withLock({bootstrap}) { return bootstrap.entry(at:path) }
+    for _ in 0..<2 {
+      guard let captured = capture() else { return nil }
+      let value = captured.resolver.entry(path)
+      if lock.withLock({base?.header.snapshotUUID == captured.base.header.snapshotUUID && generation == captured.generation}) { return value }
     }
+    return nil
   }
   public func childCount(of path:String) -> Int? {
-    lock.withLock {
-      guard let base,let ref = directoryPaths[path] else { return nil }
-      let original:Int
-      if case .base(let id) = ref { original = Int(base.record(at:id).childCount) } else { original = 0 }
-      return original+(deltaChildren[path]?.count ?? 0)
-    }
+    guard let captured = capture(),let ref = captured.resolver.resolveDirectory(path) else { return nil }
+    // A conservative sibling count is used only to choose bulk vs sparse I/O.
+    let original: Int
+    if case .base(let id) = ref { original = Int(captured.base.record(at:id).childCount) } else { original = 0 }
+    return original+(captured.deltaChildren[ref]?.count ?? 0)
   }
   public func children(of path: String) -> [NamespaceEntry] {
-    lock.lock()
-    if let b = bootstrap {
-      lock.unlock()
-      return b.children(of: path)
-    }
-    let mapped = base
-    let ref = directoryPaths[path]
-    let bitmap = words
-    let changed = (deltaChildren[path] ?? []).compactMap { delta[$0]?.entry }
-    lock.unlock()
-    var result: [NamespaceEntry] = []
-    if let b = mapped, case .base(let id)? = ref {
-      for child in b.directChildren(of: id)
-      where bitmap[Int(child) / 64] & (1 << (Int(child) % 64)) == 0 {
-        let r = b.record(at: child)
-        result.append(
-          .init(
-            path: (path == "/" ? "" : path) + "/" + b.name(at: child), kind: r.kind,
-            deviceID: b.header.rootDeviceID, fileID: r.fileID == 0 ? nil : r.fileID,
-            isMountPoint: r.flags != 0))
+    if let bootstrap = lock.withLock({bootstrap}) { return bootstrap.children(of:path) }
+    guard let captured = capture(),let ref = captured.resolver.resolveDirectory(path) else { return [] }
+    return captured.children(ref,path:path).map { child in
+      switch child {
+      case .delta(let id): return captured.delta[id]!.entry
+      case .base(let id): let r = captured.base.record(at:id)
+        return .init(path:(path == "/" ? "" : path)+"/"+captured.base.name(at:id),kind:r.kind,
+          deviceID:captured.base.header.rootDeviceID,fileID:r.fileID == 0 ? nil : r.fileID,isMountPoint:r.flags != 0)
       }
-    }
-    result += changed
-    return result.sorted { $0.path < $1.path }
+    }.sorted { $0.path < $1.path }
   }
   @discardableResult private func remove(_ path: String) -> Bool {
     guard path != root else { return false }
@@ -240,19 +225,16 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       guard let d = delta.removeValue(forKey: id) else { continue }
       freeIDs.append(id)
       deltaPaths.removeValue(forKey: d.entry.path)
-      deltaChildren[PathCanonicalizer.parent(of: d.entry.path)]?.remove(id)
-      if deltaChildren[PathCanonicalizer.parent(of: d.entry.path)]?.isEmpty == true {
-        deltaChildren.removeValue(forKey: PathCanonicalizer.parent(of: d.entry.path))
+      if let parent = deltaParents.removeValue(forKey:id) {
+        deltaChildren[parent]?.removeValue(forKey:d.name)
+        if deltaChildren[parent]?.isEmpty == true { deltaChildren.removeValue(forKey:parent) }
       }
+      deltaChildren.removeValue(forKey:.delta(id))
       overlayBytes -= estimate(d)
       if d.entry.kind == .file { files -= 1 }
       if d.entry.kind == .directory { dirs -= 1 }
     }
-    if isDir {
-      for key in directoryPaths.keys.filter({ PathCanonicalizer.isWithin($0, root: path) }) {
-        directoryPaths.removeValue(forKey: key)
-      }
-    }
+    hotDirectoryCache.invalidate(prefix:path)
     return true
   }
   private func estimate(_ d: DeltaEntry) -> Int {
@@ -291,9 +273,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
           PathCanonicalizer.isWithin(e.path, root: root)
         else { continue }
         if let r = reference(e.path), item(r, path: e.path) == e { continue }
-        guard e.path == root || directoryPaths[PathCanonicalizer.parent(of: e.path)] != nil else {
-          continue
-        }
+        guard e.path != root, let parent = reference(PathCanonicalizer.parent(of:e.path)), item(parent,path:PathCanonicalizer.parent(of:e.path)).kind == .directory else { continue }
         _ = remove(e.path)
         let name = e.path == root ? "" : String(e.path.split(separator: "/").last!)
         let d = DeltaEntry(
@@ -301,9 +281,9 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
         if d.id == nextID { nextID &+= 1 }
         delta[d.id] = d
         deltaPaths[e.path] = d.id
-        deltaChildren[PathCanonicalizer.parent(of: e.path), default: []].insert(d.id)
+        deltaChildren[parent, default: [:]][name] = d.id
+        deltaParents[d.id] = parent
         if e.kind == .directory {
-          directoryPaths[e.path] = .delta(d.id)
           dirs += 1
         }
         if e.kind == .file { files += 1 }
@@ -313,6 +293,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     }
     if changed {
       generation &+= 1
+      if let base { hotDirectoryCache.reset(version:.init(baseUUID:base.header.snapshotUUID!,generation:generation),root:root) }
       lastMutation = ProcessInfo.processInfo.systemUptime
       metrics.record("namespace_mutations")
     }
@@ -324,8 +305,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     lock.withLock {
       guard let b = base else { return nil }
       return .init(
-        base: b, tombstones: words, delta: delta, directories: directoryPaths,
-        deltaChildren: deltaChildren, generation: generation)
+        base: b, tombstones: words, delta: delta, deltaChildren: deltaChildren, hotDirectoryCache:hotDirectoryCache, metrics:metrics, generation: generation)
     }
   }
   public func stats() -> IndexStats {
@@ -377,8 +357,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
         "base_directories": base?.directories ?? 0,
         "materialized_file_entries": bootstrap?.stats().files ?? 0,
         "base_materialized_file_entries": 0,
-        "directory_map_entries": directoryPaths.count,
-        "directory_map_estimated_bytes": directoryPaths.keys.reduce(0) { $0 + 80 + $1.utf8.count },
+        "directory_map_entries": 0,
+        "directory_map_estimated_bytes": 0,
         "overlay_live_entries": delta.count,
         "overlay_deleted_entries": 0, "overlay_estimated_bytes": overlayBytes + freeIDs.count * 4,
         "base_tombstones": dead, "tombstone_bitmap_bytes": words.count * 8,
@@ -393,6 +373,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       }
       v["writer_lock_wait_max_ms"] = writerWaitMaximum
       v["overlay_free_slots"] = freeIDs.count
+      for (k,n) in hotDirectoryCache.statistics { v[k] = n }
+      for (k,n) in hotDirectoryCache.metrics.snapshot() { v[k] = n }
       for (k, n) in metrics.snapshot() { v[k] = n }
       return v
     }

@@ -39,6 +39,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
   public let validationMilliseconds: Double
   public let residentAfterMmap: UInt64
   public let residentAfterValidation: UInt64
+  public let residentAfterRuntimeRemap: UInt64
   public let files: Int
   public let directories: Int
   private let fd: Int32
@@ -234,7 +235,10 @@ public final class MMapBaseIndex: @unchecked Sendable {
         throw SnapshotError.invalid("v2 unreferenced sections")
       }
       self.fd = fileDescriptor
-      address = pointer
+      let validatedRSS = Metrics.processUsage().residentBytes
+      guard let runtime = mmap(nil,size,PROT_READ,MAP_PRIVATE,fileDescriptor,0),runtime != MAP_FAILED else { throw SnapshotError.io("remap runtime base",errno) }
+      munmap(pointer,size)
+      address = runtime
       length = size
       header = h
       self.root = root
@@ -245,7 +249,8 @@ public final class MMapBaseIndex: @unchecked Sendable {
       mmapMilliseconds = mapMS
       residentAfterMmap = rss
       validationMilliseconds = (ProcessInfo.processInfo.systemUptime - started) * 1000 - mapMS
-      residentAfterValidation = Metrics.processUsage().residentBytes
+      residentAfterValidation = validatedRSS
+      residentAfterRuntimeRemap = Metrics.processUsage().residentBytes
     } catch {
       munmap(pointer, size)
       close(fileDescriptor)
@@ -256,6 +261,8 @@ public final class MMapBaseIndex: @unchecked Sendable {
     munmap(address, length)
     close(fd)
   }
+  /// Advisory only: a later read faults validated immutable pages back in.
+  @discardableResult public func reclaimPages() -> Bool { madvise(address,length,MADV_DONTNEED) == 0 }
   /// Read mapped byte ranges directly: Unicode canonical equality is not byte
   /// equality and would overestimate savings for decomposed basenames.
   public func layoutStatistics() -> [String: Any] {

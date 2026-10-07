@@ -92,6 +92,7 @@ enum CLI {
                              [--idle-seconds 60]
 
     Additional benchmarks:
+      apfsfind residency-bench --root PATH [--second-root PATH] [--idle-seconds 600]
       apfsfind usability-bench --root PATH [--cache-dir EXISTING_TEST_CACHE] [--idle-seconds 60]
       apfsfind multivolume-bench --entries-per-volume 100000 --volumes 2
       apfsfind background-bench [--idle-seconds 60]
@@ -118,7 +119,7 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench", "background-bench", "metadata-bench"].contains(first) else {
+            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench", "background-bench", "metadata-bench", "residency-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
@@ -156,15 +157,15 @@ enum CLI {
                 guard options.command=="hybrid-bench",let n=Int(value),(1...100000).contains(n) else{throw CLIError.usage("--delta must be 1...100000 for hybrid-bench")}
                 options.delta=n
             case "--second-root":
-                guard options.command == "metadata-bench" else { throw CLIError.usage("--second-root is for metadata-bench") }; options.secondRoot = value
+                guard ["metadata-bench", "residency-bench"].contains(options.command) else { throw CLIError.usage("--second-root is for metadata-bench") }; options.secondRoot = value
             case "--root":
                 options.rootProvided = true
-                guard ["serve", "real-disk-bench", "usability-bench", "metadata-bench"].contains(options.command), !value.isEmpty else {
+                guard ["serve", "real-disk-bench", "usability-bench", "metadata-bench", "residency-bench"].contains(options.command), !value.isEmpty else {
                     throw CLIError.usage("--root is accepted by serve and real-disk-bench.")
                 }
                 options.root = NSString(string: value).expandingTildeInPath
             case "--idle-seconds":
-                guard ["real-disk-bench", "usability-bench", "background-bench"].contains(options.command), let n = Double(value), n.isFinite, (0...3600).contains(n) else {
+                guard ["real-disk-bench", "usability-bench", "background-bench", "residency-bench"].contains(options.command), let n = Double(value), n.isFinite, (0...3600).contains(n) else {
                     throw CLIError.usage("--idle-seconds requires 0...3600 for real-disk-bench.")
                 }
                 options.idleSeconds = n
@@ -212,6 +213,7 @@ enum CLI {
         }
         let options = try parse(arguments)
         if options.help { print(usage); return 0 }
+        if options.command == "residency-bench" { return try ResidencyBenchmarkRunner(roots:[options.root]+(options.secondRoot.map { [$0] } ?? []),cacheDirectory:options.cacheDirectory ?? SnapshotStore.defaultDirectory,idleSeconds:options.idleSeconds).run() }
         if options.command == "metadata-bench" {
             if options.rootProvided { return try RealMetadataBenchmarkRunner(roots:[options.root]+(options.secondRoot.map { [$0] } ?? []),cacheDirectory:options.cacheDirectory ?? SnapshotStore.defaultDirectory).run() }
             return try MetadataBenchmarkRunner(entries:options.entries).run()

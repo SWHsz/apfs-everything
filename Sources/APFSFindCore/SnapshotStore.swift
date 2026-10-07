@@ -170,7 +170,7 @@ public final class SnapshotStore: @unchecked Sendable {
     }
 
     /// Called while the namespace publisher already holds this store's advisory lock.
-    func stageMetadata(header:MetadataHeader, base:SnapshotHeader, payload:Data, footer:Data,
+    func stageMetadata(base:SnapshotHeader, write:(Int32)throws->MetadataHeader,
                        fault:((SnapshotFailurePoint)throws->Void)?) throws -> StagedMetadataFile {
         guard activityLock.withLock({publishing}) else { throw SnapshotError.invalid("metadata staging requires namespace publication") }
         let temporary = metadataFilename + "." + UUID().uuidString + ".tmp"
@@ -178,8 +178,7 @@ public final class SnapshotStore: @unchecked Sendable {
         guard fd >= 0 else { throw SnapshotError.io("stage metadata",errno) }
         do {
             guard fchmod(fd,0o600) == 0 else { throw SnapshotError.io("chmod staged metadata",errno) }
-            try snapshotWriteAll(fd,header.encoded()); try fault?(.afterHeader)
-            try snapshotWriteAll(fd,payload); try snapshotWriteAll(fd,footer); try fault?(.beforeFileSync)
+            let header = try write(fd); try fault?(.beforeFileSync)
             guard fsync(fd) == 0 else { throw SnapshotError.io("fsync staged metadata",errno) }
             let result = close(fd); fd = -1
             guard result == 0 else { throw SnapshotError.io("close staged metadata",errno) }

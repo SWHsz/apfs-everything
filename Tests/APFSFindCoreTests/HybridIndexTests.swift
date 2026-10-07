@@ -52,7 +52,8 @@ final class HybridIndexTests: XCTestCase {
     XCTAssertEqual(h.search("ä").hits, i.search("ä").hits)
     XCTAssertEqual(h.search("-name").hits,i.search("-name").hits)
     XCTAssertEqual(h.hybridStats()["materialized_file_entries"] as? Int, 0)
-    XCTAssertEqual(h.hybridStats()["directory_map_entries"] as? Int, 3)
+    XCTAssertEqual(h.hybridStats()["directory_map_entries"] as? Int, 0)
+    XCTAssertLessThanOrEqual(h.hotDirectoryCache.statistics["hot_directory_cache_entries"]!,8192)
     let old = try Data(
       contentsOf: URL(fileURLWithPath: try SnapshotStore(directory: c.root, identity: v).path))
     let j = FileIndex(root: v.root)
