@@ -77,6 +77,20 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var pauseRequested = false // streamControl-confined
     private let replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)?
     private let cancellation = CancellationToken()
+    private let maintenanceCancellation = CancellationToken()
+    private let exitReconciliation = CancellationToken()
+    private var exitBatchIncomplete = false // single writer
+    private var activeQueries: [UUID:SearchCancellationToken] = [:]
+    public func cancelQueries() {
+        let tokens = stateLock.withLock { Array(activeQueries.values) }
+        tokens.forEach { $0.cancel() }
+    }
+    public func cancelStartup() {
+        requestFastExit(); cancellation.cancel()
+    }
+    public func requestFastExit() {
+        maintenanceCancellation.cancel(); exitReconciliation.cancel()
+    }
     private let debugEvents = ProcessInfo.processInfo.environment["APFSFIND_DEBUG_EVENTS"] == "1"
     private let stateLock = NSLock()
     private var state: IndexState = .scanning
@@ -200,6 +214,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     public func setMutationHandler(_ handler: @escaping @Sendable () -> Void) { writer.sync { mutationHandler = handler } }
     public func search(_ request: SearchRequest) -> SearchResult {
+        let queryID = UUID()
+        stateLock.withLock { activeQueries[queryID] = request.cancellation }
+        defer { _ = stateLock.withLock { activeQueries.removeValue(forKey:queryID) } }
+        if exitReconciliation.isCancelled { request.cancellation.cancel() }
         let status = readinessSnapshot()
         guard status.searchAvailable else { return .init(hits: [], latencyMilliseconds: 0, generation: index.stats().generation, freshness: status.freshness, cancelled: request.cancellation.isCancelled) }
         let result = index.search(request)
@@ -255,7 +273,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         while !cancellation.isCancelled {
         metrics.set("maintenance_queued", to: 1)
         setReadiness(.scanning)
-        let lease = try maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .coldScan, priority: root == "/" ? 1 : 0, cancellation: cancellation)
+        let lease = try maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .coldScan, priority: root == "/" ? 1 : 0, cancellation: maintenanceCancellation)
         lease.validateIdentity { [self] in guard try identityProvider(root) == identity else { throw SnapshotError.identity("source identity changed") } }
         stateLock.withLock { activeMaintenance = lease }
         defer { stateLock.withLock { activeMaintenance = nil }; lease.release() }
@@ -489,7 +507,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if before != index.stats().generation { mutationHandler?() }
         // Include content-only IDs, but never advance a durable cursor ahead of
         // the namespace mutations corresponding to this batch.
-        if currentState != .dirty && currentState != .rebuilding, let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
+        if !exitBatchIncomplete, currentState != .dirty && currentState != .rebuilding, let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
             lastProcessedEventID = max(lastProcessedEventID, completedID)
         }
         if stateLock.withLock({ historyDone }), currentState == .replaying,
@@ -538,6 +556,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
 
     internal func process(_ events: [FileSystemEvent], into target: any NamespaceIndex, using reconciler: DirectoryReconciler,
                          countMetrics: Bool, mayRebuild: Bool) {
+        let resources=ProcessResourceSample.capture()
+        defer {metrics.recordResources("namespace_event_processing",since:resources)}
         var namespace: [(FileSystemEvent, EventClassification)] = []
         for event in events {
             let classification = EventClassifier.classify(event)
@@ -691,7 +711,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
             let options = dirty[directory] ?? (true, true)
             let plan = reconciler.prepare(directory, subtree: options.subtree || absorbed || nestedPatch,
-                                          force: true, cancellation: cancellation)
+                                          force: true, cancellation: exitReconciliation)
+            if plan.cancelled { exitBatchIncomplete = true; continue }
             mutations += plan.mutations
             retryParents.formUnion(plan.retryParents)
             if plan.requiresRebuild && mayRebuild {
@@ -728,7 +749,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
         while !pending.isEmpty, !cancellation.isCancelled {
             var parents = Set<String>()
             for directory in pending where seen.insert(directory).inserted {
-                let plan = reconciler.prepare(directory, force: true, cancellation: cancellation)
+                let plan = reconciler.prepare(directory, force: true, cancellation: exitReconciliation)
+                if plan.cancelled { exitBatchIncomplete = true; return }
                 target.apply(plan.mutations)
                 parents.formUnion(plan.retryParents)
                 if plan.requiresRebuild && mayRebuild {
@@ -762,7 +784,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
     }
     private func requestRebuild(invalidated: Bool, reason: String) {
-        guard !cancellation.isCancelled else { return }
+        guard !maintenanceCancellation.isCancelled, !cancellation.isCancelled else { return }
         metrics.record("rebuild_requests_" + reason)
         stateLock.withLock { recoveryReason = reason }
         persistenceEpoch &+= 1
@@ -780,7 +802,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     private func beginRebuild() {
         rebuildScheduled = false
-        guard !building, !cancellation.isCancelled else { return }
+        guard !building, !cancellation.isCancelled, !maintenanceCancellation.isCancelled else { return }
         guard currentState != .paused else { needsStreamRestart = true; return }
         building = true; rebuildEvents = []; rebuildOverflow = false
         metrics.set("rebuild_buffer_estimated_bytes",to:0)
@@ -791,7 +813,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             guard let self else { return }
             let result = Result {
                 let identity = try self.identityProvider(self.root)
-                let lease = try self.maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .rebuild, urgency:(self.index as? HybridIndex)?.requiresRecovery == true ? .emergency : .required, cancellation: self.cancellation)
+                let lease = try self.maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .rebuild, urgency:(self.index as? HybridIndex)?.requiresRecovery == true ? .emergency : .required, cancellation: self.maintenanceCancellation)
                 lease.validateIdentity { guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("source identity changed") } }
                 self.stateLock.withLock { self.activeMaintenance = lease }
                 var transferred = false
@@ -899,7 +921,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
 
     public func verify() throws -> VerificationResult {
         let identity = try identityProvider(root)
-        let lease = try maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.rebuild,urgency:.required,cancellation:cancellation)
+        let lease = try maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.rebuild,urgency:.required,cancellation:maintenanceCancellation)
         defer { lease.release() }
         let scanner = makeScanner(lease:lease)
         let scan = try scanner.scan(cancellation: cancellation)
@@ -1040,7 +1062,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     public func stop() {
-        cancellation.cancel()
+        requestFastExit(); cancelQueries(); cancellation.cancel()
         streamControl.sync { pauseRequested = true; watcher.stop() }
         // Establish that no writer can enter the rebuild group after wait begins.
         writer.sync {}

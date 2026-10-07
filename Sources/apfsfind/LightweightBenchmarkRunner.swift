@@ -28,9 +28,10 @@ struct LightweightBenchmarkRunner {
     let columnReport:[String:Any] = ["entries":entries,"kind":"synthetic ordinal columns, no namespace Swift graph",
       "buffer_bytes":entries*16+(entries+3)/4,"maximum_output_chunk_bytes":65536,"elapsed_ms":(ProcessInfo.processInfo.systemUptime-start)*1000,
       "peak_observed_rss_bytes":peak,"process_peak_rss_bytes":ProcessResourceSample.capture().peakRSSBytes,"resources":ProcessResourceSample.capture().delta(since:before)]
+    let standalone=try benchmarkChild(["_cache-pressure-worker"])
     let pressure = try fakePressure()
     let cpu = try actualCPUBusy()
-    let report:[String:Any] = ["benchmark":"lightweight","version":"0.6.0","metadata_columns":columnReport,"fake_pressure":pressure,"actual_cpu_busy":cpu,
+    let report:[String:Any] = ["benchmark":"lightweight","version":"0.6.1","standalone_cache_pressure":standalone,"metadata_columns":columnReport,"fake_pressure":pressure,"actual_cpu_busy":cpu,
       "limits":"real filesystem bootstrap peak is measured by metadata-bench in a fresh process; fake pressure never allocates system-wide memory pressure"]
     print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]),as:UTF8.self))
     return peak <= 400*1024*1024 && pressure["passed"] as? Bool == true && cpu["ordinary_deferred"] as? Bool == true && cpu["recovery_resumed"] as? Bool == true ? 0 : 1
@@ -140,4 +141,19 @@ func benchmarkChild(_ arguments:[String]) throws -> [String:Any] {
   }
   let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit(); group.wait()
   guard process.terminationStatus == 0, let value = try JSONSerialization.jsonObject(with:data) as? [String:Any] else { throw CLIError.startupFailed("benchmark worker failed: \(process.terminationStatus)") }; return value
+}
+
+/// A fresh process holds only the cache. No namespace, fixture tree, or retained path array.
+func standaloneCachePressureWorker() throws -> Int32 {
+  let cache=HotDirectoryCache(capacity:16384),version=PathResolutionVersion(baseUUID:UUID(),generation:1)
+  cache.reset(version:version,root:"/owned",ref:.base(0))
+  for i in 0..<16383 {cache.insert("/owned/\(i)/"+String(repeating:"long-component/",count:160)+"leaf",ref:.base(UInt32(i+1)),version:version)}
+  func sample()->[[String:Any]] { (0..<5).map { _ in Thread.sleep(forTimeInterval:0.05);return ProcessResourceSample.capture().dictionary } }
+  let beforeStats=cache.statistics,before=sample()
+  cache.setPressure(.warning,root:"/owned");let warningStats=cache.statistics,warning=sample()
+  cache.setPressure(.critical,root:"/owned");let criticalStats=cache.statistics,critical=sample()
+  cache.setPressure(.normal,root:"/owned")
+  let passed=beforeStats["hot_directory_cache_entries"]==16384 && warningStats["hot_directory_cache_entries"]==2048 && criticalStats["hot_directory_cache_entries"]==1 && cache.statistics["hot_directory_cache_entries"]==1
+  let report:[String:Any]=["passed":passed,"kind":"fresh process; cache-only unique long path allocations","samples_before":before,"samples_warning":warning,"samples_critical":critical,"cache_before":beforeStats,"cache_warning":warningStats,"cache_critical":criticalStats,"interpretation":"Dictionary storage is replaced; physical gauges include allocator retention. Functional old-storage release is covered by weak-reference tests."]
+  print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self));return passed ? 0:1
 }

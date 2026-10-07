@@ -58,41 +58,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       Bundle.main.object(forInfoDictionaryKey:"APFSFindResourceSmoke") as? Bool == true else { return }
     resourceSmokeTask = Task { [weak self] in
       self?.panel?.hide()
-      let deadline = ProcessInfo.processInfo.systemUptime+1800
-      var nextReport = ProcessInfo.processInfo.systemUptime+30
-      while ProcessInfo.processInfo.systemUptime < deadline {
-        if ProcessInfo.processInfo.systemUptime >= nextReport {
-          if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("startup_progress",data:data) }
-          nextReport += 30
-        }
-        let states = await coordinator.sessionsSnapshot()
-        if states.count == 2 && states.allSatisfy({$0.state == .live && $0.metadataAvailable}) {
-          do { try await Task.sleep(for:.seconds(2)) } catch { return }
-          let settled = await coordinator.sessionsSnapshot()
-          if settled.count == 2 && settled.allSatisfy({$0.state == .live && $0.metadataAvailable}) { break }
-        }
-        do { try await Task.sleep(for:.milliseconds(250)) } catch { return }
+      if Bundle.main.object(forInfoDictionaryKey:"APFSFindSmokeRestart") as? Bool == true {
+        await NativeSmokeActions.run(coordinator,restart:true);return
       }
-      let states = await coordinator.sessionsSnapshot()
-      guard states.count == 2, states.allSatisfy({$0.state == .live && $0.metadataAvailable}) else { Self.smoke("live_timeout",data:Data("{}".utf8)); return }
-      // Measure a busy live system too, and explicitly distinguish it from a
-      // no-work idle gate. Do not force resource signals to normal to settle it.
-      let quiet = states.allSatisfy({$0.maintenanceStatus == nil}) && !SystemResourceSignals.shared.isSampling
-      Self.smoke("quiet_start_condition",data:Data(("{\"satisfied\":"+(quiet ? "true" : "false")+"}").utf8))
+      let deadline = ProcessInfo.processInfo.systemUptime+1200
+      var gate=QuietStateGate(), result=QuietGateResult(quiet:false,stableSeconds:0,blockers:["startup"])
+      var nextReport=ProcessInfo.processInfo.systemUptime+30
+      while ProcessInfo.processInfo.systemUptime<deadline {
+        let volumes=await coordinator.quietVolumeStates(), tasks=await coordinator.maintenance.snapshot()
+        result=gate.observe(volumes,tasks:tasks,now:ProcessInfo.processInfo.systemUptime)
+        if result.quiet && volumes.count==2 {break}
+        if ProcessInfo.processInfo.systemUptime>=nextReport {
+          if let data=try? await coordinator.resourceDiagnosticsJSON() {Self.smoke("quiet_progress",data:data)}
+          nextReport+=30
+        }
+        do {try await Task.sleep(for:.milliseconds(500))} catch {return}
+      }
+      guard result.quiet else {
+        if let data=try? JSONSerialization.data(withJSONObject:["blockers":result.blockers,"stable_seconds":result.stableSeconds]) {Self.smoke("quiet_timeout",data:data)}
+        if let data=try? await coordinator.resourceDiagnosticsJSON() {Self.smoke("quiet_timeout_diagnostics",data:data)}
+        await NativeSmokeActions.run(coordinator)
+        return
+      }
+      Self.smoke("quiet_ready",data:Data("{}".utf8))
       self?.panel?.hide()
-      if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("hidden_idle_start",data:data) }
-      try? FileHandle.standardOutput.synchronize()
-      let before = ProcessResourceSample.capture()
-      do { try await Task.sleep(for:.seconds(600)) } catch { return }
-      let after = ProcessResourceSample.capture()
-      if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("hidden_idle_600",data:data) }
-      if let data = try? JSONSerialization.data(withJSONObject:after.delta(since:before),options:[.sortedKeys]) { Self.smoke("idle_delta",data:data) }
+      if let data=try? await coordinator.resourceDiagnosticsJSON() {Self.smoke("hidden_idle_start",data:data)}
+      let initialVolumes=await coordinator.quietVolumeStates()
+      let before=ProcessResourceSample.capture()
+      do {try await Task.sleep(for:.seconds(60))} catch {return}
+      let sixty=ProcessResourceSample.capture()
+      if let data=try? JSONSerialization.data(withJSONObject:sixty.delta(since:before),options:[.sortedKeys]) {Self.smoke("idle_60_delta",data:data)}
+      do {try await Task.sleep(for:.seconds(540))} catch {return}
+      let after=ProcessResourceSample.capture()
+      if let data=try? await coordinator.resourceDiagnosticsJSON() {Self.smoke("hidden_idle_600",data:data)}
+      if let data=try? JSONSerialization.data(withJSONObject:after.delta(since:before),options:[.sortedKeys]) {Self.smoke("idle_delta",data:data)}
+      let finalVolumes=await coordinator.quietVolumeStates()
+      let unchanged=Dictionary(uniqueKeysWithValues:initialVolumes.map{($0.volumeID,[$0.namespaceGeneration,$0.metadataGeneration])}) == Dictionary(uniqueKeysWithValues:finalVolumes.map{($0.volumeID,[$0.namespaceGeneration,$0.metadataGeneration])})
+      if let data=try? JSONSerialization.data(withJSONObject:["no_mutations_during_measurement":unchanged]) {Self.smoke("idle_mutation_gate",data:data)}
       let originalPressure = SystemResourceSignals.shared.current().memoryPressure
       SystemResourceSignals.shared.simulateMemoryPressureForTesting(.warning)
       do { try await Task.sleep(for:.milliseconds(100)) } catch { return }
       if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("memory_warning",data:data) }
       SystemResourceSignals.shared.simulateMemoryPressureForTesting(originalPressure)
       Self.smoke("resource_smoke_complete",data:Data("{}".utf8))
+      await NativeSmokeActions.run(coordinator)
     }
   }
   private static func smoke(_ stage:String,data:Data) { FileHandle.standardOutput.write(Data(("[resource-smoke] "+stage+" "+String(decoding:data,as:UTF8.self)+"\n").utf8)) }
@@ -122,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     resourceSmokeTask?.cancel(); statusBar?.stop(); lifecycle?.stop(); hotKey?.stop(); panel?.stop(); stateTask?.cancel()
     Task {
       await model?.cancel(); await coordinator?.stop(policy: .fast)
+      if Bundle.main.object(forInfoDictionaryKey:"APFSFindResourceSmoke") as? Bool == true,let coordinator,let data=try? JSONSerialization.data(withJSONObject:await coordinator.shutdownReport,options:[.sortedKeys]) {Self.smoke("shutdown",data:data)}
       sender.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater

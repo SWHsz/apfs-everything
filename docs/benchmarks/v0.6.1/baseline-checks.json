@@ -6,20 +6,29 @@
   "normal": {
     "exit": 0,
     "seconds": 101.64,
-    "tests": 200,
-    "sanitizer_diagnostics": false
+    "sanitizer_diagnostics": false,
+    "core_tests": 200,
+    "desktop_tests": 20,
+    "total_tests": 220,
+    "optional_mount_skipped": 1
   },
   "asan": {
     "exit": 0,
     "seconds": 213.407,
-    "tests": 200,
-    "sanitizer_diagnostics": false
+    "sanitizer_diagnostics": false,
+    "core_tests": 200,
+    "desktop_tests": 20,
+    "total_tests": 220,
+    "optional_mount_skipped": 1
   },
   "tsan": {
     "exit": 0,
     "seconds": 305.825,
-    "tests": 200,
-    "sanitizer_diagnostics": false
+    "sanitizer_diagnostics": false,
+    "core_tests": 200,
+    "desktop_tests": 20,
+    "total_tests": 220,
+    "optional_mount_skipped": 1
   },
   "app": {
     "exit": 0,

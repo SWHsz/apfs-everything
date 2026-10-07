@@ -19,7 +19,7 @@ public enum PathCanonicalizationError: Error, CustomStringConvertible, Sendable 
 public enum PathCanonicalizer {
     /// Resolves the existing scan root once. Symlinks encountered by the scanner remain entries.
     public static func canonicalRoot(_ path: String) throws -> String {
-        guard !path.isEmpty, !path.contains("\0") else {
+        guard !path.isEmpty, !path.utf8.contains(0) else {
             throw PathCanonicalizationError.invalidPath(path)
         }
         let expanded = (path as NSString).expandingTildeInPath
@@ -41,7 +41,11 @@ public enum PathCanonicalizer {
 
     /// Pure lexical normalization for event/index paths; never accesses the filesystem.
     public static func normalize(_ path: String) -> String? {
-        guard path.hasPrefix("/"), !path.contains("\0") else { return nil }
+        guard path.hasPrefix("/"), !path.utf8.contains(0) else { return nil }
+        // Scanner paths are overwhelmingly already canonical ASCII. Avoid
+        // Foundation substring search plus split/join for every metadata ordinal.
+        // Unicode keeps the existing normalization semantics.
+        if isCanonicalASCII(path) { return path }
         var components: [Substring] = []
         for component in path.split(separator: "/", omittingEmptySubsequences: true) {
             if component == "." { continue }
@@ -52,6 +56,20 @@ public enum PathCanonicalizer {
             }
         }
         return "/" + components.joined(separator: "/")
+    }
+
+    private static func isCanonicalASCII(_ path: String) -> Bool {
+        var length = 0, dotsOnly = true
+        for byte in path.utf8.dropFirst() {
+            guard byte < 128 else { return false }
+            if byte == 47 {
+                guard length > 0, !(dotsOnly && length <= 2) else { return false }
+                length = 0; dotsOnly = true
+            } else {
+                length += 1; dotsOnly = dotsOnly && byte == 46
+            }
+        }
+        return path == "/" || (length > 0 && !(dotsOnly && length <= 2))
     }
 
     public static func isWithin(_ path: String, root: String) -> Bool {

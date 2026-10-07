@@ -95,7 +95,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     }
     public func resourceUsage() -> (entries:Int,bytes:Int) { lock.withLock { (overlay.entryCount,safetyBytes+overlay.retainedRenameBytes) } }
     public func residencyStatistics() -> [String: Any] {
-        lock.withLock { ["metadata_directory_map_entries":0,
+        lock.withLock { ["cache_storage":hotDirectoryCache.statistics,"metadata_directory_map_entries":0,
             "metadata_directory_map_estimated_bytes":0,
             "metadata_hot_directory_cache_entries":hotDirectoryCache.statistics["hot_directory_cache_entries",default:0],
             "metadata_hot_directory_cache_bytes":hotDirectoryCache.statistics["hot_directory_cache_bytes",default:0],
@@ -155,6 +155,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
                 else { if overlay.deltaValues[path] == nil { safetyBytes += 96+path.utf8.count }; overlay.deltaValues[path] = value }
                 overlay.generation &+= 1
             } else {
+                if overlay.deleted.contains(path),overlay.deltaValues[path] == nil,renamedDirectories[path] == nil {return}
                 if let old = renamedDirectories.removeValue(forKey:path) {
                     overlay.retainedRenameBytes -= old.snapshot.overlay.estimatedBytes + 200
                     overlay.renameCount = renamedDirectories.count

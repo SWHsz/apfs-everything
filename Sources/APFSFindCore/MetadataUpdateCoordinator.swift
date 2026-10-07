@@ -52,6 +52,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     }
     public func enqueue(_ events:[FileSystemEvent]) {
         let schedule = inboxLock.withLock {
+            guard !scanCancellation.isCancelled else { return false }
             let room = max(0,policy.maxPendingEntries-inbox.count)
             inbox.append(contentsOf:events.prefix(room)); inboxOverflow = inboxOverflow || events.count > room
             if inboxScheduled { return false }; inboxScheduled = true; return true
@@ -68,10 +69,10 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         }
     }
     private func receive(_ events:[FileSystemEvent]) {
-        guard !stopped else { return }
+        guard !stopped, !scanCancellation.isCancelled else { return }
         if suspended {
             let room = max(0,policy.maxPendingEntries-buffered.count)
-            buffered.append(contentsOf:events.prefix(room)); bufferOverflow = bufferOverflow || events.count > room
+            buffered.append(contentsOf:events.prefix(room)); metrics.set("metadata_buffered_events",to:buffered.count); bufferOverflow = bufferOverflow || events.count > room
             return
         }
         let floor = index.replayFloor
@@ -128,7 +129,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 pending[parentKey,default:[]].insert(parent)
             }
             if collapsed.count >= 16_384 || discoveredSubtrees.count >= 16_384 {
-                pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); invalidated(); return
+                pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); metrics.set("pending_metadata_lookups",to:0); invalidated(); return
             }
             if pending.count >= policy.maxPendingEntries {
                 collapsed.formUnion(pending.values.flatMap { $0.map { PathCanonicalizer.parent(of:$0) } }); pending.removeAll()
@@ -136,7 +137,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             }
         }
         if pending.isEmpty && collapsed.isEmpty { index.advance(maximumID,historyDone:historyDone); changed(); return }
-        metrics.set("pending_metadata_lookups",to:pending.count); index.markPending(); changed()
+        metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count); index.markPending(); changed()
         schedule(after:policy.debounceSeconds)
     }
     private func schedule(after delay:Double) {
@@ -145,7 +146,11 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         work = item; queue.asyncAfter(deadline:.now()+delay,execute:item)
     }
     private func drain() {
-        guard !pending.isEmpty || !collapsed.isEmpty || !discoveredSubtrees.isEmpty else { index.advance(maximumID,historyDone:historyDone); return }
+        guard !scanCancellation.isCancelled else { return }
+        let resources = ProcessResourceSample.capture()
+        metrics.set("metadata_update_active",to:1)
+        defer { metrics.set("metadata_update_active",to:0); metrics.recordResources("metadata_event_updates",since:resources) }
+        guard !pending.isEmpty || !collapsed.isEmpty || !discoveredSubtrees.isEmpty else { metrics.set("pending_metadata_lookups",to:0); index.advance(maximumID,historyDone:historyDone); return }
         metrics.record("metadata_scheduler_wakeups")
         let now = ProcessInfo.processInfo.systemUptime
         if now-lookupWindow >= 1 { lookupWindow = now; lookupsInWindow = 0 }
@@ -156,6 +161,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             var reusedIdentities: [String:FileMetadataValue] = [:]
             var consumedOrigins = Set<String>()
             for path in paths {
+                guard !scanCancellation.isCancelled else { return }
                 if renameOnly.contains(path), let item = namespace.entry(at:path),let id = item.fileID,
                    let origin = renameOrigins["\(device):\(id)"] {
                     if item.kind == .directory {
@@ -191,6 +197,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             }
             let scanner = BulkScanner(root:root,workerCount:1,metrics:metrics)
             for parent in Set(groups.keys).union(collapsed) {
+                guard !scanCancellation.isCancelled else { return }
                 let requestedPaths = groups[parent] ?? []
                 let siblings = (namespace as? HybridIndex)?.childCount(of:parent) ?? requestedPaths.count
                 // Sparse changes in huge directories use bounded metadata microbatches;
@@ -199,6 +206,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                    requestedPaths.count * 8 < siblings {
                     let microLimit = min(64,max(1,policy.maxLookupsPerSecond))
                     for offset in stride(from:0,to:requestedPaths.count,by:microLimit) {
+                        guard !scanCancellation.isCancelled else { return }
                         let chunk = Array(requestedPaths[offset..<min(offset+microLimit,requestedPaths.count)])
                         let instant = ProcessInfo.processInfo.systemUptime
                         if instant-lookupWindow >= 1 { lookupWindow = instant; lookupsInWindow = 0 }
@@ -222,7 +230,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 }
                 metrics.record("metadata_parent_bulk_enumerations")
                 do {
-                    let entries = try scanner.readScannedDirectory(parent,rootDeviceID:device,maximumEntries:100_000,yieldToQueries:true)
+                    let entries = try scanner.readScannedDirectory(parent,rootDeviceID:device,cancellation:scanCancellation,maximumEntries:100_000,yieldToQueries:true)
                     let requested = Set(groups[parent] ?? [])
                     var found = Set<String>()
                     for entry in entries where collapsed.contains(parent) || requested.contains(entry.namespace.path) {
@@ -233,7 +241,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                         index.update(path:entry.namespace.path,value:entry.metadata); found.insert(entry.namespace.path)
                     }
                     for path in requested.subtracting(found) { index.update(path:path,value:nil) }
-                } catch { invalidated() }
+                } catch { if scanCancellation.isCancelled { return }; invalidated() }
             }
         }
         // A directory moved into the watched root can arrive as one event, although
@@ -254,6 +262,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     let entries = try scanner.readScannedDirectory(directory,rootDeviceID:device,cancellation:scanCancellation,maximumEntries:100_000,yieldToQueries:true)
                     metrics.record("metadata_subtree_bulk_enumerations")
                     for entry in entries {
+                        guard !scanCancellation.isCancelled else { return }
                         guard namespace.entry(at:entry.namespace.path) == entry.namespace else { continue }
                         index.update(path:entry.namespace.path,value:entry.metadata)
                         if BulkScanner.shouldTraverse(entry:entry.namespace,rootDeviceID:device) { directories.append(entry.namespace.path) }
@@ -271,6 +280,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 }
             }
         }
+        guard !scanCancellation.isCancelled else { return }
         discoveredSubtrees = remainingSubtrees
         if remainingSubtrees.count > 16_384 { discoveredSubtrees.removeAll(); invalidated(); return }
         if !remainingSubtrees.isEmpty {
@@ -282,22 +292,31 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         pending.removeAll(keepingCapacity:true); collapsed.removeAll(keepingCapacity:true)
         if !deferredPaths.isEmpty {
             for path in deferredPaths { pending[path] = [path] }
+            metrics.set("pending_metadata_lookups",to:pending.count+discoveredSubtrees.count)
             schedule(after:max(0.001,1-(ProcessInfo.processInfo.systemUptime-lookupWindow))); changed(); return
         }
         metrics.set("pending_metadata_lookups",to:0); index.advance(maximumID,historyDone:historyDone); changed()
     }
     public func resetReplay() { queue.sync { historyDone = false; maximumID = index.processedCursor; index.restartReplay() } }
-    public func suspend() { queue.sync { work?.cancel(); work = nil; epoch &+= 1; drain(); work?.cancel(); work = nil; epoch &+= 1; suspended = true } }
+    public func suspend() { queue.sync { guard !scanCancellation.isCancelled else { return }; work?.cancel(); work = nil; epoch &+= 1; drain(); work?.cancel(); work = nil; epoch &+= 1; suspended = true } }
     public func resume() { queue.sync {
-        suspended = false; let events = buffered; buffered = []; let overflow = bufferOverflow; bufferOverflow = false
+        guard !scanCancellation.isCancelled else { return }
+        suspended = false; let events = buffered; buffered = []; metrics.set("metadata_buffered_events",to:0); let overflow = bufferOverflow; bufferOverflow = false
         receive(events); if overflow { invalidated() }
     } }
     public func flush() { queue.sync { work?.cancel(); work = nil; epoch &+= 1; drain() } }
-    public func stop() { scanCancellation.cancel(); queue.sync {
+    /// Cancellation is lock-only and can interrupt a running bulk lookup before its queue barrier.
+    public func requestStop() { scanCancellation.cancel() }
+    public var pendingCount: Int {
+        inboxLock.withLock { inbox.count } + ["pending_metadata_lookups","metadata_update_active","metadata_buffered_events"].reduce(0) { $0+metrics.snapshot()[$1,default:0] }
+    }
+    public func stop() { requestStop(); queue.sync {
         work?.cancel(); work = nil; epoch &+= 1; stopped = true
         // Received callbacks have been classified before this barrier. Deferred
         // lookups keep the old processed fence; fast exit must not enumerate a
         // large pending tree. Restart replay recovers these unpersisted values.
         pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll()
+        buffered.removeAll(); renameOrigins.removeAll(); recent.removeAll()
+        inboxLock.withLock { inbox.removeAll() }; metrics.set("pending_metadata_lookups",to:0)
     } }
 }

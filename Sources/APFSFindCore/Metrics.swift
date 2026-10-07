@@ -56,6 +56,7 @@ public struct ProcessUsage: Sendable {
 public final class Metrics: @unchecked Sendable {
     private let lock = NSLock()
     private var counters: [String: Int] = [:]
+    private var resourceTotals: [String:[String:Double]] = [:]
     private var resourceStages: [String: [String: Any]] = [:]
     public init() {}
     public func record(_ name: String, by value: Int = 1) {
@@ -68,9 +69,18 @@ public final class Metrics: @unchecked Sendable {
     public func snapshot() -> [String: Int] { lock.withLock { counters } }
     public func recordResources(_ stage: String, since before: ProcessResourceSample) {
         let delta = ProcessResourceSample.capture().delta(since: before)
-        lock.withLock { resourceStages[stage] = delta }
+        lock.withLock {
+            resourceStages[stage] = delta
+            var totals=resourceTotals[stage,default:[:]]
+            totals["invocations",default:0] += 1
+            for key in ["wall_ms","user_cpu_seconds","system_cpu_seconds","disk_bytes_read","disk_bytes_written","logical_bytes_written"] {
+                if let value=delta[key] as? NSNumber {totals[key,default:0] += value.doubleValue}
+            }
+            resourceTotals[stage]=totals
+        }
     }
     public func recordResourceGauge(_ stage: String, sample: ProcessResourceSample = .capture()) { lock.withLock { resourceStages[stage] = sample.dictionary } }
+    public func cumulativeResourceSnapshot() -> [String:[String:Double]] {lock.withLock {resourceTotals}}
     public func resourceSnapshot() -> [String: [String: Any]] { lock.withLock { resourceStages } }
     public static func processUsage() -> ProcessUsage {
         var usage = rusage()

@@ -52,6 +52,8 @@ public actor MultiVolumeCoordinator {
   private var globalPauseReasons: Set<IndexPauseReason> = []
   private var individuallyPaused: Set<UUID> = []
   private var stopping = false
+  private var activeQueries:[UUID:SearchCancellationToken]=[:]
+  public private(set) var shutdownReport:[String:[String:Double]]=[:]
   private var revision: UInt64 = 0
   private let observations = SnapshotObservation<[VolumeSessionSnapshot]>()
   public init(provider: any MountedVolumeProvider = LocalMountedVolumeProvider(),
@@ -68,14 +70,20 @@ public actor MultiVolumeCoordinator {
     sessions.values.map { $0.snapshot() }.sorted { $0.volume.displayName < $1.volume.displayName }
   }
   /// Aggregate diagnostics serialized on the owning actor, with no user filenames.
-  public func resourceDiagnosticsJSON() throws -> Data {
+  public func quietVolumeStates() -> [QuietVolumeState] {
+    sessions.values.compactMap { ($0 as? VolumeIndexSession)?.coordinator.quietState(session:$0.snapshot().state) }
+  }
+  public func resourceDiagnosticsJSON() async throws -> Data {
     let values = sessions.values.compactMap { session -> [String:Any]? in
       guard let session = session as? VolumeIndexSession else { return nil }
       let ns = (session.coordinator.index as? HybridIndex)?.hybridStats() ?? [:]
       let startup = session.coordinator.core.startupStatus()
-      return ["entries":session.snapshot().indexedEntries,"state":session.snapshot().state.description,"namespace":ns,"metadata":session.coordinator.metadata.residencyStatistics(),"maintenance":session.snapshot().maintenanceStatus as Any? ?? NSNull(),"metadata_available":session.coordinator.metadataAvailable,"core_metrics":session.coordinator.metrics.snapshot(),"buffers":session.coordinator.core.eventBufferEstimates(),"recovery_reason":startup.recoveryReason as Any? ?? NSNull()]
+      return ["volume":session.volume.volumeUUID.uuidString,"source_volume":session.coordinator.quietState(session:session.snapshot().state).volumeID.uuidString,"metadata_freshness":session.snapshot().metadataFreshness.rawValue,"shutdown":session.coordinator.shutdownMetrics.snapshot,"resource_intervals":session.coordinator.metrics.cumulativeResourceSnapshot(),"cursor":session.coordinator.cursorDiagnostics,"entries":session.snapshot().indexedEntries,"state":session.snapshot().state.description,"namespace":ns,"metadata":session.coordinator.metadata.residencyStatistics(),"maintenance":session.snapshot().maintenanceStatus as Any? ?? NSNull(),"metadata_available":session.coordinator.metadataAvailable,"core_metrics":session.coordinator.metrics.snapshot(),"buffers":session.coordinator.core.eventBufferEstimates(),"recovery_reason":startup.recoveryReason as Any? ?? NSNull()]
     }
-    return try JSONSerialization.data(withJSONObject:["volumes":values,"process":ProcessResourceSample.capture().dictionary,"cpu_sampler_active":SystemResourceSignals.shared.isSampling,"cpu_sampler":SystemResourceSignals.shared.metrics.snapshot()],options:[.sortedKeys])
+    let tasks=await maintenance.snapshot()
+    let now=ProcessInfo.processInfo.systemUptime
+    let taskData=tasks.map { ["kind":$0.kind.rawValue,"volume":$0.volumeID.uuidString,"urgency":String(describing:$0.urgency),"queued_ms":(($0.startedAt ?? now)-$0.queuedAt)*1000,"running_ms":$0.startedAt.map{(now-$0)*1000} as Any? ?? NSNull()] as [String:Any] }
+    return try JSONSerialization.data(withJSONObject:["tasks":taskData,"maintenance_history":maintenance.telemetry.snapshot,"maintenance_metrics":maintenance.metrics.snapshot(),"volumes":values,"process":ProcessResourceSample.capture().dictionary,"cpu_sampler_active":SystemResourceSignals.shared.isSampling,"cpu_sampler":SystemResourceSignals.shared.metrics.snapshot()],options:[.sortedKeys])
   }
   public func sessionsStream() -> AsyncStream<[VolumeSessionSnapshot]> { observations.stream(initial: sessionsSnapshot()) }
   private func publish() { observations.send(sessionsSnapshot()) }
@@ -123,6 +131,9 @@ public actor MultiVolumeCoordinator {
     await refreshMountedVolumes()
   }
   public func search(_ request: MultiVolumeSearchRequest) async -> MultiVolumeSearchResult {
+    let queryID=UUID();activeQueries[queryID]=request.cancellation
+    defer {activeQueries.removeValue(forKey:queryID)}
+    if stopping {request.cancellation.cancel()}
     let started = ProcessInfo.processInfo.systemUptime
     let snapshots = sessionsSnapshot()
     let available = sessions.values.filter { $0.snapshot().searchAvailable }
@@ -172,12 +183,16 @@ public actor MultiVolumeCoordinator {
     await sessions[id]?.setPauseReason(.userVolume, enabled: enabled); publish()
   }
   public func stop(policy: ShutdownPolicy = .fast) async {
+    let started=ProcessInfo.processInfo.systemUptime
     stopping = true
+    activeQueries.values.forEach{$0.cancel()}
     for task in observers.values { task.cancel() }; observers = [:]
     let current = Array(sessions.values)
     await withTaskGroup(of: Void.self) { group in
       for session in current { group.addTask { await self.maintenance.cancelQueued(volumeID: session.volume.volumeUUID); await session.stop(policy: policy) } }
     }
+    for session in current {if let real=session as? VolumeIndexSession {shutdownReport[session.volume.volumeUUID.uuidString]=real.coordinator.shutdownMetrics.snapshot}}
+    shutdownReport["multi_volume"]=["shutdown_total_ms":(ProcessInfo.processInfo.systemUptime-started)*1000]
     publish()
   }
 }

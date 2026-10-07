@@ -81,15 +81,18 @@ public final class MaintenanceLease: @unchecked Sendable {
   /// Called between bounded chunks on utility queues. A yielded job restarts
   /// from its last immutable base; its staging file never becomes visible.
   public func validateIdentity(_ check: @escaping @Sendable () throws -> Void) { lock.withLock { identityCheck = check } }
+  public func recordCompletion() { scheduler.telemetry.reason(id,"completed") }
   public func checkpoint() throws {
+    scheduler.telemetry.checkpoint(id)
     let check = lock.withLock { () -> (@Sendable () throws -> Void)? in
       let now = ProcessInfo.processInfo.systemUptime
       guard now-lastIdentityCheck >= 0.1 else { return nil }; lastIdentityCheck = now; return identityCheck
     }
-    try check?()
-    if token.isCancelled { throw SnapshotError.cancelled }
+    do { try check?() } catch { scheduler.telemetry.reason(id,"identity_validation_failed"); throw error }
+    if token.isCancelled { scheduler.telemetry.reason(id,"cancelled"); throw SnapshotError.cancelled }
     let state = gate.state(urgency: urgency, volume: volumeID, starting: false)
     if state == .suspended || state == .interactive || (urgency == .opportunistic && state == .busy) {
+      scheduler.telemetry.reason(id,"yield:"+state.rawValue)
       throw MaintenanceYield(reason: state.rawValue)
     }
     if state == .emergency { Thread.sleep(forTimeInterval: 0.001) }
@@ -126,6 +129,10 @@ public actor MaintenanceScheduler {
   private var pending: [Pending] = []
   private var running: MaintenanceTaskSnapshot?
   public let metrics = Metrics()
+  nonisolated public let telemetry = MaintenanceTelemetry()
+  private var retryAfter:[String:Double]=[:]
+  private var retryWake:Task<Void,Never>?
+  private var retryWakeDeadline:Double?
   /// Explicit jobs/tests can opt out of resource gating; production uses shared.
   public init(signals: (any ResourceSignalProviding)? = nil, policy: MaintenancePolicy = .init()) { self.signals = signals; gate = ResourceGate(signals, policy) }
   deinit { if let signalObserver { signals?.removeObserver(signalObserver) } }
@@ -150,29 +157,50 @@ public actor MaintenanceScheduler {
   public func cancelQueued(volumeID: UUID) { for id in pending.filter({ $0.info.volumeID == volumeID }).map(\.info.id) { cancel(id) } }
   private func cancel(_ id: UUID) {
     if let i = pending.firstIndex(where: { $0.info.id == id }) {
-      let item = pending.remove(at: i); item.token.removeCancellationHandler(item.observer); item.continuation.resume(throwing: CocoaError(.userCancelled))
+      let item = pending.remove(at: i); telemetry.cancelledWhileQueued(item.info); item.token.removeCancellationHandler(item.observer); item.continuation.resume(throwing: CocoaError(.userCancelled))
     }
     pump()
   }
-  fileprivate func release(_ id: UUID) { guard running?.id == id else { return }; running = nil; pump() }
+  fileprivate func release(_ id: UUID) {
+    guard running?.id == id else { return }
+    if let retry=telemetry.finish(id) {
+      if retry.delay>0 {retryAfter[retry.key]=ProcessInfo.processInfo.systemUptime+retry.delay;metrics.record("maintenance_retry_backoffs")}
+      else {retryAfter.removeValue(forKey:retry.key)}
+    }
+    running = nil; pump()
+  }
   private func pump() {
-    if pending.isEmpty && running == nil { gate.provider?.setSamplingEnabled(false); gate.clear(); metrics.set("maintenance_pending",to:0); metrics.set("maintenance_running",to:0); return }
+    if pending.isEmpty && running == nil { retryWake?.cancel(); retryWake=nil; retryWakeDeadline=nil; metrics.set("maintenance_retry_timer",to:0); gate.provider?.setSamplingEnabled(false); gate.clear(); metrics.set("maintenance_pending",to:0); metrics.set("maintenance_running",to:0); return }
     metrics.set("maintenance_pending",to:pending.count); metrics.set("maintenance_running",to:running == nil ? 0 : 1)
     guard running == nil else { return }
     pending.sort { $0.info.urgency == $1.info.urgency ? ($0.priority == $1.priority ? $0.info.queuedAt < $1.info.queuedAt : $0.priority > $1.priority) : $0.info.urgency.rawValue > $1.info.urgency.rawValue }
     var i = 0
     while i < pending.count {
       let next = pending[i]
-      if next.token.isCancelled { pending.remove(at:i); next.token.removeCancellationHandler(next.observer); next.continuation.resume(throwing:CocoaError(.userCancelled)); continue }
+      if next.token.isCancelled { pending.remove(at:i); telemetry.cancelledWhileQueued(next.info); next.token.removeCancellationHandler(next.observer); next.continuation.resume(throwing:CocoaError(.userCancelled)); continue }
+      let taskKey=next.info.volumeID.uuidString+":"+next.info.kind.rawValue
+      if next.info.urgency != .emergency, let deadline=retryAfter[taskKey],deadline>ProcessInfo.processInfo.systemUptime {
+        armRetry(deadline); i += 1; continue
+      }
       let state = gate.state(urgency:next.info.urgency,volume:next.info.volumeID,starting:true)
       if state == .busy || state == .interactive || state == .suspended { metrics.record("maintenance_deferred"); i += 1; continue }
       pending.remove(at:i)
       running = .init(id:next.info.id,volumeID:next.info.volumeID,kind:next.info.kind,queuedAt:next.info.queuedAt,startedAt:ProcessInfo.processInfo.systemUptime,urgency:next.info.urgency)
+      telemetry.start(running!)
       metrics.record(state == .emergency ? "maintenance_emergency_starts" : "maintenance_starts")
       next.continuation.resume(returning: MaintenanceLease(id:next.info.id,volume:next.info.volumeID,urgency:next.info.urgency,scheduler:self,token:next.token,observer:next.observer,gate:gate)); break
     }
     if pending.isEmpty && running == nil { gate.provider?.setSamplingEnabled(false); gate.clear() }
   }
+  private func armRetry(_ deadline:Double) {
+    if let existing=retryWakeDeadline,existing<=deadline {return}
+    retryWake?.cancel();retryWakeDeadline=deadline;metrics.set("maintenance_retry_timer",to:1)
+    retryWake=Task { [weak self] in
+      do {try await Task.sleep(for:.seconds(max(0,deadline-ProcessInfo.processInfo.systemUptime)))} catch {return}
+      await self?.retryReady()
+    }
+  }
+  private func retryReady() {retryWake=nil;retryWakeDeadline=nil;metrics.set("maintenance_retry_timer",to:0);pump()}
   public func operatingState(volumeID: UUID) -> MaintenanceOperatingState {
     let urgency = running?.urgency ?? pending.first?.info.urgency ?? .opportunistic
     let value = gate.state(urgency:urgency,volume:volumeID,starting:running == nil)

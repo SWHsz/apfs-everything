@@ -80,7 +80,7 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.6.0 — macOS filename search with snapshot recovery
+    apfsfind v0.6.1 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
@@ -212,6 +212,7 @@ enum CLI {
         if arguments.first == "_real-disk-worker" {
             return try RealDiskBenchmarkRunner.worker(Array(arguments.dropFirst()))
         }
+        if arguments == ["_cache-pressure-worker"] {return try standaloneCachePressureWorker()}
         if arguments.first == "_metadata-bootstrap-worker", arguments.count == 3 { return try metadataBootstrapWorker(root:arguments[1],cache:arguments[2]) }
         if arguments.first == "_prepare-resource-smoke", arguments.count == 2 { return try prepareResourceSmokeCache(arguments[1]) }
         let options = try parse(arguments)
@@ -282,7 +283,11 @@ enum CLI {
             let query = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if query.isEmpty { continue }
             switch query {
-            case ":quit": return 0
+            case ":quit":
+                if ProcessInfo.processInfo.environment["APFSFIND_SHUTDOWN_METRICS"] == "1" {
+                    FileHandle.standardError.write(Data("[shutdown-request] \(Date().timeIntervalSince1970)\n".utf8))
+                }
+                return 0
             case ":stats": print(coordinator.stats().description)
             case ":compact":
                 print(coordinator.compact() ? "Compaction requested." : "Compaction already running, disabled or stopping.")

@@ -46,6 +46,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private let group = DispatchGroup()
   private let lock = NSLock()
   private let checkpointCancellation = CancellationToken()
+  private let shutdownGroup = DispatchGroup()
   private var store: SnapshotStore?
   private var identity: VolumeIdentity?
   private var mode: StartupMode = .coldScan
@@ -118,6 +119,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     core.setLifecycleHandlers(
       live: { [weak self] in self?.becameLive() },
       recovery: { [weak self] reason in self?.beganRecovery(reason) })
+    maintenanceScheduler.telemetry.register(volume:initialIdentity.volumeUUID,metrics:metrics)
     maintenanceScheduler.registerPressure(volumeID:initialIdentity.volumeUUID) { [weak self] in
       guard let self else { return .init() }
       var result = (self.index as? HybridIndex)?.resourcePressure() ?? .init()
@@ -459,6 +461,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       } else {
         throw SnapshotError.invalid("persistent runtime is not hybrid")
       }
+      lease.recordCompletion()
       recordSnapshot(result, cache: cache, identity: capture.identity)
       if !metadata.capture().available { scheduleMetadataBootstrap() }
       // Buffered content events can safely advance the new base fence. Any
@@ -534,7 +537,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
     if count > 1 || currentState != .live {
       checkpointCancellation.cancel()
-      core.stop()
+      metadataCancellation.cancel();metadataUpdater?.requestStop();core.cancelStartup()
     }
   }
   // Legacy explicit persistence callers retain their full checkpoint behavior.
@@ -544,12 +547,16 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     let first = lock.withLock {
       if shuttingDown { return false }
       shuttingDown = true
+      shutdownGroup.enter()
       return true
     }
-    guard first else { return }
+    guard first else { shutdownGroup.wait(); return }
+    defer { shutdownGroup.leave() }
     let shutdownStarted = ProcessInfo.processInfo.systemUptime
     defer { shutdownMetrics.record("shutdown_total_ms",milliseconds:(ProcessInfo.processInfo.systemUptime-shutdownStarted)*1000) }
+    shutdownMetrics.measure("shutdown_cancel_queries_ms") { core.cancelQueries() }
     shutdownMetrics.measure("shutdown_cancel_maintenance_ms") {
+    if policy == .fast { core.requestFastExit(); metadataUpdater?.requestStop() }
     if let identity = lock.withLock({identity}) { maintenanceScheduler.unregisterPressure(volumeID:identity.volumeUUID) }
     if let pressureObserver { maintenanceScheduler.signals?.removeObserver(pressureObserver); self.pressureObserver = nil }
     compactionScheduler.stop()
@@ -581,12 +588,13 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     } else {
       checkpointCancellation.cancel()
     }
+    shutdownMetrics.measure("shutdown_metadata_updater_ms") { metadataUpdater?.stop() }
     shutdownMetrics.measure("shutdown_session_teardown_ms") { core.stop() }
     lock.withLock { metadataSeeds = nil }
-    shutdownMetrics.measure("shutdown_metadata_updater_ms") { metadataUpdater?.stop() }
     shutdownMetrics.measure("shutdown_wait_metadata_group_ms") { metadataGroup.wait() }
     shutdownMetrics.measure("shutdown_state_write_ms") { saveMetadataStateIfClean() }
     shutdownMetrics.measure("shutdown_wait_checkpoint_group_ms") { group.wait() }
+    if let identity=lock.withLock({identity}) {maintenanceScheduler.telemetry.unregister(volume:identity.volumeUUID)}
   }
 
   private func installStagedMetadata(_ staged:StagedMetadataFile?,cache:SnapshotStore,header:SnapshotHeader,cursor:UInt64) {
@@ -633,6 +641,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         guard self.currentState != .paused else { return }
         guard (self.index as? HybridIndex)?.mappedBase?.header.snapshotUUID == base.header.snapshotUUID else { throw SnapshotError.generationChanged }
         let resources = ProcessResourceSample.capture()
+        defer {self.metrics.recordResources("metadata_bootstrap",since:resources)}
         self.metadataUpdater?.suspend()
         let fence = identity.currentEventID()
         if self.metadata.capture().namespace?.header.snapshotUUID != base.header.snapshotUUID { self.metadata.bind(namespace:base) }
@@ -667,8 +676,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         },fault:self.metadataFault,cancellation:self.metadataCancellation,checkpoint:{ try lease.checkpoint() })
         try self.metadata.install(cache.metadataReader(base:base.header))
         self.metadataUpdater?.flush()
+        lease.recordCompletion()
         self.metrics.record("metadata_bootstraps")
-        self.metrics.recordResources("metadata_bootstrap",since:resources)
         self.lock.withLock { self.metadataError = nil; self.lastMetadataCheckpoint = ProcessInfo.processInfo.systemUptime }
         self.core.notifyMetadataChanged()
       } catch is MaintenanceYield {
@@ -735,6 +744,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         }
         let cache = try SnapshotStore(directory:self.cacheDirectory,identity:identity)
         let resources = ProcessResourceSample.capture()
+        defer {self.metrics.recordResources("metadata_checkpoint",since:resources)}
         _ = try MetadataWriter.write(store:cache,base:base.header,cursor:cursor,value:{captured.value(at:$0)},beforePublish:{
           guard !self.metadataCancellation.isCancelled else { throw SnapshotError.cancelled }
           guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("root changed during metadata maintenance") }
@@ -743,7 +753,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         try self.metadata.install(cache.metadataReader(base:base.header),expectedGeneration:captured.overlay.generation)
         // Delta entries have no ordinal until namespace compaction. They remain dirty and keep a conservative fence.
         self.lock.withLock { self.lastMetadataCheckpoint = ProcessInfo.processInfo.systemUptime }
-        self.metrics.record("metadata_checkpoints"); self.metrics.recordResources("metadata_checkpoint",since:resources)
+        lease.recordCompletion()
+        self.metrics.record("metadata_checkpoints")
       } catch is MaintenanceYield { yielded = true; self.metrics.record("maintenance_yields") }
       catch { self.metrics.record("metadata_checkpoint_failures"); self.lock.withLock { self.metadataError = String(describing:error) } }
     }
@@ -755,6 +766,21 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     catch { metrics.record("metadata_state_failures") }
   }
 
+  public var cursorDiagnostics:[String:UInt64] {
+    lock.withLock {["namespace_durable":durableCursor,"namespace_base":snapshotHeader?.lastProcessedEventID ?? 0,"metadata_processed":metadata.processedCursor,"metadata_base":metadata.capture().base?.header.cursor ?? 0]}
+  }
+  public func quietState(session:VolumeSessionState) -> QuietVolumeState {
+    let meta=metadata.capture(),counts=metrics.snapshot()
+    var result=QuietVolumeState(volumeID:lock.withLock {identity?.volumeUUID} ?? UUID(),state:session,
+      metadataFreshness:meta.freshness,metadataAvailable:meta.available,
+      namespaceGeneration:index.stats().generation,metadataGeneration:meta.overlay.generation)
+    result.namespaceEvents=core.queuedEventCount+counts["active_batch_size",default:0]
+    result.metadataPending=metadataUpdater?.pendingCount ?? 0
+    result.dirtyDirectories=counts["active_dirty_directories",default:0]
+    result.compactionScheduled = ![.idle,.stopped].contains(compactionScheduler.currentState) || lock.withLock {active || compacting}
+    result.metadataMaintenanceScheduled = ![.idle,.stopped].contains(metadataScheduler.currentState) || lock.withLock {metadataBootstrapActive || metadataCheckpointActive}
+    return result
+  }
   public func stats() -> CoordinatorStats {
     var values = core.stats().dictionary
     let snapshot = lock.withLock {

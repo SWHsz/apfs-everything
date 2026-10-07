@@ -12,6 +12,7 @@ public struct ReconciliationFailure: Sendable, Equatable {
 
 public struct ReconciliationPlan: Sendable {
     public var mutations: [IndexMutation] = []
+    public var cancelled = false
     public var gateSkipped = false
     public var failed = false
     public var requiresRebuild = false
@@ -61,6 +62,8 @@ public final class DirectoryReconciler {
     public func prepare(_ path: String, subtree: Bool = false, force: Bool = false,
                         cancellation: CancellationToken = CancellationToken()) -> ReconciliationPlan {
         var plan = ReconciliationPlan()
+        defer { if cancellation.isCancelled { metrics.record("reconcile_cancellations") } }
+        if cancellation.isCancelled { plan.cancelled = true; return plan }
         guard PathCanonicalizer.isWithin(path, root: index.root), !cancellation.isCancelled else { return plan }
         let before = BulkScanner.directoryStamp(path)
         if !force && !subtree, let before, stamps[path] == before {
@@ -127,7 +130,7 @@ public final class DirectoryReconciler {
                 if cancellation.isCancelled { break }
                 let code = (error as? ScannerError)?.code ?? EIO
                 let recovery = Self.recovery(for: code, isRoot: directory == index.root)
-                if recovery == .cancelled { break }
+                if recovery == .cancelled { plan.cancelled=true;plan.mutations.removeAll();break }
                 plan.failed = true
                 plan.failures.append(ReconciliationFailure(path: directory, code: code))
                 metrics.record("reconcile_errors")
@@ -153,6 +156,7 @@ public final class DirectoryReconciler {
                 }
             }
         }
+        if cancellation.isCancelled { plan.mutations.removeAll(); plan.cancelled = true }
         plan.retryParents = PathCanonicalizer.minimalRoots(Array(retryParents))
         if subtree { metrics.record("subtree_reconciles") }
         return plan
