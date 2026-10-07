@@ -9,13 +9,20 @@ public struct VolumeSearchHit: Sendable, Identifiable {
   public let volumeName: String
   public let volumeMountPath: String
   public let freshness: SearchFreshness
+  public let logicalSize: UInt64?
+  public let modificationTimeNanoseconds: Int64?
+  public let metadataFreshness: MetadataFreshness
+  public var searchHit: SearchHit { .init(path:path,kind:kind,matchRank:matchRank,logicalSize:logicalSize,modificationTimeNanoseconds:modificationTimeNanoseconds,metadataFreshness:metadataFreshness) }
   public init(hit: SearchHit, volume: VolumeDescriptor, freshness: SearchFreshness) {
     path = hit.path; kind = hit.kind; matchRank = hit.matchRank; volumeUUID = volume.volumeUUID
+    logicalSize = hit.logicalSize; modificationTimeNanoseconds = hit.modificationTimeNanoseconds; metadataFreshness = hit.metadataFreshness
     volumeName = volume.displayName; volumeMountPath = volume.mountPath; self.freshness = freshness
   }
 }
 public typealias MultiVolumeSearchRequest = SearchRequest
 public struct MultiVolumeSearchResult: Sendable {
+  public let hasMore: Bool
+  public let metadataComplete: Bool
   public let requestID: UInt64
   public let hits: [VolumeSearchHit]
   public let searchedVolumes: Int
@@ -25,7 +32,8 @@ public struct MultiVolumeSearchResult: Sendable {
   public let latencyMilliseconds: Double
   public let cancelled: Bool
   public init(requestID: UInt64, hits: [VolumeSearchHit], searchedVolumes: Int, catchingUpVolumes: Int,
-              offlineVolumes: Int, failedVolumes: [UUID], latencyMilliseconds: Double, cancelled: Bool) {
+              offlineVolumes: Int, failedVolumes: [UUID], latencyMilliseconds: Double, cancelled: Bool, hasMore: Bool = false, metadataComplete: Bool = true) {
+    self.hasMore = hasMore; self.metadataComplete = metadataComplete
     self.requestID = requestID; self.hits = hits; self.searchedVolumes = searchedVolumes
     self.catchingUpVolumes = catchingUpVolumes; self.offlineVolumes = offlineVolumes
     self.failedVolumes = failedVolumes; self.latencyMilliseconds = latencyMilliseconds; self.cancelled = cancelled
@@ -112,7 +120,7 @@ public actor MultiVolumeCoordinator {
       if !request.query.isEmpty, request.limit > 0, !request.cancellation.isCancelled {
         for session in available {
           tasks.addTask {
-            let result = await Task.detached(priority: .userInitiated) { session.search(request) }.value
+            let result = await Task.detached(priority: .userInitiated) { session.search(.init(id:request.id,query:request.query,limit:request.limit < Int.max ? request.limit+1 : request.limit,cancellation:request.cancellation,sort:request.sort)) }.value
             guard !result.cancelled, session.snapshot().searchAvailable else { return [] }
             return result.hits.map { VolumeSearchHit(hit: $0, volume: session.volume, freshness: result.freshness) }
           }
@@ -121,21 +129,22 @@ public actor MultiVolumeCoordinator {
       var values: [[VolumeSearchHit]] = []; for await value in tasks { values.append(value) }; return values
     }
     let all = groups.flatMap { $0 }.sorted { a, b in
-      if a.matchRank != b.matchRank { return a.matchRank.rawValue < b.matchRank.rawValue }
-      let x = SearchOrdering.foldedBasename(a.path), y = SearchOrdering.foldedBasename(b.path)
-      if x != y { return x < y }; if a.path != b.path { return a.path < b.path }
+      if SearchOrdering.less(a.searchHit,b.searchHit,sort:request.sort) { return true }
+      if SearchOrdering.less(b.searchHit,a.searchHit,sort:request.sort) { return false }
       if a.volumeName != b.volumeName { return a.volumeName < b.volumeName }
       return a.volumeUUID.uuidString < b.volumeUUID.uuidString
     }
     var seen = Set<String>()
-    let hits = Array(all.filter { seen.insert($0.id).inserted }.prefix(max(0, request.limit)))
+    let unique = all.filter { seen.insert($0.id).inserted }
+    let hits = Array(unique.prefix(max(0, request.limit)))
     return .init(requestID: request.id, hits: request.cancellation.isCancelled ? [] : hits,
                  searchedVolumes: request.query.isEmpty ? 0 : available.count,
                  catchingUpVolumes: snapshots.filter { $0.searchAvailable && $0.freshness != .live }.count,
                  offlineVolumes: snapshots.filter { $0.state == .offline }.count,
                  failedVolumes: snapshots.compactMap { if case .failed = $0.state { return $0.id }; return nil },
                  latencyMilliseconds: (ProcessInfo.processInfo.systemUptime - started) * 1000,
-                 cancelled: request.cancellation.isCancelled)
+                 cancelled: request.cancellation.isCancelled, hasMore:unique.count > request.limit,
+                 metadataComplete:snapshots.filter { $0.searchAvailable && $0.state != .offline }.allSatisfy(\.metadataAvailable))
   }
   public func reconcile(_ hit: VolumeSearchHit) { sessions[hit.volumeUUID]?.reconcileParent(of: hit.path) }
   public var isGloballyPausedByUser: Bool { globalPauseReasons.contains(.userGlobal) }

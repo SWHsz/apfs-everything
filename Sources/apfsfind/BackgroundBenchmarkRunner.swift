@@ -23,7 +23,7 @@ struct BackgroundBenchmarkRunner {
     let p = try PersistentIndexCoordinator(root: root, cacheDirectory: cache.url.path, compactionPolicy: policy)
     defer { p.stop(policy: .fast) }
     try p.start(); guard p.waitUntilLive(timeout: 20), p.waitForCheckpoint() else { throw CLIError.startupFailed("background startup") }
-    _ = p.core.flushEvents()
+    _ = p.core.flushEvents(); p.flushMetadata()
     let idleStart = ProcessResourceSample.capture(), idleCounts = p.metrics.snapshot()
     let idleWall = ProcessInfo.processInfo.systemUptime
     Thread.sleep(forTimeInterval: idleSeconds)
@@ -31,7 +31,7 @@ struct BackgroundBenchmarkRunner {
     let idleDuration = ProcessInfo.processInfo.systemUptime - idleWall
     let idleEndCounts = p.metrics.snapshot()
     var timings: [String: [Double]] = ["create": [], "rename": [], "delete": []]
-    for i in 0..<30 {
+    for i in 0..<100 {
       var start = ProcessInfo.processInfo.systemUptime
       try touch("created-\(i)")
       try wait { p.index.entry(at: path("created-\(i)")) != nil }
@@ -57,9 +57,10 @@ struct BackgroundBenchmarkRunner {
       "benchmark": "background", "scope": "window-independent engine; native window lifecycle is validated separately",
       "idle_seconds": idleDuration, "idle_resources": idle,
       "idle_compaction_scheduler_wakeups": idleEndCounts["compaction_scheduler_wakeups", default: 0] - idleCounts["compaction_scheduler_wakeups", default: 0],
+      "idle_metadata_scheduler_wakeups":idleEndCounts["metadata_scheduler_wakeups",default:0]-idleCounts["metadata_scheduler_wakeups",default:0],
       "periodic_polling": 0, "pause_mutations": 1000, "paused_retained_stale": retained,
       "resume_converge_ms": convergeMS, "verify_consistent": verified,
-      "visibility_ms": timings.mapValues(benchmarkPercentiles),
+      "visibility_samples_per_operation":100, "visibility_ms": timings.mapValues(benchmarkPercentiles),
       "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction"
     ]
     print(String(decoding: try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))

@@ -31,6 +31,9 @@ jobs:
       - run: swift test --filter SnapshotAtomicityTests
       - run: swift test --skip-build --filter LiveUpdateIntegrationTests
       - run: swift test --skip-build --filter HybridRecoveryTests
+      - run: swift test --skip-build --filter MetadataIntegrationTests
+      - run: swift test --skip-build --filter MetadataCursorTests
+      - run: swift test --skip-build --filter BackgroundLifecycleTests
       - run: swift test --skip-build --filter PersistentRecoveryTests
       - run: swift test --skip-build --filter HybridIndexTests
       - run: swift test --skip-build

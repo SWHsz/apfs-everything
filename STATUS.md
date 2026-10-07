@@ -1,6 +1,81 @@
+# v0.5.0 — Metadata Index and Sorting
+
+本轮开始 HEAD：`712ede5814cae259cd24029dc92551144e8ac766`，main、起始工作区干净。Milestone A 独立提交 `1d6e9cd`（`feat: add background lifecycle controls`）；Milestone B 使用 `feat: add metadata indexing and result sorting` 独立提交。用户随后明确授权完成后 push；本机最终验收通过，用户授权推送 main；提交对应四个 required jobs 的结果以 GitHub Actions 为准。版本 0.5.0 / bundle build 500。
+
+## 实现
+
+- 菜单栏按 observation 更新，提供搜索、状态、全局/单卷暂停、登录项、设置及退出；无周期轮询。关闭窗口仍运行，隐藏时取消 UI 查询，重显刷新同一词。
+- SMAppService.mainApp 包装真实登录项状态/错误；CI 用 fake。明确冷启动隐藏策略，Dock/Finder reopen 与 Option+Space 显示窗口。
+- userGlobal/userVolume/systemSleep pause reason set；flush/drain 后停止 watcher，保留可搜索旧结果与 pausedStale。恢复验证卷身份、从安全 cursor replay；wake 先重新发现挂载，不解除用户暂停。
+- Namespace snapshot v2 未改布局。独立 metadata v1：256-byte header、size/mtime 两列、两位 validity/entry、16-byte footer；160-byte state。Warm 使用 read-only mmap，不为每文件创建 metadata object。详见 [metadata-index](docs/metadata-index.md)。
+- Cold getattrlistbulk 同时获取 size/mtime；旧 cache metadata 缺失或损坏时 namespace 立即可搜索，后台 bootstrap，不重写 namespace。Independent cursor 取 min 启动、不同 overlap floors；dirty overlay 不推进 durable cursor。
+- Content/inode 事件 utility queue、200 ms debounce、device/fileID 去重；typed xattr/owner/Finder-only skip。大批次父目录 bulk，稀疏目录使用有界 64-name C microbatch。20k/s lookup 限速、overflow recovery；rename 复用并支持目录后代映射。
+- Metadata-only checkpoint 不改写 namespace；namespace compaction 在发布前构建/验证 ordinal 匹配的 metadata tmp。两文件发布失败时新 namespace 保持可用，metadata 单独重建。
+- Relevance、name、mtime、size 的全局 bounded top-K，多卷并行合并、unknown last、K+1 hasMore、分页与 cancellation 保留。桌面列头切换/箭头、排序偏好、元数据未就绪禁用、catch-up 提示、共享 formatter、目录大小“—”。
+
+## 本机代码验收（2026-10-07）
+
+原基线157项全部保留。最终普通测试 Core 176 + Desktop 20 = **196项**，0 failures，1项可选真实挂载测试 skip；完整 ASan、TSan 同196项全部通过，无 sanitizer 诊断。普通 Core/desktop 约60.0/0.9s，ASan约156.4/1.0s，TSan约207.4/1.1s。
+新增检查覆盖歧义 old-ID、范围外目录移入、debounce 未完成即退出/重启及卷身份改变。歧义 old-ID 回归曾失败（3个断言），揭示 metadata overlap 过滤过宽；现已与 namespace 的可靠普通事件规则对齐。范围外目录后代 metadata、限速 pending 暂停 barrier、fast exit 保守 fence 和当前 namespace 身份校验均已补齐；目录大小在 top-K 候选阶段按 unknown 处理，避免与 namespace 类型不同步的 metadata 影响剪枝。
+Release CLI/desktop 与 app 构建通过，Info.plist 0.5.0/500，本地 ad-hoc 签名验证通过；产物 `dist/APFSFind.app`。
+
+## 真实两卷只读 metadata 测量
+
+日用 namespace cache 全程只读，不 replay、不创建 publisher lock、不清理其 tmp；metadata 写在 owned scratch。已有 namespace 可能有 stale paths，匹配失败列为 unknown；此次不是新全盘 namespace freshness 验收。测量没有把真实文件名、查询词或单文件 metadata 写进报告。
+
+| 根目录 | Cached entries | metadata bytes | bytes/entry | build s | CPU s | disk writes bytes | peak RSS MiB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| / | 3,308,277 | 53,759,774 | 16.25008 | 65.10 | 165.28 | 53,760,000 | 1060.5 |
+| /Volumes/Data 1 | 1,615,001 | 26,244,039 | 16.25017 | 27.36 | 69.14 | 26,247,168 | 1295.3 |
+
+两卷合计 **4,923,278 entries，80,003,813 bytes（80.004 MB / 76.298 MiB）**，小于20 bytes/entry目标。临时构建数组仅用于 bootstrap，不是 warm 查询常驻对象。第二卷 peak RSS 是同一进程累计高水位，不能相加。
+
+每种 sort × exact/substring/one-character/no-result 各20次，limit=51。以下列出各 sort **p95 最慢分类**的分位数（ms）；全部分类原始聚合结果在 [metadata-real.json](docs/benchmarks/v0.5.0/metadata-real.json)。
+
+| Sort | 最慢分类 | p50 | p95 | p99 | max |
+|---|---|---:|---:|---:|---:|
+| modificationTime_ascending | substring | 68.06 | 68.56 | 68.58 | 68.58 |
+| modificationTime_descending | substring | 66.95 | 67.44 | 67.80 | 67.80 |
+| name_ascending | substring | 69.52 | 72.34 | 83.22 | 83.22 |
+| name_descending | one_character | 68.68 | 75.40 | 84.70 | 84.70 |
+| relevance_ascending | substring | 69.05 | 70.58 | 71.61 | 71.61 |
+| size_ascending | substring | 69.28 | 139.96 | 260.08 | 260.08 |
+| size_descending | substring | 70.13 | 70.72 | 70.76 | 70.76 |
+
+Relevance/name p95均<120ms，size/mtime均<150ms；最终发布构建复测 size ascending substring p95 **139.96ms**、max **260.08ms**，全部 outliers 保留；此前 exact p95 139.09ms 的结果保留在 [前次复测报告](docs/benchmarks/v0.5.0/metadata-real-before-final-kind-guard.json)。首轮 relevance substring p95 **165.56ms 未达标**：重复 basename 的 path tie comparison 分配了大量临时数组。改为 bounded temporary stack traversal，不引入 fast-sort arrays；前次复测该分类 p95 **69.16ms**，最终发布构建为 **70.58ms**。首轮数据也保留在 [优化前报告](docs/benchmarks/v0.5.0/metadata-real-before-path-optimization.json)。
+
+## Owned 100k / 1M 文件与恢复
+
+实际创建文件（100个父目录），不读取内容；写入使用 sparse ftruncate。Namespace compaction 阈值提高以隔离测量，metadata 使用生产阈值。Build为namespace+metadata全闭环，不等同于只写16MB列文件。
+
+| Entries | cold s | metadata bytes | bytes/entry | build CPU s | peak RSS MiB | 10k files converge s | warm replay s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 100,000 | 3.169 | 1,625,272 | 16.25272 | 3.982 | 108.4 | 0.912 | 0.754 |
+| 1,000,000 | 37.609 | 16,250,272 | 16.25027 | 38.887 | 946.9 | 2.063 | 1.547 |
+
+100k / 1M 的同文件10,000次写入均 **1 lookup**、namespace generation不变。普通单文件30次更新 p95 **240.94 / 241.60 ms**（目标<500ms）；查询全部28组合最慢p95 **3.71 / 30.21 ms**。Fast exit后 helper修改，重启均与fresh metadata scan一致，namespace full scan=0。
+
+10k文件更新均10,000events、0重复、10,000metadata lookups、200parent microbatches、0parent bulk enumerations；百万fixture该阶段CPU约1.34s，收敛2.063s。稀疏microbatch前百万fixture大父目录bulk重复枚举耗时 **74.598s**（CPU12.56s、读2.60GB），warm replay52.142s。初次20秒 convergence deadline也曾失败；提高诊断超时后保留瓶颈数据，随后优化稀疏父目录访问，复测warm1.547s。详见 [百万优化前报告](docs/benchmarks/v0.5.0/metadata-1m-before-sparse-microbatch.json) 和最终 [100k](docs/benchmarks/v0.5.0/metadata-100k.json) / [1M](docs/benchmarks/v0.5.0/metadata-1m.json)。
+
+## Namespace / idle / desktop smoke
+
+`bench --files 1000 --latency-ms 20`：100次/操作、0timeouts。Create/delete/same-dir rename/cross-dir rename p95 **20.89 / 21.40 / 21.14 / 22.07ms**；1000create/delete storm约87.02/85.06ms，fresh verify missing=extra=0；10k内容写入不产生namespace工作。[报告](docs/benchmarks/v0.5.0/namespace.json)。
+
+首轮 persistent background（30次/操作）p50约19–21ms、p95 **40.49/35.55/41.32ms**，outliers保留；随后persistent100次/操作复测p95 **create21.41 / rename22.89 / delete20.32ms**，与基线约20–25ms一致；create max429.92ms的首次outlier保留。复测60s idle CPU **0.000235s**、物理与逻辑写入0、两种scheduler wakes0，暂停1000项恢复135.55ms、verify通过。[复测报告](docs/benchmarks/v0.5.0/background.json)。60s idle CPU **0.000362s**、disk/logical writes=0、compaction/metadata scheduler wakes=0、periodic polling=0。暂停1000项后265.998ms收敛、stale保留和verify均通过。[首轮报告](docs/benchmarks/v0.5.0/background-first.json)。
+
+独立UUID的 APFSFindMetadataSmoke 使用65个临时文件和独立cache。真实AX确认名称/大小升降序、mtime默认降序、最小项原不在前50仍能排首位、加载更多50→65且名称排序保持。关闭窗口后进程仍运行；helper新增文件并将原最小文件改为9MiB，重显结果66条，大小降序首项正确显示9.4MB及新mtime。测试不修改日用cache。
+
+全局/单卷暂停、pause reason叠加、sleep/wake、挂载变化、login wrapper错误及菜单action均有单元/集成覆盖。用户已人工确认菜单全局/单卷暂停与恢复正常，登录项切换后恢复原设置；真实API设置页显示已启用及metadata就绪。Command+Q后自己的测试进程已退出。系统真实sleep/wake未操作，只通过fake生命周期测试，不将其写成物理睡眠验证通过。Option+Space此前用户已确认实际键盘显示/隐藏正常；自动化注入受焦点切换影响。
+
+## 限制与安全
+
+无snapshot v3、预排序数组、内容索引、root/rawdisk/网络/telemetry/WAL。只读目录项与metadata，nofollow/no-cross-device及dataless best-effort保留。长期checkpoint存储失败时无法保证overlay内存上限；报错并保守回放。旧namespace对应的metadata未知项排末尾；实时更新短暂陈旧有UI提示。系统真实睡眠和登录项权限仍依赖本机macOS用户设置。
+
+---
+
 # v0.4.1 — Background Lifecycle
 
-本轮开始 HEAD：`712ede5814cae259cd24029dc92551144e8ac766`。Milestone A 完成，Milestone B（元数据索引及排序）继续开发；本轮不 push。
+本轮开始 HEAD：`712ede5814cae259cd24029dc92551144e8ac766`。Milestone A 独立验收记录；后续 Milestone B 完成情况见文首。
 
 - 菜单栏入口、全局与单卷暂停、关闭窗口继续索引、开机启动与隐藏启动偏好已实现。
 - 暂停原因分别保存用户全局、用户单卷和系统睡眠；唤醒先刷新挂载，再从内存 cursor 回放，不解除用户暂停。
@@ -15,7 +90,7 @@ TSan 子集 Core 11 + Desktop 17 = 28 项通过，0 warnings；后增加的菜�
 release CLI、desktop 与 .app 构建、Info.plist 与 ad-hoc 签名验证通过。
 基线完整 ASan 157 项通过；新版本完整 sanitizer 验证待 Milestone B 最终执行。
 基线 GitHub Actions 四个 job 全部通过：https://github.com/SWHsz/apfs-everything/actions/runs/37460139248 。
-当前改动未推送，因此没有对应新 HEAD 的远端 CI 结果。
+此处为 Milestone A 当时的本机记录；最终远端 CI 见文首验收记录。
 
 `background-bench --idle-seconds 60` 使用 owned 临时 root/cache，结果：
 

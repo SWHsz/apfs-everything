@@ -70,6 +70,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   public let root: String
   public let metrics = Metrics()
   private let lock = NSLock()
+  private var metadataSource: MetadataIndexCoordinator?
+  public func setMetadataSource(_ source: MetadataIndexCoordinator) { lock.withLock { metadataSource = source } }
   private var bootstrap: FileIndex?
   private var base: MMapBaseIndex?
   private var words: [UInt64] = []
@@ -177,6 +179,14 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       if let b = bootstrap { return b.entry(at: path) }
       guard let r = reference(path) else { return nil }
       return item(r, path: path)
+    }
+  }
+  public func childCount(of path:String) -> Int? {
+    lock.withLock {
+      guard let base,let ref = directoryPaths[path] else { return nil }
+      let original:Int
+      if case .base(let id) = ref { original = Int(base.record(at:id).childCount) } else { original = 0 }
+      return original+(deltaChildren[path]?.count ?? 0)
     }
   }
   public func children(of path: String) -> [NamespaceEntry] {
@@ -405,6 +415,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       lock.unlock()
       return .init(hits: [], latencyMilliseconds: 0, generation: generation)
     }
+    let metadataCapture = metadataSource?.capture()
+    let metadata = metadataCapture?.namespace?.header.snapshotUUID == base.header.snapshotUUID ? metadataCapture : nil
     let bitmap = words
     let live = Array(delta.values)
     let g = generation
@@ -412,51 +424,37 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     lock.unlock()
     defer { lock.withLock { activeQueries -= 1 } }
     let baseStart = ProcessInfo.processInfo.systemUptime
-    var scanned = 0
+    var scanned = 0, metadataReads = 0
     let winners = base.searchBase(
-      bytes, limit: max(0, limit), cancellation: request.cancellation, scanned: { scanned = $0 }, deleted: { bitmap[Int($0) / 64] & (1 << (Int($0) % 64)) != 0 })
+      bytes, limit: max(0, limit), cancellation: request.cancellation, scanned: { scanned = $0 }, sort: request.sort, metadata: { metadataReads += 1; return metadata?.value(at:$0) ?? .unknown }, deleted: { bitmap[Int($0) / 64] & (1 << (Int($0) % 64)) != 0 })
     let baseMS = (ProcessInfo.processInfo.systemUptime - baseStart) * 1000
     let overlayStart = ProcessInfo.processInfo.systemUptime
-    var extra: [(Int, String, EntryKind)] = []
+    let fresh = metadata?.freshness ?? .unavailable
+    func hit(_ path:String,_ kind:EntryKind,_ rank:Int,_ value:FileMetadataValue) -> SearchHit {
+      .init(path:path,kind:kind,matchRank:MatchRank(rawValue:rank)!,logicalSize:value.logicalSize,
+        modificationTimeNanoseconds:value.modificationTimeNanoseconds,metadataFreshness:fresh)
+    }
+    var extra = BoundedTopK<SearchHit>(limit:limit) { SearchOrdering.less($0,$1,sort:request.sort) }
     if !q.isEmpty, limit > 0 {
-      let rootName = FileEntry.fold(root == "/" ? "/" : String(root.split(separator: "/").last!))
-      if rootName.contains(q) {
-        extra.append((rootName == q ? 0 : (rootName.hasPrefix(q) ? 1 : 2), root, .directory))
-      }
-      for (ordinal, d) in live.enumerated() {
+      let rootName = FileEntry.fold(root == "/" ? "/" : String(root.split(separator:"/").last!))
+      if rootName.contains(q) { metadataReads += 1; extra.insert(hit(root,.directory,rootName == q ? 0 : (rootName.hasPrefix(q) ? 1 : 2),metadata?.value(at:0) ?? .unknown)) }
+      for (ordinal,d) in live.enumerated() {
         if ordinal % 4096 == 0, request.cancellation.isCancelled { break }
         guard d.foldedName.contains(q) else { continue }
-        let candidate = (
-          d.foldedName == q ? 0 : (d.foldedName.hasPrefix(q) ? 1 : 2), d.entry.path, d.entry.kind
-        )
-        func less(_ a: (Int, String, EntryKind), _ b: (Int, String, EntryKind)) -> Bool {
-          SearchOrdering.less(a.0, a.1, b.0, b.1)
-        }
-        if extra.count == limit, let last = extra.last, !less(candidate, last) { continue }
-        var lo = 0
-        var hi = extra.count
-        while lo < hi {
-          let mid = (lo + hi) / 2
-          if less(candidate, extra[mid]) { hi = mid } else { lo = mid + 1 }
-        }
-        extra.insert(candidate, at: lo)
-        if extra.count > limit { extra.removeLast() }
+        metadataReads += 1
+        extra.insert(hit(d.entry.path,d.entry.kind,d.foldedName == q ? 0 : (d.foldedName.hasPrefix(q) ? 1 : 2),metadata?.value(path:d.entry.path) ?? .unknown))
       }
-      extra.sort { SearchOrdering.less($0.0, $0.1, $1.0, $1.1) }
     }
-    let overlayMS = (ProcessInfo.processInfo.systemUptime - overlayStart) * 1000
+    let overlayMS = (ProcessInfo.processInfo.systemUptime-overlayStart)*1000
     let pathStart = ProcessInfo.processInfo.systemUptime
-    var all =
-      winners.compactMap { candidate -> (Int, String, EntryKind)? in
-        guard !request.cancellation.isCancelled else { return nil }
-        return (candidate.rank, base.reconstructPath(candidate.id), base.record(at: candidate.id).kind)
-      }
-      + Array(extra.prefix(max(0, limit)))
-    all.sort { SearchOrdering.less($0.0, $0.1, $1.0, $1.1) }
+    var all = winners.map { candidate in
+      if !request.sort.key.requiresMetadata { metadataReads += 1 }
+      return hit(base.reconstructPath(candidate.id),base.record(at:candidate.id).kind,candidate.rank,
+      request.sort.key.requiresMetadata ? candidate.metadata : (metadata?.value(at:candidate.id) ?? .unknown)) } + extra.sorted()
+    all.sort { SearchOrdering.less($0,$1,sort:request.sort) }
     var seen = Set<String>()
-    let hits = all.filter { seen.insert($0.1).inserted }.prefix(max(0, limit)).map {
-      SearchHit(path: $0.1, kind: $0.2, matchRank: MatchRank(rawValue: $0.0)!)
-    }
+    let hits = Array(all.filter { seen.insert($0.path).inserted }.prefix(max(0,limit)))
+    metrics.set("query_metadata_values_read",to:metadataReads)
     metrics.set("query_base_records_scanned", to: scanned)
     if request.cancellation.isCancelled {
       metrics.record("search_cancelled")

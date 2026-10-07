@@ -13,9 +13,10 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
   private let reportFocus: Bool
   init(model: SearchViewModel, rememberPosition: Bool = true, reportFocus: Bool = false, settings: @escaping () -> Void) {
     self.model = model; self.reportFocus = reportFocus
-    panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 780, height: 550),
+    panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 960, height: 550),
                     styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     super.init()
+    model.setSearchVisible(false); panel.minSize = NSSize(width:940,height:450)
     panel.title = "APFSFind"; panel.isReleasedWhenClosed = false; panel.isFloatingPanel = false
     panel.hidesOnDeactivate = false; panel.level = .normal
     panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
@@ -48,7 +49,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
   }
   func show() {
     showStarted = ProcessInfo.processInfo.systemUptime
-    model.refreshQuery()
+    model.setSearchVisible(true); model.refreshQuery()
     NSApp.activate(ignoringOtherApps: true); panel.makeKeyAndOrderFront(nil); model.focusToken += 1
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
@@ -61,7 +62,7 @@ final class SearchPanelController: NSObject, NSWindowDelegate {
     if reportFocus { FileHandle.standardOutput.write(Data("[smoke] input_focus_ms=\(lastShowToFocusMilliseconds!)\n".utf8)) }
   }
   func hide() {
-    let wasVisible = panel.isVisible; panel.orderOut(nil)
+    let wasVisible = panel.isVisible; model.setSearchVisible(false); panel.orderOut(nil)
     if reportFocus && wasVisible { FileHandle.standardOutput.write(Data("[smoke] panel_hidden\n".utf8)) }
   }
   func toggle() { if panel.isVisible && panel.isKeyWindow { hide() } else { show() } }

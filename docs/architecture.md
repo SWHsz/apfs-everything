@@ -1,4 +1,12 @@
-# v0.4 engine and desktop architecture
+# v0.5 engine and desktop architecture
+
+## v0.5.0 Metadata Index and Sorting
+
+Namespace v2 不变；独立 `.apfsmeta` column store 与 160-byte state、RAM metadata overlay，格式/事件/floors/bootstrap/两文件发布恢复见 [metadata-index.md](metadata-index.md)。
+冷扫描 bulk 同时取 size/mtime；旧 base 在独立后台 bootstrap 时继续名字搜索。Typed content storm 经 200 ms debounce、fileID 去重及父目录 bulk / 稀疏 C microbatch。
+Metadata checkpoint 与 namespace compaction 全局串行，独立阈值和保守 cursor；fast exit 不为 dirty metadata 写全量 sidecar。
+七种排序在全体匹配候选上执行 bounded top-K；多卷统一 comparator 合并与 K+1 hasMore，unknown 始终最后。桌面保存 sort、列头切换、分页保持选中项。
+隐藏窗口停止 UI 查询但保留 watcher/metadata 维护；重显重新查询。无后台周期 metadata polling。
 
 ## v0.4.1 Background Lifecycle
 
@@ -24,7 +32,7 @@ AsyncStream 使用最新值缓冲，SwiftUI 不轮询内部锁。baseReady 允�
 SearchRequest 带 request ID 和取消 token；每 4096 records 检查取消。
 HybridIndex 在短锁内捕获 base 强引用、COW 位图与 delta，随后在锁外扫描。
 LatestSearchController 取消上个请求，并拒绝发布已过期的结果；UI 加 40 ms debounce。
-排序为 exact、prefix、substring，同级 folded basename、完整 path、卷名、UUID。
+默认排序为 exact、prefix、substring；其他排序为名称、mtime、size 升/降。Name 同主键按原 basename/path；mtime/size 同主键按 matchRank/folded basename/path；最后使用卷名与 UUID。
 桌面按 50 条递增展示，每次查询额外获取 1 条判断是否还有结果；加载更多扩大有界 top-k，
 保留选中项，更改查询恢复第一页。加载请求同样使用取消 token / latest ID，旧分页不能覆盖新查询。
 
@@ -41,7 +49,7 @@ FSEvents 继续 per-device stream / history UUID；时间基准保持目标 SDK 
 
 CompactionScheduler 是单次 work item；达到普通阈值等待 quiet period，后续 mutation 重排；
 safety threshold 立即触发，失败退避，无 mutation 时不产生周期唤醒。
-MaintenanceScheduler 在所有卷间串行 cold scan、rebuild、compaction；在线更新、查询和 state-only 写入可以并行。
+MaintenanceScheduler 在所有卷间串行 cold scan、rebuild、compaction、metadataBootstrap 和 metadataCheckpoint；在线更新、查询和 state-only 写入可以并行。
 支持 FIFO、可配置优先级、取消排队任务和运行任务的安全取消。
 
 桌面与 CLI :quit 使用 .fast：停 watcher、drain 已交付事件；namespace 与 base 一致才推进 128-byte state。

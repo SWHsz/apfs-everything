@@ -1,4 +1,4 @@
-# APFSFind — v0.4.1 Background Lifecycle
+# APFSFind — v0.5.0 Metadata Index and Sorting
 
 APFSFind 是一个 macOS 本地文件名搜索工具。按 Option+Space 打开搜索窗口，搜索系统卷与自己选择的本地卷。
 Swift 6 / macOS 14+，无第三方 Swift package；目前是可运行的桌面 Alpha。
@@ -16,7 +16,7 @@ open dist/APFSFind.app
 ```
 
 产物为 `dist/APFSFind.app`，脚本完成本地 ad-hoc 签名，无需 Apple Developer 账号。
-应用启动即显示窗口，后台开始索引系统根目录 `/`。首次扫描可能耗时并占用较多内存。
+首次启动默认显示窗口，后台开始索引系统根目录 `/`；开启隐藏启动设置后，每次冷启动先在后台运行。首次扫描可能耗时并占用较多内存。
 有缓存时校验并映射 base 后立即开放搜索；“正在更新索引”表示仍在 replay，结果可能短暂陈旧。
 打开或在 Finder 显示前会检查目标是否仍存在；失效结果会移除并修复对应父目录。
 
@@ -34,7 +34,11 @@ open dist/APFSFind.app
 
 ## 搜索与快捷键
 
-大小写不敏感文件名子串搜索；exact、prefix、substring 顺序。桌面首先显示 50 条，存在更多匹配时明确提示，列表底部可每次加载更多 50 条。CLI 显示最多 50 条。空输入不扫描索引。
+大小写不敏感文件名子串搜索；默认按 exact、prefix、substring 相关性排序。点击名称、修改时间、大小列头切换全局升降序，相关性按钮恢复默认。排序覆盖所有匹配项和全部所选在线卷，分页保持顺序；上次排序会保存。
+
+文件大小为 logical size，目录不计算递归大小，目录与 symlink 的大小显示“—”；修改时间按本机区域格式显示。旧缓存缺少元数据时，文件名搜索立即可用，后台建立元数据后启用大小/时间排序；更新中显示提示，未知值始终排末尾。
+
+桌面首先显示 50 条，存在更多匹配时明确提示，列表底部可每次加载更多 50 条。CLI 显示最多 50 条。空输入不扫描索引。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -65,13 +69,20 @@ Full Disk Access 不会覆盖普通文件权限或所有系统保护；程序还
 ## 缓存与安全
 
 默认缓存：`~/Library/Application Support/apfsfind/indexes/`。目录 0700，索引文件 0600；包含敏感文件名元数据。
-每个 root + volume UUID 对应 immutable snapshot v2 和 128-byte cursor state。
+每个 root + volume UUID 对应 immutable snapshot v2 和 128-byte cursor state。额外的独立 mmap `.apfsmeta` 与 160-byte state 存储大小/修改时间；损坏只重建元数据，文件名索引继续可用。约增加 16.25 bytes/entry；本机两卷 492 万条实测增加约 80.0 MB。
 在线更新主要在内存中，达到阈值才后台合并。正常退出采用 fast：小变化不会重写几百 MB 的 base，
 下次通过保守 cursor replay 恢复。无周期 compaction timer。
 
 只读取目录项与元数据，不读文件内容，不访问 raw disk，不跟随 symlink 目录，默认不跨设备。
 best-effort 禁止 dataless materialization；不联网、无 telemetry、无运行日志文件。
-本机实盘测量与限制见 [STATUS.md](STATUS.md)，引擎和格式细节见 [architecture](docs/architecture.md)。
+本机实盘测量与限制见 [STATUS.md](STATUS.md)，引擎和格式细节见 [architecture](docs/architecture.md) 与 [metadata-index](docs/metadata-index.md)。
+
+```bash
+swift build -c release
+swift test
+.build/release/apfsfind serve --root "$HOME"
+.build/release/apfsfind metadata-bench --entries 100000
+```
 
 本机约 451 万条索引的两份 snapshot 合计 **404.89 MB**；warm search-ready 为系统盘 **3.53 s**、Data 1 **1.71 s**。
 两次独立复测的两卷查询 p95 为 **55–65 ms**；首次 `config` 的 162.60 ms 尾延迟也完整记录在 STATUS。

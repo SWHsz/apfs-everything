@@ -27,6 +27,16 @@ struct SearchView: View {
       }
       if let warning = model.hotKeyWarning { Text(warning).font(.caption).foregroundStyle(.orange).padding(8) }
       if let message = model.message { Text(message).font(.caption).foregroundStyle(.orange).padding(8) }
+      if let warning = model.metadataWarning { Text(warning).font(.caption).foregroundStyle(.secondary).padding(6) }
+      HStack(spacing:12) {
+        Button(model.sortTitle(.name,"名称")) { model.selectSort(.name) }.frame(width:190,alignment:.leading)
+        Text("所在位置").frame(maxWidth:.infinity,alignment:.leading)
+        Button(model.sortTitle(.modificationTime,"修改时间")) { model.selectSort(.modificationTime) }
+          .disabled(!model.metadataAvailable).frame(width:140,alignment:.leading)
+        Button(model.sortTitle(.size,"大小")) { model.selectSort(.size) }.disabled(!model.metadataAvailable).frame(width:90,alignment:.trailing)
+        Text("卷").frame(width:70,alignment:.trailing)
+        Button("相关性") { model.selectSort(.relevance) }
+      }.font(.caption).buttonStyle(.plain).padding(.horizontal,18).padding(.vertical,8)
       Divider()
       ScrollViewReader { reader in
         ScrollView {
@@ -56,7 +66,7 @@ struct SearchView: View {
         Spacer()
         Text("↑↓ 选择   ↵ 打开   ⌘↵ Finder   ⌘C 路径   Esc 隐藏")
       }.font(.caption2).foregroundStyle(.secondary).padding(10)
-    }.frame(minWidth: 720, minHeight: 450)
+    }.frame(minWidth: 940, minHeight: 450)
       .onAppear { inputFocused = true }
       .onChange(of: model.focusToken) { _, _ in inputFocused = true }
   }
@@ -70,15 +80,16 @@ struct SearchResultRow: View {
   var body: some View {
     HStack(spacing: 12) {
       Image(systemName: symbol).font(.title3).frame(width: 24)
-      VStack(alignment: .leading, spacing: 3) {
-        Text(URL(fileURLWithPath: hit.path).lastPathComponent).font(.body).lineLimit(1)
-        Text(PathCanonicalizer.parent(of: hit.path)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-      }
-      Spacer(minLength: 8)
-      VStack(alignment: .trailing) {
-        Text(hit.volumeName).font(.caption)
+      Text(URL(fileURLWithPath:hit.path).lastPathComponent).lineLimit(1).frame(width:154,alignment:.leading)
+      Text(PathCanonicalizer.parent(of:hit.path)).font(.caption).foregroundStyle(.secondary)
+        .lineLimit(1).truncationMode(.middle).frame(maxWidth:.infinity,alignment:.leading)
+      Text(ResultFormatting.time(hit.modificationTimeNanoseconds)).font(.caption).frame(width:140,alignment:.leading)
+      Text(ResultFormatting.size(hit.logicalSize)).font(.caption).frame(width:90,alignment:.trailing)
+      VStack(alignment:.trailing) {
+        Text(hit.volumeName).font(.caption).lineLimit(1)
         if hit.freshness != .live { Text(hit.freshness == .pausedStale ? "已暂停" : "正在更新").font(.caption2).foregroundStyle(.orange) }
-      }
+      }.frame(width:70,alignment:.trailing)
+      Spacer().frame(width:36)
     }.padding(10).background(selected ? Color.accentColor.opacity(0.18) : Color.clear)
       .clipShape(RoundedRectangle(cornerRadius: 6))
   }

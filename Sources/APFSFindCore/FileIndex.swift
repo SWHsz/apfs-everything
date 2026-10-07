@@ -81,6 +81,15 @@ public final class FileIndex: @unchecked Sendable {
         }
     }
 
+    func metadataSeed(_ entries: [ScannedEntry]) -> [FileMetadataValue] {
+        lock.withReadLock {
+            var values = [FileMetadataValue](repeating:.unknown,count:storage.entries.count)
+            for entry in entries { if let id = storage.pathToID[entry.namespace.path] { values[Int(id)] = entry.metadata } }
+            return values
+        }
+    }
+    func entryID(at path: String) -> Int32? { lock.withReadLock { storage.pathToID[path] } }
+
     public func entry(at path: String) -> NamespaceEntry? {
         guard let path = PathCanonicalizer.normalize(path) else { return nil }
         return lock.withReadLock {
@@ -220,30 +229,17 @@ public final class FileIndex: @unchecked Sendable {
         let limit = request.limit
         return lock.withReadLock {
             let limit = max(0, limit)
-            var ranked: [(rank: Int, path: String, kind: EntryKind)] = []
+            var ranked = BoundedTopK<SearchHit>(limit:limit) { SearchOrdering.less($0,$1,sort:request.sort) }
             if !foldedQuery.isEmpty, limit > 0 {
-                ranked.reserveCapacity(min(limit, storage.liveEntries))
                 for (ordinal, entry) in storage.entries.enumerated() {
                     if ordinal % 4096 == 0, request.cancellation.isCancelled { break }
                     guard !entry.isDeleted && entry.foldedName.contains(foldedQuery) else { continue }
                     let rank = entry.foldedName == foldedQuery ? 0 : (entry.foldedName.hasPrefix(foldedQuery) ? 1 : 2)
-                    let candidate = (rank: rank, path: entry.path, kind: entry.kind)
-                    if ranked.count == limit, let last = ranked.last,
-                       !precedes(candidate, last) { continue }
-                    var lower = 0
-                    var upper = ranked.count
-                    while lower < upper {
-                        let middle = lower + (upper - lower) / 2
-                        if precedes(candidate, ranked[middle]) { upper = middle }
-                        else { lower = middle + 1 }
-                    }
-                    ranked.insert(candidate, at: lower)
-                    if ranked.count > limit { ranked.removeLast() }
+                    ranked.insert(SearchHit(path:entry.path,kind:entry.kind,matchRank:MatchRank(rawValue:rank)!))
                 }
             }
-            return SearchResult(hits: ranked.map { SearchHit(path: $0.path, kind: $0.kind, matchRank: MatchRank(rawValue: $0.rank)!) },
-                                latencyMilliseconds: Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000,
-                                generation: storage.generation, cancelled: request.cancellation.isCancelled)
+            return SearchResult(hits:ranked.sorted(),latencyMilliseconds:Double(DispatchTime.now().uptimeNanoseconds-start)/1_000_000,
+                generation:storage.generation,cancelled:request.cancellation.isCancelled)
         }
     }
 

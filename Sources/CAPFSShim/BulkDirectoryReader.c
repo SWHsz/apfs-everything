@@ -272,6 +272,7 @@ static int secure_directory_open(const char *path, uint64_t expected_device,
 /* Metadata-only final-component lookup; all ancestors are securely opened. */
 int apfs_entry_info(const char *path, uint64_t expected_device, APFSDirectoryEntry *info) {
     if (!path || !info || path[0] != '/' || strlen(path) >= PATH_MAX) { errno = EINVAL; return -1; }
+    if (reject_nonlocal_mount(path) < 0) return -1;
     char parent[PATH_MAX]; memcpy(parent, path, strlen(path) + 1);
     char *slash = strrchr(parent, '/');
     if (!slash || !slash[1]) { errno = EINVAL; return -1; }
@@ -288,6 +289,41 @@ int apfs_entry_info(const char *path, uint64_t expected_device, APFSDirectoryEnt
     info->device_id = (uint64_t)(uint32_t)st.st_dev; info->file_id = (uint64_t)st.st_ino; info->has_file_id = 1;
     info->object_type = S_ISDIR(st.st_mode) ? APFS_OBJECT_DIRECTORY : S_ISREG(st.st_mode) ? APFS_OBJECT_FILE : S_ISLNK(st.st_mode) ? APFS_OBJECT_SYMLINK : APFS_OBJECT_OTHER;
     info->is_mount_point = info->device_id != expected_device;
+    if (S_ISREG(st.st_mode) && st.st_size >= 0) {
+        info->logical_size = (uint64_t)st.st_size;
+        info->has_size = 1;
+    }
+    if (st.st_mtimespec.tv_nsec >= 0 && st.st_mtimespec.tv_nsec < 1000000000) {
+        info->mtime_seconds = st.st_mtimespec.tv_sec;
+        info->mtime_nanoseconds = (int32_t)st.st_mtimespec.tv_nsec;
+        info->has_mtime = 1;
+    }
+    return close(fd);
+}
+
+int apfs_metadata_batch(const char *parent, uint64_t expected_device,
+                        const char *const *names, size_t count, APFSDirectoryEntry *entries) {
+    if (!parent || !names || !entries || count > 64) { errno = EINVAL; return -1; }
+    (void)apfs_deny_dataless_materialization();
+    struct stat metadata;
+    int fd = secure_directory_open(parent, expected_device, 1, &metadata);
+    if (fd < 0) return -1;
+    for (size_t i = 0; i < count; ++i) {
+        APFSDirectoryEntry *e = &entries[i]; memset(e, 0, sizeof(*e));
+        if (!names[i] || !names[i][0] || strlen(names[i]) > NAME_MAX || strchr(names[i], '/') ||
+            !strcmp(names[i], ".") || !strcmp(names[i], "..")) { e->error_code = EINVAL; continue; }
+        char full[PATH_MAX];
+        if (append_component(parent, names[i], full, sizeof(full)) < 0 || reject_nonlocal_mount(full) < 0 ||
+            fstatat(fd, names[i], &metadata, AT_SYMLINK_NOFOLLOW) < 0) { e->error_code = errno; continue; }
+        e->device_id = (uint64_t)(uint32_t)metadata.st_dev; e->file_id = metadata.st_ino; e->has_file_id = 1;
+        if (e->device_id != expected_device) { e->error_code = EXDEV; continue; }
+        e->object_type = S_ISREG(metadata.st_mode) ? APFS_OBJECT_FILE : S_ISDIR(metadata.st_mode) ? APFS_OBJECT_DIRECTORY :
+            S_ISLNK(metadata.st_mode) ? APFS_OBJECT_SYMLINK : APFS_OBJECT_OTHER;
+        if (S_ISREG(metadata.st_mode) && metadata.st_size >= 0) { e->has_size = 1; e->logical_size = metadata.st_size; }
+        if (metadata.st_mtimespec.tv_nsec >= 0 && metadata.st_mtimespec.tv_nsec < 1000000000) {
+            e->has_mtime = 1; e->mtime_seconds = metadata.st_mtimespec.tv_sec; e->mtime_nanoseconds = (int32_t)metadata.st_mtimespec.tv_nsec;
+        }
+    }
     return close(fd);
 }
 
@@ -341,8 +377,8 @@ static int parse_entry(const unsigned char *start, uint32_t length,
     attribute_set_t returned;
     if (consume(&cursor, end, &returned, sizeof(returned)) < 0) return -1;
     const attrgroup_t allowed = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR |
-        ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID;
-    if ((returned.commonattr & ~allowed) || returned.volattr || returned.fileattr ||
+        ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
+    if ((returned.commonattr & ~allowed) || returned.volattr || (returned.fileattr & ~ATTR_FILE_DATALENGTH) ||
         returned.forkattr || (returned.dirattr & ~ATTR_DIR_MOUNTSTATUS)) {
         errno = EIO; return -1;
     }
@@ -388,6 +424,15 @@ static int parse_entry(const unsigned char *start, uint32_t length,
             default: break;
         }
     }
+    if (returned.commonattr & ATTR_CMN_MODTIME) {
+        struct timespec time;
+        if (consume(&cursor, end, &time, sizeof(time)) < 0) return -1;
+        if (time.tv_nsec >= 0 && time.tv_nsec < 1000000000) {
+            entry->mtime_seconds = time.tv_sec;
+            entry->mtime_nanoseconds = (int32_t)time.tv_nsec;
+            entry->has_mtime = 1;
+        }
+    }
     if (returned.commonattr & ATTR_CMN_FILEID) {
         if (consume(&cursor, end, &entry->file_id, sizeof(entry->file_id)) < 0) return -1;
         entry->has_file_id = 1;
@@ -397,6 +442,14 @@ static int parse_entry(const unsigned char *start, uint32_t length,
         if (consume(&cursor, end, &mount_status, sizeof(mount_status)) < 0) return -1;
         entry->is_mount_point =
             (mount_status & (DIR_MNTSTATUS_MNTPOINT | DIR_MNTSTATUS_TRIGGER)) != 0;
+    }
+    if (returned.fileattr & ATTR_FILE_DATALENGTH) {
+        off_t size;
+        if (consume(&cursor, end, &size, sizeof(size)) < 0) return -1;
+        if (entry->object_type == APFS_OBJECT_FILE && size >= 0) {
+            entry->logical_size = (uint64_t)size;
+            entry->has_size = 1;
+        }
     }
     /* Variable name bytes must not overlap any of the fixed attribute fields. */
     if (entry->name && (const unsigned char *)entry->name < cursor) {
@@ -414,8 +467,9 @@ int apfs_bulk_reader_next(APFSBulkReader *reader,
     memset(&attributes, 0, sizeof(attributes));
     attributes.bitmapcount = ATTR_BIT_MAP_COUNT;
     attributes.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR |
-        ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID;
+        ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
     attributes.dirattr = ATTR_DIR_MOUNTSTATUS;
+    attributes.fileattr = ATTR_FILE_DATALENGTH;
     int result;
     do { result = getattrlistbulk(reader->fd, &attributes, reader->buffer,
                                   APFS_BULK_BUFFER_SIZE, FSOPT_NOFOLLOW); }

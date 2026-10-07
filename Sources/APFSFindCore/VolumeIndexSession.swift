@@ -31,15 +31,22 @@ public struct VolumeSessionSnapshot: Sendable, Identifiable {
   public let permissionDeniedReads: Int
   public let datalessSkips: Int
   public let pendingReplayEvents: Int
+  public let metadataGeneration: UInt64
+  public let metadataAvailable: Bool
+  public let metadataFreshness: MetadataFreshness
+  public let metadataError: String?
   public let pauseReasons: Set<IndexPauseReason>
   public init(volume: VolumeDescriptor, state: VolumeSessionState, searchAvailable: Bool, freshness: SearchFreshness,
               indexedEntries: Int, snapshotBytes: UInt64, unreadableDirectories: Int, pendingReplayEvents: Int,
-              permissionDeniedReads: Int = 0, datalessSkips: Int = 0, pauseReasons: Set<IndexPauseReason> = []) {
+              permissionDeniedReads: Int = 0, datalessSkips: Int = 0, pauseReasons: Set<IndexPauseReason> = [], metadataAvailable: Bool = false,
+              metadataFreshness: MetadataFreshness = .unavailable, metadataError: String? = nil, metadataGeneration: UInt64 = 0) {
     self.volume = volume; self.state = state; self.searchAvailable = searchAvailable; self.freshness = freshness
     self.indexedEntries = indexedEntries; self.snapshotBytes = snapshotBytes
     self.unreadableDirectories = unreadableDirectories; self.pendingReplayEvents = pendingReplayEvents
     self.permissionDeniedReads = permissionDeniedReads; self.datalessSkips = datalessSkips
     self.pauseReasons = pauseReasons
+    self.metadataGeneration = metadataGeneration
+    self.metadataAvailable = metadataAvailable; self.metadataFreshness = metadataFreshness; self.metadataError = metadataError
   }
 }
 public protocol VolumeSearching: AnyObject, Sendable {
@@ -82,7 +89,9 @@ public final class VolumeIndexSession: VolumeSearching, @unchecked Sendable {
                  unreadableDirectories: counts["scanner_unreadable_directories", default: 0],
                  pendingReplayEvents: status.replayPending,
                  permissionDeniedReads: counts["scanner_permission_denied", default: 0],
-                 datalessSkips: counts["scanner_dataless_skips", default: 0], pauseReasons: reasons)
+                 datalessSkips: counts["scanner_dataless_skips", default: 0], pauseReasons: reasons,
+                 metadataAvailable:coordinator.metadataAvailable, metadataFreshness:coordinator.metadata.capture().freshness, metadataError:coordinator.metadataFailure,
+                 metadataGeneration:coordinator.metadata.capture().overlay.generation)
   }
   public func changes() -> AsyncStream<VolumeSessionSnapshot> { observations.stream(initial: snapshot()) }
   public func start() {

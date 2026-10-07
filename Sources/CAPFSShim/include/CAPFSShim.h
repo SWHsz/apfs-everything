@@ -25,6 +25,11 @@ typedef struct APFSDirectoryEntry {
     int has_file_id;
     int is_mount_point;
     int error_code;
+    uint64_t logical_size;
+    int64_t mtime_seconds;
+    int32_t mtime_nanoseconds;
+    uint8_t has_size;
+    uint8_t has_mtime;
 } APFSDirectoryEntry;
 
 typedef struct APFSDirectoryInfo {
@@ -87,6 +92,9 @@ int apfs_bulk_reader_close(APFSBulkReader *reader);
 
 /* Metadata only; secure component walk has the same boundaries as enumeration. */
 int apfs_entry_info(const char *path, uint64_t expected_device, APFSDirectoryEntry *info);
+/* Bounded microbatch: one secure parent open; metadata only, no content fd. */
+int apfs_metadata_batch(const char *parent, uint64_t expected_device,
+                        const char *const *names, size_t count, APFSDirectoryEntry *entries);
 int apfs_directory_info(const char *path, uint64_t expected_device,
                         int enforce_device, APFSDirectoryInfo *info);
 

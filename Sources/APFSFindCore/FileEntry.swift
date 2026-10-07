@@ -69,11 +69,19 @@ public struct SearchHit: Sendable, Equatable {
   public let path: String
   public let kind: EntryKind
   public let matchRank: MatchRank
+  public let logicalSize: UInt64?
+  public let modificationTimeNanoseconds: Int64?
+  public let metadataFreshness: MetadataFreshness
 
-  public init(path: String, kind: EntryKind, matchRank: MatchRank = .substring) {
+  public init(path: String, kind: EntryKind, matchRank: MatchRank = .substring,
+              logicalSize: UInt64? = nil, modificationTimeNanoseconds: Int64? = nil,
+              metadataFreshness: MetadataFreshness = .unavailable) {
     self.path = path
     self.kind = kind
     self.matchRank = matchRank
+    self.logicalSize = kind == .file ? logicalSize : nil
+    self.modificationTimeNanoseconds = modificationTimeNanoseconds
+    self.metadataFreshness = metadataFreshness
   }
 }
 

@@ -12,7 +12,8 @@ public struct DirectoryStamp: Sendable, Equatable {
 }
 
 public struct ScanResult: Sendable {
-    public let entries: [NamespaceEntry]
+    public let scannedEntries: [ScannedEntry]
+    public var entries: [NamespaceEntry] { scannedEntries.map(\.namespace) }
     public let unreadableDirectories: Int
     public let elapsedMilliseconds: Double
     public let rootDeviceID: UInt64
@@ -103,20 +104,20 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     }
 
     public func readDirectory(_ path: String, rootDeviceID: UInt64) throws -> [NamespaceEntry] {
-        try readDirectory(path, rootDeviceID: rootDeviceID, cancellation: nil)
+        try readScannedDirectory(path, rootDeviceID: rootDeviceID, cancellation: nil).map(\.namespace)
     }
 
     /// Cancel between bulk pages; never return a partial directory as a complete diff.
     public func readDirectory(_ path: String, rootDeviceID: UInt64,
                               cancellation: CancellationToken) throws -> [NamespaceEntry] {
-        let entries = try readDirectory(path, rootDeviceID: rootDeviceID,
-                                        cancellation: Optional(cancellation))
+        let entries = try readScannedDirectory(path, rootDeviceID: rootDeviceID,
+                                        cancellation: Optional(cancellation)).map(\.namespace)
         guard !cancellation.isCancelled else { throw ScannerError(path: path, code: ECANCELED) }
         return entries
     }
 
-    private func readDirectory(_ path: String, rootDeviceID: UInt64,
-                               cancellation: CancellationToken?) throws -> [NamespaceEntry] {
+    public func readScannedDirectory(_ path: String, rootDeviceID: UInt64,
+                               cancellation: CancellationToken? = nil) throws -> [ScannedEntry] {
         applyThreadPolicy()
         var error: Int32 = 0
         guard let reader = apfs_bulk_reader_open(path, rootDeviceID, 1, &error) else {
@@ -125,7 +126,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         defer {
             if apfs_bulk_reader_close(reader) != 0 { metrics.record("scanner_close_errors") }
         }
-        var result: [NamespaceEntry] = []
+        var result: [ScannedEntry] = []
         while cancellation?.isCancelled != true {
             var records: UnsafePointer<APFSDirectoryEntry>?
             var count = 0
@@ -155,10 +156,10 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                 case UInt32(APFS_OBJECT_SYMLINK.rawValue): kind = .symlink
                 default: kind = .other
                 }
-                result.append(NamespaceEntry(path: childPath,
+                result.append(ScannedEntry(namespace: NamespaceEntry(path: childPath,
                                              kind: kind, deviceID: record.device_id,
                                              fileID: record.has_file_id != 0 ? record.file_id : nil,
-                                             isMountPoint: record.is_mount_point != 0))
+                                             isMountPoint: record.is_mount_point != 0), metadata: FileMetadataValue(record)))
             }
         }
         metrics.record("scanner_directories")
@@ -190,22 +191,26 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         }
     }
 
-    public func scan(cancellation: CancellationToken = CancellationToken()) throws -> ScanResult {
+    public func scan(cancellation: CancellationToken = CancellationToken(),
+                     collectEntries: Bool = true, visit: (@Sendable ([ScannedEntry]) -> Void)? = nil) throws -> ScanResult {
         let start = DispatchTime.now().uptimeNanoseconds
         let (root, info) = try rootInfo()
-        let rootEntry = NamespaceEntry(path: root, kind: .directory,
-                                       deviceID: info.device_id, fileID: info.file_id)
+        let rootEntry = ScannedEntry(namespace: NamespaceEntry(path: root, kind: .directory,
+                                       deviceID: info.device_id, fileID: info.file_id), metadata: FileMetadataValue(
+                                        modificationTimeNanoseconds: FileMetadataValue.unixNanoseconds(
+                                            seconds: info.mtime_seconds, nanoseconds: info.mtime_nanoseconds)))
         if cancellation.isCancelled {
-            return ScanResult(entries: [rootEntry], unreadableDirectories: 0,
+            return ScanResult(scannedEntries: [rootEntry], unreadableDirectories: 0,
                               elapsedMilliseconds: Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6,
                               rootDeviceID: info.device_id, cancelled: true)
         }
         // A root failure is fatal. Never publish an empty replacement after EACCES/EIO.
-        let children: [NamespaceEntry]
-        do { children = try readDirectory(root, rootDeviceID: info.device_id, cancellation: cancellation) }
+        let children: [ScannedEntry]
+        do { children = try readScannedDirectory(root, rootDeviceID: info.device_id, cancellation: cancellation) }
         catch let error as ScannerError { recordFailure(error.code); throw error }
-        let work = ScanWork(entries: [rootEntry] + children,
-                            directories: children.filter { Self.shouldTraverse(entry: $0, rootDeviceID: info.device_id) }.map(\.path))
+        visit?([rootEntry] + children)
+        let work = ScanWork(entries: collectEntries ? [rootEntry] + children : [],
+                            directories: children.filter { Self.shouldTraverse(entry: $0.namespace, rootDeviceID: info.device_id) }.map(\.namespace.path))
         let group = DispatchGroup()
         let queue = DispatchQueue(label: "apfsfind.scan", qos: .userInitiated, attributes: .concurrent)
         for _ in 0..<workerCount {
@@ -215,12 +220,13 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                 applyThreadPolicy()
                 while let directory = work.next(cancellation: cancellation) {
                     do {
-                        let entries = try readDirectory(directory, rootDeviceID: info.device_id,
+                        let entries = try readScannedDirectory(directory, rootDeviceID: info.device_id,
                                                         cancellation: cancellation)
                         let directories = cancellation.isCancelled ? [] : entries.filter {
-                            Self.shouldTraverse(entry: $0, rootDeviceID: info.device_id)
-                        }.map(\.path)
-                        work.complete(entries: entries, directories: directories, unreadable: false)
+                            Self.shouldTraverse(entry: $0.namespace, rootDeviceID: info.device_id)
+                        }.map(\.namespace.path)
+                        visit?(entries)
+                        work.complete(entries: collectEntries ? entries : [], directories: directories, unreadable: false)
                     } catch let error as ScannerError {
                         work.complete(entries: [], directories: [], unreadable: recordFailure(error.code))
                     } catch {
@@ -233,7 +239,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         }
         group.wait()
         let final = work.result()
-        return ScanResult(entries: final.entries, unreadableDirectories: final.unreadable,
+        return ScanResult(scannedEntries: final.entries, unreadableDirectories: final.unreadable,
                           elapsedMilliseconds: Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6,
                           rootDeviceID: info.device_id, cancelled: cancellation.isCancelled)
     }
@@ -242,13 +248,13 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
 /// A bounded number of workers share a directory frontier and append private read results.
 private final class ScanWork: @unchecked Sendable {
     private let condition = NSCondition()
-    private var entries: [NamespaceEntry]
+    private var entries: [ScannedEntry]
     private var directories: [String]
     private var nextIndex = 0
     private var active = 0
     private var unreadable = 0
 
-    init(entries: [NamespaceEntry], directories: [String]) {
+    init(entries: [ScannedEntry], directories: [String]) {
         self.entries = entries
         self.directories = directories
     }
@@ -270,7 +276,7 @@ private final class ScanWork: @unchecked Sendable {
         return path
     }
 
-    func complete(entries: [NamespaceEntry], directories: [String], unreadable: Bool) {
+    func complete(entries: [ScannedEntry], directories: [String], unreadable: Bool) {
         condition.lock()
         self.entries += entries
         self.directories += directories
@@ -280,7 +286,7 @@ private final class ScanWork: @unchecked Sendable {
         condition.unlock()
     }
 
-    func result() -> (entries: [NamespaceEntry], unreadable: Int) {
+    func result() -> (entries: [ScannedEntry], unreadable: Int) {
         condition.lock()
         defer { condition.unlock() }
         return (entries, unreadable)

@@ -36,7 +36,7 @@ struct RealDiskBenchmarkRunner {
             cache = try OwnedBenchmarkDirectory(parent: "/private/tmp", prefix: "apfsfind-real-cache-")
         }
         var mutation: OwnedBenchmarkDirectory?
-        var report: [String: Any] = ["version": "0.3.1", "root": canonical,
+        var report: [String: Any] = ["version": "0.5.0", "root": canonical,
             "cache": cache.path, "snapshot_format_version": 2,
             "resource_api": "proc_pid_rusage RUSAGE_INFO_V4; getrusage; mach_task_basic_info; TASK_VM_INFO",
             "logical_bytes_read_available": false,

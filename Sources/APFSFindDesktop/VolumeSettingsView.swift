@@ -49,6 +49,9 @@ struct VolumeSettingsView: View {
               if let status {
                 Text("\(status.state.description) · \(status.indexedEntries) 项 · \(Double(status.snapshotBytes) / 1_000_000, specifier: "%.1f") MB")
                   .font(.caption)
+                Text("文件大小与修改时间：" + (status.metadataAvailable ? (status.metadataFreshness == .live ? "就绪" : "正在更新") : "正在建立索引"))
+                  .font(.caption).foregroundStyle(.secondary)
+                if let error = status.metadataError { Text(error).font(.caption).foregroundStyle(.orange) }
                 if status.state != .offline && status.unreadableDirectories > 0 {
                   Text("本次运行累计 \(status.unreadableDirectories) 次读取未完成").font(.caption).foregroundStyle(.orange)
                 }

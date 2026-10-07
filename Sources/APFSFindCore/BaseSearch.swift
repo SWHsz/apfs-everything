@@ -4,38 +4,35 @@ extension MMapBaseIndex {
   public struct Candidate {
     public let id: UInt32
     public let rank: Int
+    public var metadata: FileMetadataValue = .unknown
   }
   private func pathLess(_ a: UInt32, _ b: UInt32) -> Bool {
-    var aa: [UInt32] = []
-    var bb: [UInt32] = []
-    var x = a
-    var y = b
-    while x != 0 {
-      aa.append(x)
-      x = record(at: x).parent
-    }
-    while y != 0 {
-      bb.append(y)
-      y = record(at: y).parent
-    }
-    for (i, j) in zip(aa.reversed(), bb.reversed()) where i != j {
-      let p = originalNameBytes(at: i)
-      let q = originalNameBytes(at: j)
-      let aTerminal = i == a
-      let bTerminal = j == b
-      if p.contains(where: { $0 >= 128 }) || q.contains(where: { $0 >= 128 }) {
-        let ps = String(decoding: p, as: UTF8.self)
-        let qs = String(decoding: q, as: UTF8.self)
-        if ps == qs { continue }
-        return ps + (aTerminal ? "" : "/") < qs + (bTerminal ? "" : "/")
-      }
-      for k in 0..<min(p.count, q.count) where p[k] != q[k] { return p[k] < q[k] }
-      if p.count != q.count {
-        if p.count < q.count { return aTerminal || UInt8(47) < q[p.count] }
-        return !bTerminal && p[q.count] < UInt8(47)
+    // A validated path is < PATH_MAX bytes; each non-root level costs >= 2 bytes.
+    // Temporary stack storage avoids heap allocations for duplicate-basename ties.
+    withUnsafeTemporaryAllocation(of:UInt32.self,capacity:2048) { aa in
+      withUnsafeTemporaryAllocation(of:UInt32.self,capacity:2048) { bb in
+        var x = a, y = b, ac = 0, bc = 0
+        while x != 0 { aa[ac] = x; ac += 1; x = record(at:x).parent }
+        while y != 0 { bb[bc] = y; bc += 1; y = record(at:y).parent }
+        for offset in 0..<min(ac,bc) {
+          let i = aa[ac-1-offset], j = bb[bc-1-offset]
+          if i == j { continue }
+          let p = originalNameBytes(at:i), q = originalNameBytes(at:j)
+          let aTerminal = i == a, bTerminal = j == b
+          if p.contains(where:{$0 >= 128}) || q.contains(where:{$0 >= 128}) {
+            let ps = String(decoding:p,as:UTF8.self), qs = String(decoding:q,as:UTF8.self)
+            if ps == qs { continue }
+            return ps+(aTerminal ? "" : "/") < qs+(bTerminal ? "" : "/")
+          }
+          for k in 0..<min(p.count,q.count) where p[k] != q[k] { return p[k] < q[k] }
+          if p.count != q.count {
+            if p.count < q.count { return aTerminal || UInt8(47) < q[p.count] }
+            return !bTerminal && p[q.count] < UInt8(47)
+          }
+        }
+        return ac < bc
       }
     }
-    return aa.count < bb.count
   }
   private func nameLess(_ a: UInt32, _ b: UInt32) -> Bool {
     let x = foldedBytes(at: a), y = foldedBytes(at: b)
@@ -43,13 +40,25 @@ extension MMapBaseIndex {
     return x.lexicographicallyPrecedes(y)
   }
   /// Bounded top-k ordinals; full paths are reconstructed only after selection.
-  public func searchBase(_ query: [UInt8], limit: Int, cancellation: SearchCancellationToken? = nil, scanned: ((Int) -> Void)? = nil, deleted: (UInt32) -> Bool) -> [Candidate] {
+  public func searchBase(_ query: [UInt8], limit: Int, cancellation: SearchCancellationToken? = nil, scanned: ((Int) -> Void)? = nil, sort: SearchSortDescriptor = .init(), metadata: (UInt32) -> FileMetadataValue = { _ in .unknown }, deleted: (UInt32) -> Bool) -> [Candidate] {
     guard !query.isEmpty, limit > 0 else { return [] }
-    var hits: [Candidate] = []
-    hits.reserveCapacity(limit)
     func less(_ a: Candidate, _ b: Candidate) -> Bool {
-      a.rank == b.rank ? nameLess(a.id, b.id) : a.rank < b.rank
+      switch sort.key {
+      case .relevance: break
+      case .name:
+        let x = foldedBytes(at:a.id), y = foldedBytes(at:b.id)
+        if !x.elementsEqual(y) { return sort.direction == .ascending ? x.lexicographicallyPrecedes(y) : y.lexicographicallyPrecedes(x) }
+        let xx = originalNameBytes(at:a.id), yy = originalNameBytes(at:b.id)
+        if !xx.elementsEqual(yy) { return sort.direction == .ascending ? xx.lexicographicallyPrecedes(yy) : yy.lexicographicallyPrecedes(xx) }
+        return pathLess(a.id,b.id)
+      case .size:
+        if let result = SearchOrdering.valueLess(a.metadata.logicalSize,b.metadata.logicalSize,direction:sort.direction) { return result }
+      case .modificationTime:
+        if let result = SearchOrdering.valueLess(a.metadata.modificationTimeNanoseconds,b.metadata.modificationTimeNanoseconds,direction:sort.direction) { return result }
+      }
+      return a.rank == b.rank ? nameLess(a.id, b.id) : a.rank < b.rank
     }
+    var hits = BoundedTopK<Candidate>(limit:limit,less:less)
     var visited = 0
     defer { scanned?(visited) }
     for ordinal in 1..<count {
@@ -72,17 +81,18 @@ extension MMapBaseIndex {
         }
       }
       guard let match else { continue }
-      let hit = Candidate(id: id, rank: bytes.count == query.count ? 0 : (match == 0 ? 1 : 2))
-      if hits.count == limit, let last = hits.last, !less(hit, last) { continue }
-      var lo = 0
-      var hi = hits.count
-      while lo < hi {
-        let mid = (lo + hi) / 2
-        if less(hit, hits[mid]) { hi = mid } else { lo = mid + 1 }
+      var hit = Candidate(id: id, rank: bytes.count == query.count ? 0 : (match == 0 ? 1 : 2))
+      if sort.key.requiresMetadata {
+        hit.metadata = metadata(id)
+        // A metadata-only checkpoint can be ahead of namespace type replay.
+        // Non-regular namespace candidates must remain unknown before top-K,
+        // rather than merely hiding their size after winners are selected.
+        if sort.key == .size, hit.metadata.logicalSize != nil, record(at:id).kind != .file {
+          hit.metadata = .init(modificationTimeNanoseconds:hit.metadata.modificationTimeNanoseconds)
+        }
       }
-      hits.insert(hit, at: lo)
-      if hits.count > limit { hits.removeLast() }
+      hits.insert(hit)
     }
-    return hits
+    return hits.sorted()
   }
 }

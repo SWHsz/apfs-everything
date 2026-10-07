@@ -51,6 +51,8 @@ public enum SnapshotV2Writer {
     cancellation: CancellationToken = .init(), beforePublish: @escaping () throws -> Void = {},
     fault: ((SnapshotFailurePoint) throws -> Void)? = nil,
     install: ((MMapBaseIndex, [String: EntryRef], () throws -> Void) throws -> Void)? = nil,
+    prepareMetadata: (([EntryRef], SnapshotHeader) -> Void)? = nil,
+    completed: (([EntryRef], SnapshotHeader) -> Void)? = nil,
     resourceMetrics: Metrics? = nil, resourceStage: String = "snapshot"
   ) throws -> SnapshotWriteResult {
     let started = ProcessInfo.processInfo.systemUptime
@@ -193,6 +195,7 @@ public enum SnapshotV2Writer {
         header.put(UInt32(0), at: 148)
         header.put(SnapshotFormat.crc(header), at: 148)
         try snapshotWriteAll(fd, header, offset: 0)
+        prepareMetadata?(refs,h)
       },
       beforePublish: {
         guard !cancellation.isCancelled else { throw SnapshotError.cancelled }
@@ -214,6 +217,7 @@ public enum SnapshotV2Writer {
           try handler(base, directoryMap, publish)
         }
       }, resourceMetrics: resourceMetrics, resourceStage: resourceStage)
+    completed?(refs,h)
     resourceMetrics?.recordResources(resourceStage + ".total", since: resourceStart)
     return .init(
       header: h, durationMilliseconds: (ProcessInfo.processInfo.systemUptime - started) * 1000,

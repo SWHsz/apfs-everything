@@ -1,6 +1,6 @@
 import Foundation
 
-public enum MaintenanceKind: String, Sendable { case coldScan, rebuild, compaction }
+public enum MaintenanceKind: String, Sendable { case coldScan, rebuild, compaction, metadataBootstrap, metadataCheckpoint }
 public struct MaintenanceTaskSnapshot: Sendable {
   public let id: UUID
   public let volumeID: UUID

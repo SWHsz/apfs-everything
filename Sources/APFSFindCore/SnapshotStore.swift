@@ -87,6 +87,33 @@ public final class SnapshotStore: @unchecked Sendable {
         return reader
     }
 
+    public var metadataFilename: String { String(filename.dropLast(8)) + ".apfsmeta" }
+    public var metadataPath: String { directory + "/" + metadataFilename }
+    public func metadataReader(base: SnapshotHeader) throws -> MMapMetadataIndex {
+        let fd = openat(directoryFD, metadataFilename, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard fd >= 0 else { throw SnapshotError.io("open metadata", errno) }
+        return try MMapMetadataIndex(fileDescriptor: fd, base: base)
+    }
+    public func effectiveMetadataCursor(for header: MetadataHeader) -> (cursor: UInt64, valid: Bool) {
+        let fd = openat(directoryFD, metadataFilename + ".state", O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard fd >= 0 else { return (header.cursor, false) }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_uid == geteuid(), st.st_mode & S_IFMT == S_IFREG,
+              st.st_mode & 0o7777 == 0o600, st.st_size == MetadataCursorState.size else { return (header.cursor, false) }
+        var data = Data(repeating: 0, count: MetadataCursorState.size)
+        let count = data.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+        guard count == data.count, let state = try? MetadataCursorState.decode(data), state.matches(header) else {
+            return (header.cursor, false)
+        }
+        return (state.cursor, true)
+    }
+    public func writeMetadataState(header: MetadataHeader, cursor: UInt64, beforePublish: () throws -> Void = {},
+                                   fault: ((SnapshotFailurePoint) throws -> Void)? = nil) throws {
+        let bytes = try MetadataCursorState(header: header, cursor: cursor).encoded()
+        try publish(name: metadataFilename + ".state", write: { try snapshotWriteAll($0, bytes) },
+                    beforePublish: beforePublish, fault: fault)
+    }
     public var statePath: String { path + ".state" }
     func readState() throws -> Data {
         let fd = openat(directoryFD, filename + ".state", O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
@@ -123,7 +150,7 @@ public final class SnapshotStore: @unchecked Sendable {
             let name = withUnsafeBytes(of: record.pointee.d_name) {
                 String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self)
             }
-            guard name.hasPrefix(filename + "."), name.hasSuffix(".tmp") else { continue }
+            guard (name.hasPrefix(filename + ".") || name.hasPrefix(metadataFilename + ".")), name.hasSuffix(".tmp") else { continue }
             var metadata = stat()
             if fstatat(directoryFD, name, &metadata, AT_SYMLINK_NOFOLLOW) == 0,
                metadata.st_uid == geteuid(), metadata.st_mode & S_IFMT == S_IFREG {
@@ -142,13 +169,64 @@ public final class SnapshotStore: @unchecked Sendable {
         return true
     }
 
+    /// Called while the namespace publisher already holds this store's advisory lock.
+    func stageMetadata(header:MetadataHeader, base:SnapshotHeader, payload:Data, footer:Data,
+                       fault:((SnapshotFailurePoint)throws->Void)?) throws -> StagedMetadataFile {
+        guard activityLock.withLock({publishing}) else { throw SnapshotError.invalid("metadata staging requires namespace publication") }
+        let temporary = metadataFilename + "." + UUID().uuidString + ".tmp"
+        var fd = openat(directoryFD,temporary,O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC|O_NOFOLLOW,0o600)
+        guard fd >= 0 else { throw SnapshotError.io("stage metadata",errno) }
+        do {
+            guard fchmod(fd,0o600) == 0 else { throw SnapshotError.io("chmod staged metadata",errno) }
+            try snapshotWriteAll(fd,header.encoded()); try fault?(.afterHeader)
+            try snapshotWriteAll(fd,payload); try snapshotWriteAll(fd,footer); try fault?(.beforeFileSync)
+            guard fsync(fd) == 0 else { throw SnapshotError.io("fsync staged metadata",errno) }
+            let result = close(fd); fd = -1
+            guard result == 0 else { throw SnapshotError.io("close staged metadata",errno) }
+            let readerFD = openat(directoryFD,temporary,O_RDONLY|O_CLOEXEC|O_NOFOLLOW)
+            guard readerFD >= 0 else { throw SnapshotError.io("open staged metadata",errno) }
+            _ = try MMapMetadataIndex(fileDescriptor:readerFD,base:base)
+            return StagedMetadataFile(store:self,temporary:temporary,header:header,fault:fault)
+        } catch {
+            if fd >= 0 { close(fd) }; _ = unlinkat(directoryFD,temporary,0); throw error
+        }
+    }
+    fileprivate func discardMetadataStage(_ name:String) { _ = unlinkat(directoryFD,name,0) }
+    fileprivate func commitMetadataStage(_ temporary:String, beforePublish:()throws->Void,
+                                          fault:((SnapshotFailurePoint)throws->Void)?) throws {
+        guard activityLock.withLock({ if publishing { return false }; publishing = true; return true }) else { throw SnapshotError.busy }
+        defer { activityLock.withLock { publishing = false } }
+        guard flock(lockFD,LOCK_EX|LOCK_NB) == 0 else { throw SnapshotError.busy }
+        defer { _ = flock(lockFD,LOCK_UN) }
+        let backup = metadataFilename + "." + UUID().uuidString + ".backup.tmp"
+        var linked = false, renamed = false
+        do {
+            try beforePublish(); try fault?(.beforeRename)
+            if try hasSafeFinal(metadataFilename) {
+                guard linkat(directoryFD,metadataFilename,directoryFD,backup,0) == 0 else { throw SnapshotError.io("metadata backup",errno) }
+                linked = true
+            }
+            guard renameat(directoryFD,temporary,directoryFD,metadataFilename) == 0 else { throw SnapshotError.io("publish staged metadata",errno) }
+            renamed = true; try fault?(.afterRename); try fault?(.directorySync)
+            guard fsync(directoryFD) == 0 else { throw SnapshotError.io("fsync metadata directory",errno) }
+            if linked { _ = unlinkat(directoryFD,backup,0) }
+        } catch {
+            if renamed {
+                if linked { _ = renameat(directoryFD,backup,directoryFD,metadataFilename) }
+                else { _ = unlinkat(directoryFD,metadataFilename,0) }
+                _ = fsync(directoryFD)
+            } else if linked { _ = unlinkat(directoryFD,backup,0) }
+            throw error
+        }
+    }
+
     func publish<T>(name: String? = nil, write: (Int32) throws -> T, beforePublish: () throws -> Void,
                     fault: ((SnapshotFailurePoint) throws -> Void)? = nil,
                     validate: ((Int32) throws -> Void)? = nil,
                     commit: ((() throws -> Void) throws -> Void)? = nil,
                     resourceMetrics: Metrics? = nil, resourceStage: String = "snapshot") throws -> T {
         let final = name ?? filename
-        guard final == filename || final == filename + ".state" else { throw SnapshotError.unsafePath(final) }
+        guard final == filename || final == filename + ".state" || final == metadataFilename || final == metadataFilename + ".state" else { throw SnapshotError.unsafePath(final) }
         guard activityLock.withLock({ if publishing { return false }; publishing = true; return true }) else {
             throw SnapshotError.busy
         }
@@ -221,4 +299,16 @@ func snapshotWriteAll(_ fd: Int32, _ data: Data, offset: Int64? = nil) throws {
             written += count
         }
     }
+}
+
+final class StagedMetadataFile {
+    let header:MetadataHeader
+    private let store:SnapshotStore
+    private let temporary:String
+    private let fault:((SnapshotFailurePoint)throws->Void)?
+    init(store:SnapshotStore,temporary:String,header:MetadataHeader,fault:((SnapshotFailurePoint)throws->Void)?) {
+        self.store = store; self.temporary = temporary; self.header = header; self.fault = fault
+    }
+    func publish(beforePublish:()throws->Void = {}) throws { try store.commitMetadataStage(temporary,beforePublish:beforePublish,fault:fault) }
+    deinit { store.discardMetadataStage(temporary) }
 }

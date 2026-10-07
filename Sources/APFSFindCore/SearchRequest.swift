@@ -11,10 +11,11 @@ public struct SearchRequest: Sendable {
   public let id: UInt64
   public let query: String
   public let limit: Int
+  public let sort: SearchSortDescriptor
   public let cancellation: SearchCancellationToken
   public init(id: UInt64 = 0, query: String, limit: Int = 50,
-              cancellation: SearchCancellationToken = .init()) {
-    self.id = id; self.query = query; self.limit = limit; self.cancellation = cancellation
+              cancellation: SearchCancellationToken = .init(), sort: SearchSortDescriptor = .init()) {
+    self.id = id; self.query = query; self.limit = limit; self.cancellation = cancellation; self.sort = sort
   }
 }
 public enum MatchRank: Int, Sendable { case exact, prefix, substring }

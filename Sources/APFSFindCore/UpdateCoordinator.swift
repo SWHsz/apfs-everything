@@ -63,6 +63,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public let index: any NamespaceIndex
     public let metrics = Metrics()
     public let configuration: APFSFindConfiguration
+    private var scanObserver: (@Sendable ([ScannedEntry], FileIndex) -> Void)?
+    private var metadataEventHandler: (@Sendable ([FileSystemEvent]) -> Void)?
     private var baseInstaller: (@Sendable (FileIndex, UInt64, VolumeIdentity) throws -> Void)?
     private var compactionID: UUID?
     private var compactionEvents: [FileSystemEvent] = []
@@ -209,6 +211,11 @@ public final class UpdateCoordinator: @unchecked Sendable {
             self.mutationHandler?()
         }
     }
+    public func setMetadataHandlers(scan: @escaping @Sendable ([ScannedEntry], FileIndex) -> Void,
+                                    events: @escaping @Sendable ([FileSystemEvent]) -> Void) {
+        writer.sync { scanObserver = scan; metadataEventHandler = events }
+    }
+    public func notifyMetadataChanged() { observation.send(readinessSnapshot()) }
     public func setBaseInstaller(_ handler: @escaping @Sendable (FileIndex, UInt64, VolumeIdentity) throws -> Void) {
         writer.sync { baseInstaller = handler }
     }
@@ -218,7 +225,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     public func start(restored: (any NamespaceIndex)? = nil, cursor: UInt64? = nil,
-                      identity supplied: VolumeIdentity? = nil,
+                      streamStartCursor: UInt64? = nil, identity supplied: VolumeIdentity? = nil,
                       progress: (@Sendable (String) -> Void)? = nil) throws {
         guard !cancellation.isCancelled else { throw CocoaError(.userCancelled) }
         let identity = try supplied ?? identityProvider(root)
@@ -238,7 +245,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             setState(.replaying)
             initialReplayStarted = ProcessInfo.processInfo.systemUptime
             replayResources = .capture()
-            try startWatcher(since: e0)
+            try startWatcher(since: streamStartCursor ?? e0)
             if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
             return
         }
@@ -279,6 +286,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             metrics.set("initial_index_building", to: 0)
             guard !cancellation.isCancelled else { setState(.stopped); return }
             index.replace(with: initial)
+            scanObserver?(result.scannedEntries,initial)
             try baseInstaller?(initial, e0, identity)
             rootDevice = result.rootDeviceID
             reconciler = DirectoryReconciler(scanner: scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
@@ -341,7 +349,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         writer.sync { drain(); setState(.paused) }
         metrics.record("pause_requests")
     }
-    public func resume() throws {
+    public func resume(additionalCursor: UInt64? = nil) throws {
         let identity = try identityProvider(root)
         streamControl.sync { pauseRequested = false }
         let cursor: UInt64? = writer.sync {
@@ -357,7 +365,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             stateLock.withLock { historyDone = false }
             replayFloor = lastProcessedEventID
             setState(.replaying)
-            return lastProcessedEventID
+            return additionalCursor.map { min(lastProcessedEventID,$0) } ?? lastProcessedEventID
         }
         if let cursor { try startWatcher(since: cursor); metrics.record("resume_replays") }
     }
@@ -446,6 +454,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 metrics.record(target, by: after[source, default: 0] - counters[source, default: 0])
             }
         }
+        metadataEventHandler?(events + (overflow ? [.init(path:root,flags:UInt32(kFSEventStreamEventFlagUserDropped))] : []))
         if before != index.stats().generation { mutationHandler?() }
         // Include content-only IDs, but never advance a durable cursor ahead of
         // the namespace mutations corresponding to this batch.
