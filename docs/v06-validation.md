@@ -68,15 +68,15 @@ persistent background 的 create/rename/delete p95 40.55 / 22.67 / 22.00 ms；cr
 
 开始 physical **83.22 MiB** / RSS **268.94 MiB**；末端 physical **138.06 MiB** / RSS **265.88 MiB**。两份全量 Map=0，warm materialized FileEntry=0，开始和末端两卷均 live、metadata available。开始 `quiet_start_condition=false`，期间实际增加 5134 entries、后台维护仍排队/运行，CPU 累计 **787.80 秒**、disk writes **0**、logical writes **28,672 bytes**。这不是 no-work idle，不能套用安静 root 的 CPU/timer 零唤醒验收。
 
-模拟 warning 后 physical **121.30 MiB** / RSS **249.27 MiB**，四份 cache 收缩到最多 2048；此下降伴随后台维护 yield，不能证明单独缓存回收的效果。源数据保留 [native-live-600.json](benchmarks/v0.6.0/native-live-600.json)。该次 binary 早于最终旧宽目录 child-count 预检与严格 diff 上限；这两个保护分支未在该实盘数据集触发，最终实现另有 100,001-child 回归测试和完整 sanitizer 验证。
+模拟 warning 后 physical **121.30 MiB** / RSS **249.27 MiB**，四份 cache 收缩到最多 2048；此下降伴随后台维护 yield，不能证明单独缓存回收的效果。源数据保留 [native-live-600.json](benchmarks/v0.6.0/native-live-600.json)。该次 binary 早于最终旧宽目录 child-count 预检与严格 diff 上限，因此不算最终 binary 的完整原生重新验收。最终保护分支另有 100,001-child 回归测试和完整 sanitizer 验证；真实卷 CLI 重启测量使用最终实现。
 
 最终 UI 搜索、菜单暂停/恢复和正常按钮 fast quit/restart 因 Mac 锁屏而无法操作，已向用户请求解锁；不冒充已完成。小根目录 CLI 的暂停/恢复、create/rename/delete、fast-exit/replay 已验证，原生多卷的上述 UI 操作仍是 release 限制。最终 CLI 从该 owned cache 重启真实 Data 1 卷：进入 live、namespace full scans=0，12 个 owned fixture 结果完全匹配（含 rename、delete 和 hidden create）；`:quit` 正常结束、exit=0，但用了 **9.94 秒**，不宣称瞬时退出。[真实卷重启报告](benchmarks/v0.6.0/real-volume-restart.json)。真实 macOS memory pressure、热状态/低电量切换和物理 sleep/wake 未操作；这些行为采用 injectable tests 验证。此前用户人工确认 Option+Space、菜单全局/单卷暂停恢复、登录项恢复原设置；不重复声称本轮做了新的物理键盘／睡眠验收。
 
 ## 测试、提交与复现
 
-开始 CI：[37558381259](https://github.com/SWHsz/apfs-everything/actions/runs/37558381259)，四项 required jobs 成功。最终本机普通、ASan、TSan 各 **220 项**（Core 200 + Desktop 20），0 failures，1 项可选真实挂载 skip；无 sanitizer 诊断。Core 耗时约 82.83 / 194.54 / 268.84 秒。[完整检查摘要](benchmarks/v0.6.0/checks.json)。最后恢复/live 状态修复另有 43 项针对性测试通过。Release CLI/desktop、app 构建、0.6.0/600 Info.plist 与 ad-hoc 签名验证通过；最终 HEAD CI 待补全，不以旧 run 代替新代码 CI。
+开始 CI：[37558381259](https://github.com/SWHsz/apfs-everything/actions/runs/37558381259)，四项 required jobs 成功。最终本机普通、ASan、TSan 各 **220 项**（Core 200 + Desktop 20），0 failures，1 项可选真实挂载 skip；无 sanitizer 诊断。Core 耗时约 82.83 / 194.54 / 268.84 秒。[完整检查摘要](benchmarks/v0.6.0/checks.json)。最后恢复/live 状态修复另有 43 项针对性测试通过。Release CLI/desktop、app 构建、0.6.0/600 Info.plist 与 ad-hoc 签名验证通过；代码提交 `ad04d6b6d4321680314ca4bf83ecc1c674cc5927` 的 [CI run 37606991928](https://github.com/SWHsz/apfs-everything/actions/runs/37606991928) 四项 required jobs（deterministic、integration、address-sanitizer、desktop-build）全部成功；文档补记提交推送后仍需核对其最终 HEAD 的 [main CI](https://github.com/SWHsz/apfs-everything/actions/workflows/ci.yml?query=branch%3Amain)，最终 SHA/run 记录在 Issue #1/#3 的本轮结束评论。
 
-分阶段提交：`3470e6b` baseline、`f952640` bounded resolver、`c94a5c0` resource scheduler，最后 hardening/实测提交待补全。
+分阶段提交：`3470e6b` baseline、`f952640` bounded resolver、`c94a5c0` resource scheduler，`ad04d6b` hardening/实测（完整 SHA `ad04d6b6d4321680314ca4bf83ecc1c674cc5927`）。
 
 ```bash
 swift build -c release
@@ -93,6 +93,6 @@ codesign --verify --deep --strict dist/APFSFind.app
 .build/release/apfsfind bench --files 1000 --latency-ms 20
 ```
 
-第二卷不存在会明确报错，不选其他盘。真实 native smoke 是独立测试 bundle 的 `APFSFindResourceSmoke` 受控入口（bundle ID 必须以 `local.apfsfind.desktop.smoke.` 开头），等两卷 live、metadata available 后隐藏 600 秒；`quiet_start_condition` 单独记录是否无 queued/running maintenance，繁忙 live 系统不会被冒充 no-work idle；只输出聚合 stdout，不写运行日志，不读文件内容。benchmark 文件均 owned/受限权限，日用 cache 保持不变。
+第二卷不存在会明确报错，不选其他盘。真实 native smoke 是独立测试 bundle 的 `APFSFindResourceSmoke` 受控入口（bundle ID 必须以 `local.apfsfind.desktop.smoke.` 开头），等两卷 live、metadata available 后隐藏 600 秒；`quiet_start_condition` 单独记录是否无 queued/running maintenance，繁忙 live 系统不会被冒充 no-work idle；只输出聚合 stdout，不写运行日志，不读文件内容。benchmark 文件均 owned/受限权限，日用 cache 保持不变。测量结束后核对进程、打开文件、inode/device 与 bundle 身份，只移除了本轮独立 smoke bundle、scratch 索引及 fixture；保留聚合报告与 dist/APFSFind.app。
 
 Issue #1/#3 的关闭按任务书 release gates 决定；有未通过 gate 时保持 open、发布真实指标。Issue #2 保持 open，scope 不变。未创建 v0.6.0 发布 tag。

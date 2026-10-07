@@ -1,5 +1,5 @@
 {
-  "scope": "owned native two-volume live+metadata hidden 600 seconds; quiet_start_condition explicitly records queued maintenance; UI operations blocked by locked Mac; source before added wide-old-base bound (not triggered in this dataset)",
+  "scope": "owned native two-volume live+metadata hidden 600 seconds; quiet_start_condition explicitly records queued maintenance; UI operations blocked by locked Mac; source before final wide-old-base bound and strict diff cap; not a complete native reacceptance of the final binary",
   "records": [
     {
       "phase": "startup_progress",

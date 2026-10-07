@@ -13,7 +13,7 @@
 - Fake warning/critical cache 5001→2048→1，overlay 保留、yield/old base/emergency 功能通过；系统 footprint 未下降，资源 gate 保持未通过。
 - alias 深度 16 / 数量 64 / 估算保留 32 MiB；10k rename 与所有 sort 的 deterministic property tests 覆盖 Unicode/两卷/base/delta。
 
-最终普通/ASan/TSan 各 220 项（200 Core + 20 Desktop），0 failures，1 可选挂载 skip；release app 0.6.0/600 构建、签名通过。原生两卷 live/meta 隐藏 600 秒已完成，末端 physical 138.06 MiB、RSS 265.88 MiB；期间有实际变更和维护，CPU 787.80s，不能当作安静 idle。完整报告及最终 HEAD CI 见 validation；UI 验收因 Mac 锁屏待验证。Issue #1/#3 按真实 release gates 保持 open；#2 外置索引存储未实现，scope 未改。未打 v0.6.0 release tag。
+最终普通/ASan/TSan 各 220 项（200 Core + 20 Desktop），0 failures，1 可选挂载 skip；release app 0.6.0/600 构建、签名通过。原生两卷 live/meta 隐藏 600 秒已完成，末端 physical 138.06 MiB、RSS 265.88 MiB；期间有实际变更和维护，CPU 787.80s，不能当作安静 idle。代码 `ad04d6b` 的 [CI 37606991928](https://github.com/SWHsz/apfs-everything/actions/runs/37606991928) 四项 required jobs 全绿；完整报告及文档补记后的最终 HEAD CI 见 validation 与 Issue #1/#3 结束评论；UI 验收因 Mac 锁屏待验证。Issue #1/#3 按真实 release gates 保持 open；#2 外置索引存储未实现，scope 未改。未打 v0.6.0 release tag。
 
 ---
 
