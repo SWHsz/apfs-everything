@@ -16,7 +16,8 @@ public struct MetadataOverlay: Sendable {
 public final class MetadataRenameSource: @unchecked Sendable {
     let originalPrefix: String
     let snapshot: MetadataQuerySnapshot
-    init(originalPrefix:String,snapshot:MetadataQuerySnapshot) { self.originalPrefix = originalPrefix; self.snapshot = snapshot }
+    let depth: Int
+    init(originalPrefix:String,snapshot:MetadataQuerySnapshot) { self.originalPrefix = originalPrefix; self.snapshot = snapshot; depth = snapshot.maximumAliasDepth+1 }
 }
 public struct MetadataQuerySnapshot: Sendable {
     public let namespace: MMapBaseIndex?
@@ -25,6 +26,7 @@ public struct MetadataQuerySnapshot: Sendable {
     public let freshness: MetadataFreshness
     let resolver: PathResolverSnapshot?
     let renamedDirectories: [String: MetadataRenameSource]
+    public var maximumAliasDepth: Int { renamedDirectories.values.map(\.depth).max() ?? 0 }
     public var available: Bool { base != nil && base?.header.baseUUID == namespace?.header.snapshotUUID }
     public func ordinal(_ path: String) -> UInt32? {
         guard case .base(let id)? = resolver?.resolve(path) else { return nil }
@@ -35,7 +37,7 @@ public struct MetadataQuerySnapshot: Sendable {
         // Frozen rename captures may form a chain. Walk it without recursive
         // calls so repeated directory renames cannot exhaust the query stack.
         var snapshot = self, resolved = path
-        while true {
+        for _ in 0...MetadataIndexCoordinator.maximumRenameAliasDepth {
             if snapshot.overlay.deleted.contains(resolved) { return .unknown }
             if let value = snapshot.overlay.deltaValues[resolved] { return value }
             if let prefix = snapshot.renamedDirectories.keys.filter({PathCanonicalizer.isWithin(resolved,root:$0)}).max(by:{$0.count < $1.count}),
@@ -46,6 +48,7 @@ public struct MetadataQuerySnapshot: Sendable {
             }
             return snapshot.ordinal(resolved).map { snapshot.value(at:$0) } ?? .unknown
         }
+        return .unknown // Defensive bound even for an injected malformed capture.
     }
 }
 public struct MetadataCheckpointPolicy: Sendable {
@@ -59,6 +62,9 @@ public struct MetadataCheckpointPolicy: Sendable {
 
 /// Owns read-only columns and changed values. Namespace records never acquire metadata fields.
 public final class MetadataIndexCoordinator: @unchecked Sendable {
+    public static let maximumRenameAliasDepth = 16
+    public static let maximumRenameAliasCount = 64
+    public static let maximumRetainedRenameBytes = 32*1024*1024
     private let lock = NSLock()
     private var namespace: MMapBaseIndex?
     private var base: MMapMetadataIndex?
@@ -74,6 +80,8 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     private var bootstrapPending = false
     private var overflowed = false
     private var safetyBytes = 0
+    private var aliasPressure = false
+    public var renameNeedsMaintenance: Bool { lock.withLock { aliasPressure } }
     public var requiresRecovery: Bool { lock.withLock { overflowed } }
     public init() {}
     public func capture() -> MetadataQuerySnapshot {
@@ -85,14 +93,17 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
         let record = namespace.record(at:ordinal)
         return record.kind == .directory && record.fileID == fileID && !snapshot.overlay.deleted.contains(path)
     }
+    public func resourceUsage() -> (entries:Int,bytes:Int) { lock.withLock { (overlay.entryCount,safetyBytes+overlay.retainedRenameBytes) } }
     public func residencyStatistics() -> [String: Any] {
         lock.withLock { ["metadata_directory_map_entries":0,
             "metadata_directory_map_estimated_bytes":0,
             "metadata_hot_directory_cache_entries":hotDirectoryCache.statistics["hot_directory_cache_entries",default:0],
             "metadata_hot_directory_cache_bytes":hotDirectoryCache.statistics["hot_directory_cache_bytes",default:0],
             "metadata_hot_directory_cache_capacity":hotDirectoryCache.statistics["hot_directory_cache_capacity",default:0],
+            "metadata_hot_directory_cache_hits":hotDirectoryCache.metrics.snapshot()["hot_directory_cache_hits",default:0],
+            "metadata_hot_directory_cache_misses":hotDirectoryCache.metrics.snapshot()["hot_directory_cache_misses",default:0],
             "metadata_overlay_entries":overlay.entryCount,"metadata_overlay_bytes":overlay.estimatedBytes,
-            "rename_alias_count":renamedDirectories.count,"rename_alias_bytes":overlay.retainedRenameBytes] }
+            "rename_alias_count":renamedDirectories.count,"rename_alias_bytes":overlay.retainedRenameBytes,"rename_alias_depth":renamedDirectories.values.map(\.depth).max() ?? 0,"rename_alias_cap_hits":aliasPressure ? 1 : 0] }
     }
     public var processedCursor: UInt64 { lock.withLock { cursor } }
     public var isReplaying: Bool { lock.withLock { !historyDone } }
@@ -103,7 +114,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
         let pathResolver = PathResolverSnapshot(base:namespace,cache:hotDirectoryCache)
         hotDirectoryCache.reset(version:pathResolver.version,root:namespace.root)
         lock.withLock {
-            overflowed = false; safetyBytes = 0; bootstrapPending = false
+            overflowed = false; aliasPressure = false; safetyBytes = 0; bootstrapPending = false
             self.namespace = namespace; resolver = pathResolver
             base = mapped?.header.matches(namespace.header) == true ? mapped : nil
             if !retainOverlay { overlay = .init(); renamedDirectories = [:] }
@@ -154,13 +165,19 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
                 overlay.generation &+= 1
             }
     }
-    public func reuseDirectoryRename(original:String,destination:String,from snapshot:MetadataQuerySnapshot) {
+    @discardableResult public func reuseDirectoryRename(original:String,destination:String,from snapshot:MetadataQuerySnapshot) -> Bool {
         lock.withLock {
-            if let old = renamedDirectories[destination] { overlay.retainedRenameBytes -= old.snapshot.overlay.estimatedBytes + 200 }
+            let bytes = snapshot.overlay.estimatedBytes + 200
+            let oldBytes = renamedDirectories[destination].map { $0.snapshot.overlay.estimatedBytes+200 } ?? 0
+            guard snapshot.maximumAliasDepth < Self.maximumRenameAliasDepth,
+                  renamedDirectories.count + (renamedDirectories[destination] == nil ? 1 : 0) <= Self.maximumRenameAliasCount,
+                  overlay.retainedRenameBytes-oldBytes+bytes <= Self.maximumRetainedRenameBytes else {
+                aliasPressure = true; return false
+            }
             renamedDirectories[destination] = MetadataRenameSource(originalPrefix:original,snapshot:snapshot)
-            overlay.retainedRenameBytes += snapshot.overlay.estimatedBytes + 200
-            overlay.renameCount = renamedDirectories.count
-            overlay.generation &+= 1
+            overlay.retainedRenameBytes += bytes-oldBytes
+            overlay.renameCount = renamedDirectories.count; overlay.generation &+= 1
+            return true
         }
     }
     public var hasUnpersistedPaths: Bool { lock.withLock { !overlay.deltaValues.isEmpty || !renamedDirectories.isEmpty } }

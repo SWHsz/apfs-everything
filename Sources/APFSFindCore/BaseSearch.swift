@@ -36,6 +36,8 @@ extension MMapBaseIndex {
   }
   private func nameLess(_ a: UInt32, _ b: UInt32) -> Bool {
     let x = foldedBytes(at: a), y = foldedBytes(at: b)
+    // Validation guarantees FileEntry.fold, including NFC normalization.
+    // Valid NFC UTF-8 has the same scalar order as the canonical comparator.
     if x.elementsEqual(y) { return pathLess(a, b) }
     return x.lexicographicallyPrecedes(y)
   }
@@ -49,6 +51,11 @@ extension MMapBaseIndex {
         let x = foldedBytes(at:a.id), y = foldedBytes(at:b.id)
         if !x.elementsEqual(y) { return sort.direction == .ascending ? x.lexicographicallyPrecedes(y) : y.lexicographicallyPrecedes(x) }
         let xx = originalNameBytes(at:a.id), yy = originalNameBytes(at:b.id)
+        if xx.contains(where:{$0 >= 128}) || yy.contains(where:{$0 >= 128}) {
+          let p = name(at:a.id), q = name(at:b.id)
+          if p != q { return sort.direction == .ascending ? p < q : q < p }
+          return pathLess(a.id,b.id)
+        }
         if !xx.elementsEqual(yy) { return sort.direction == .ascending ? xx.lexicographicallyPrecedes(yy) : yy.lexicographicallyPrecedes(xx) }
         return pathLess(a.id,b.id)
       case .size:

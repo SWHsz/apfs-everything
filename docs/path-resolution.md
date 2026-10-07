@@ -14,4 +14,6 @@ Public namespace entry lookups capture under a short lock, resolve outside it an
 
 Namespace and metadata validators still fully check CRC/layout/structure. They unmap the validation view and create a fresh read-only runtime view on the same pinned descriptor. No full metadata column warming is requested. Reclaim advice is optional and not used for correctness; initial real-disk measurements found `MADV_DONTNEED` did not immediately lower RSS. Most query RSS is file-backed, so RSS is reported together with internal resident, compressed bytes and physical footprint.
 
-The namespace v2 and metadata v1 disk layouts are unchanged. Streaming metadata writing and compact build buffers are documented in `metadata-index.md`; resource and alias safety are covered by the next milestone.
+The namespace v2 and metadata v1 disk layouts are unchanged. Child tables retain their persisted byte ordering. If raw lookup misses an NFC/NFD equivalent, lookup scans only the matching folded-name group and applies case-sensitive Swift String equality; it never materializes all siblings. Search ordering follows one canonical contract across FileIndex, mmap, delta and multi-volume merge.
+
+Streaming buffers are documented in `metadata-index.md`; resource safety in `resource-scheduling.md`. Frozen rename sources have maximum depth 16, count 64 and retained estimate 32 MiB. A cap rejects another retained graph before allocation, requests emergency maintenance, and makes the updater enumerate the affected subtree.

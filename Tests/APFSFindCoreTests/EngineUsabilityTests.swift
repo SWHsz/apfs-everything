@@ -7,6 +7,22 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
   private let create = UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
   private let content = UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemIsFile)
   private let history = UInt32(kFSEventStreamEventFlagHistoryDone)
+  func testHistoryDoneReachesLiveWithNewLiveTrafficAlreadyQueued() throws {
+    let tree = try TemporaryTree(), ram = FileIndex(root:tree.root), gate = HistoryTrafficGate(), root = tree.root
+    let core = try UpdateCoordinator(root:root,maintenanceScheduler:.init(),replayStarter:{ _,_ in })
+    defer { gate.release.signal(); core.stop() }
+    try core.start(restored:ram,cursor:100)
+    core.setMetadataHandlers(scan: { _, _ in }, events: { [weak core] _ in
+      let turn = gate.lock.withLock { gate.turn += 1; return gate.turn }
+      if turn == 1 { core?.enqueue([.init(path:root,flags:UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemIsDir),id:102)]) }
+      if turn == 2 { gate.liveTraffic.signal(); _ = gate.release.wait(timeout:.now()+5) }
+    })
+    core.enqueue([.init(path:root,flags:history,id:101)])
+    XCTAssertEqual(gate.liveTraffic.wait(timeout:.now()+5),.success)
+    XCTAssertEqual(core.currentState,.live)
+    gate.release.signal()
+    core.synchronizeWriter()
+  }
   func testWarmReadyAndFreshnessBeforeHistoryDone() throws {
     let tree = try TemporaryTree(); try tree.file("needle")
     let volume = try VolumeIdentity.discover(root: tree.root)
@@ -44,6 +60,9 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
                   .init(path: tree.root, flags: UInt32(kFSEventStreamEventFlagMustScanSubDirs), id: 1),
                   .init(path: tree.root, flags: history, id: 102)])
     XCTAssertTrue(core.flushEvents())
+    // A root-wide special event invalidates the whole batch. The old base
+    // remains searchable until the replacement scan closes its replay gap.
+    waitFor("root recovery installs fresh namespace") { core.metrics.snapshot()["full_rebuilds"] == 1 }
     XCTAssertNotNil(core.index.entry(at: tree.path("new")))
     XCTAssertTrue(try core.verify().isConsistent)
     XCTAssertGreaterThan(core.metrics.snapshot()["replay_special_events_applied", default: 0], 0)
@@ -213,4 +232,9 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
     XCTAssertLessThan(index.metrics.snapshot()["search_records_scanned_before_cancel", default: 1_000_000], 1_000_000)
     XCTAssertEqual(index.search("writer").hits.first?.path, v.root + "/writer")
   }
+}
+
+private final class HistoryTrafficGate: @unchecked Sendable {
+  let lock = NSLock(), liveTraffic = DispatchSemaphore(value:0), release = DispatchSemaphore(value:0)
+  var turn = 0
 }

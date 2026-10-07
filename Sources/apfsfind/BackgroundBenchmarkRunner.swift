@@ -24,12 +24,17 @@ struct BackgroundBenchmarkRunner {
     defer { p.stop(policy: .fast) }
     try p.start(); guard p.waitUntilLive(timeout: 20), p.waitForCheckpoint() else { throw CLIError.startupFailed("background startup") }
     _ = p.core.flushEvents(); p.flushMetadata()
+    Thread.sleep(forTimeInterval:0.3) // Settle initial release and trailing event debounce.
+    let samplerStart = SystemResourceSignals.shared.metrics.snapshot()
+    let samplerInactiveBefore = !SystemResourceSignals.shared.isSampling
     let idleStart = ProcessResourceSample.capture(), idleCounts = p.metrics.snapshot()
     let idleWall = ProcessInfo.processInfo.systemUptime
     Thread.sleep(forTimeInterval: idleSeconds)
     let idle = ProcessResourceSample.capture().delta(since: idleStart)
     let idleDuration = ProcessInfo.processInfo.systemUptime - idleWall
     let idleEndCounts = p.metrics.snapshot()
+    let samplerInactiveAfter = !SystemResourceSignals.shared.isSampling
+    let samplerEnd = SystemResourceSignals.shared.metrics.snapshot()
     var timings: [String: [Double]] = ["create": [], "rename": [], "delete": []]
     for i in 0..<100 {
       var start = ProcessInfo.processInfo.systemUptime
@@ -58,6 +63,8 @@ struct BackgroundBenchmarkRunner {
       "idle_seconds": idleDuration, "idle_resources": idle,
       "idle_compaction_scheduler_wakeups": idleEndCounts["compaction_scheduler_wakeups", default: 0] - idleCounts["compaction_scheduler_wakeups", default: 0],
       "idle_metadata_scheduler_wakeups":idleEndCounts["metadata_scheduler_wakeups",default:0]-idleCounts["metadata_scheduler_wakeups",default:0],
+      "cpu_sampler_inactive_before":samplerInactiveBefore,"cpu_sampler_inactive_after":samplerInactiveAfter,
+      "cpu_sampler_idle_wakeups":samplerEnd["cpu_sampler_wakeups",default:0]-samplerStart["cpu_sampler_wakeups",default:0],
       "periodic_polling": 0, "pause_mutations": 1000, "paused_retained_stale": retained,
       "resume_converge_ms": convergeMS, "verify_consistent": verified,
       "visibility_samples_per_operation":100, "visibility_ms": timings.mapValues(benchmarkPercentiles),

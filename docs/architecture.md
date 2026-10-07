@@ -1,4 +1,14 @@
-# v0.5 engine and desktop architecture
+# v0.6 engine and desktop architecture
+
+v0.6 replaces both complete directory-path maps with shared component-walk
+PathResolverSnapshot and parent-EntryRef overlay children. Each consumer has an
+8192-entry LRU; immutable base captures pin mappings and resolve outside writer
+locks. Metadata construction uses compact 16.25-byte columns and bounded streaming
+output. Full validation is followed by a fresh runtime mapping. Resource-aware
+leases serialize maintenance, yield safely at bounded checkpoints and retain old
+bases/cursor fences. See path-resolution.md and resource-scheduling.md. Disk
+formats remain namespace v2 and metadata v1. External index storage is not added.
+
 
 ## v0.5.0 Metadata Index and Sorting
 

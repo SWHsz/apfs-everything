@@ -67,6 +67,16 @@ public actor MultiVolumeCoordinator {
   public func sessionsSnapshot() -> [VolumeSessionSnapshot] {
     sessions.values.map { $0.snapshot() }.sorted { $0.volume.displayName < $1.volume.displayName }
   }
+  /// Aggregate diagnostics serialized on the owning actor, with no user filenames.
+  public func resourceDiagnosticsJSON() throws -> Data {
+    let values = sessions.values.compactMap { session -> [String:Any]? in
+      guard let session = session as? VolumeIndexSession else { return nil }
+      let ns = (session.coordinator.index as? HybridIndex)?.hybridStats() ?? [:]
+      let startup = session.coordinator.core.startupStatus()
+      return ["entries":session.snapshot().indexedEntries,"state":session.snapshot().state.description,"namespace":ns,"metadata":session.coordinator.metadata.residencyStatistics(),"maintenance":session.snapshot().maintenanceStatus as Any? ?? NSNull(),"metadata_available":session.coordinator.metadataAvailable,"core_metrics":session.coordinator.metrics.snapshot(),"buffers":session.coordinator.core.eventBufferEstimates(),"recovery_reason":startup.recoveryReason as Any? ?? NSNull()]
+    }
+    return try JSONSerialization.data(withJSONObject:["volumes":values,"process":ProcessResourceSample.capture().dictionary,"cpu_sampler_active":SystemResourceSignals.shared.isSampling,"cpu_sampler":SystemResourceSignals.shared.metrics.snapshot()],options:[.sortedKeys])
+  }
   public func sessionsStream() -> AsyncStream<[VolumeSessionSnapshot]> { observations.stream(initial: sessionsSnapshot()) }
   private func publish() { observations.send(sessionsSnapshot()) }
   public func refreshMountedVolumes() async {

@@ -60,8 +60,11 @@ struct MetadataBenchmarkRunner {
         let fresh = try BulkScanner(root:root).readScannedDirectory(root+"/d0",rootDeviceID:try BulkScanner(root:root).rootDeviceID()).first { $0.namespace.path == path(0) }?.metadata
         let consistent = fresh == warm.metadata.capture().value(path:path(0))
         let lookups = after["metadata_lookups",default:0]-before["metadata_lookups",default:0]
+        warm.stop(policy:.fast)
+        let isolatedBootstrap = try benchmarkChild(["_metadata-bootstrap-worker",root,cache.url.path])
         let report:[String:Any] = [
-            "benchmark":"metadata","version":"0.5.0","entries":entries,"fixture_preparation_ms":fixtureMS,
+            "metadata_only_bootstrap":isolatedBootstrap,
+            "benchmark":"metadata","version":"0.6.0","entries":entries,"fixture_preparation_ms":fixtureMS,
             "bulk_build_ms":buildMS,"bulk_build_resources":buildResources,"metadata_bytes":bytes,
             "metadata_bytes_per_entry":Double(bytes)/Double(entries),"sort_queries":queryReport,
             "single_file_10000_writes":["lookup_count":lookups,"namespace_generation_unchanged":contentNoNSWork,

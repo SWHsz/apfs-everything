@@ -140,6 +140,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         self.maintenanceScheduler = maintenanceScheduler
         self.replayStarter = replayStarter
     }
+    public var queuedEventCount:Int { inboxLock.withLock { inbox.count } }
     public var currentState: IndexState { stateLock.withLock { state } }
     public var installedSnapshotGeneration: UInt64? { stateLock.withLock { restoredGeneration } }
     public func startupStatus() -> StartupStatus {
@@ -261,7 +262,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         metrics.set("maintenance_queued", to: 0)
         setReadiness(.scanning)
         // Capture before any directory enumeration: replay closes the initial scan gap.
-        progress?("[info] Initial scan: \(root) (\(configuration.workerCount) workers)")
+        progress?("[info] Initial scan: \(root) (\(min(configuration.workerCount,lease.workerLimit)) workers)")
         let progressQueue = DispatchQueue(label: "apfsfind.scan-progress")
         let timer = DispatchSource.makeTimerSource(queue: progressQueue)
         timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
@@ -391,7 +392,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let schedule = inboxLock.withLock {
             let room = max(0, configuration.maxPendingEvents - inbox.count)
             if events.count > room { inboxOverflow = true }
-            inbox.append(contentsOf: events.prefix(room))
+            let retained = events.prefix(room)
+            inbox.append(contentsOf: retained)
+            metrics.record("inbox_estimated_bytes",by:Self.estimatedEventBytes(retained))
             if events.contains(where: { $0.flags & UInt32(kFSEventStreamEventFlagHistoryDone) != 0 }) {
                 inboxHistoryDone = true
             }
@@ -412,12 +415,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let (events, overflow, finished) = inboxLock.withLock {
             let result = (inbox, inboxOverflow, inboxHistoryDone)
             inbox = []; inboxOverflow = false; inboxHistoryDone = false; drainScheduled = false
+            metrics.set("inbox_estimated_bytes",to:0)
             return result
         }
         guard !cancellation.isCancelled else { return }
         if compactionID != nil {
             let room = max(0, configuration.maxPendingEvents - compactionEvents.count)
             compactionEvents.append(contentsOf: events.prefix(room))
+            metrics.record("compaction_buffer_estimated_bytes",by:Self.estimatedEventBytes(events.prefix(room)))
             if events.count > room || overflow { compactionOverflow = true }
             metrics.maximum("compaction_buffered_events", compactionEvents.count)
         }
@@ -432,11 +437,27 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if building {
             let room = max(0, configuration.maxPendingEvents - rebuildEvents.count)
             rebuildEvents.append(contentsOf: events.prefix(room))
+            metrics.record("rebuild_buffer_estimated_bytes",by:Self.estimatedEventBytes(events.prefix(room)))
             if events.count > room || overflow { rebuildOverflow = true }
+        }
+        if building || rebuildScheduled {
+            // The pre-scan fence and bounded rebuild buffer cover these events.
+            // Reconciling the obsolete base competes with the recovery scan and
+            // can repeatedly request the same recovery. Keep its cursor pinned;
+            // a replay from the new fence closes the scheduled/scan interval.
+            metrics.record("namespace_events_deferred_during_recovery", by: events.count)
+            if overflow { metrics.record("queue_overflows") }
+            metadataEventHandler?(events + (overflow ? [.init(path:root,flags:UInt32(kFSEventStreamEventFlagUserDropped))] : []))
+            return
         }
         if overflow {
             metrics.record("queue_overflows")
             requestRebuild(invalidated: true, reason: "queue_overflow")
+            // This truncated batch cannot establish a correct cursor. The fresh
+            // scan/replay covers it; walking its old scopes delays recovery.
+            metrics.record("namespace_events_deferred_during_recovery",by:events.count)
+            metadataEventHandler?([.init(path:root,flags:UInt32(kFSEventStreamEventFlagUserDropped))])
+            return
         }
         let before = index.stats().generation
         let replaying = currentState == .replaying
@@ -472,7 +493,12 @@ public final class UpdateCoordinator: @unchecked Sendable {
             lastProcessedEventID = max(lastProcessedEventID, completedID)
         }
         if stateLock.withLock({ historyDone }), currentState == .replaying,
-           inboxLock.withLock({ inbox.isEmpty && !inboxOverflow }) { setState(.live) }
+           inboxLock.withLock({ !inboxOverflow }) {
+            // HistoryDone is ordered after historical callbacks. Events queued
+            // after this completed batch are live traffic; requiring an empty
+            // inbox can leave an active system permanently "catching up".
+            setState(.live)
+        }
     }
 
     /// FileEvents/FullHistory can repeat Created even when the durable base
@@ -529,7 +555,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 if countMetrics { metrics.record("ignored_content_events") }
             case .invalidated:
                 if countMetrics { metrics.record("dropped_invalidated_events") }
-                if mayRebuild { requestRebuild(invalidated: true, reason: "stream_invalidated") }
+                if mayRebuild { requestRebuild(invalidated: true, reason: "stream_invalidated"); return }
             case .simpleCreate(let kind):
                 if target is HybridIndex, let path=PathCanonicalizer.normalize(event.path),
                    isAuthoritativeDuplicateCreate(path, kind:kind, in:target) {
@@ -566,7 +592,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         for (event, classification) in namespace {
             guard let path = PathCanonicalizer.normalize(event.path) else { mark(root, subtree: true); continue }
             if classification == .subtreeDirty && (path == root || PathCanonicalizer.isWithin(root, root: path)) {
-                if mayRebuild { requestRebuild(invalidated: false, reason: "root_subtree_event") }
+                if mayRebuild { requestRebuild(invalidated: false, reason: "root_subtree_event"); return }
                 else { mark(root, subtree: true) }
                 continue
             }
@@ -645,7 +671,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             dirty.removeAll()
             roots.removeAll()
         }
-        if countMetrics { metrics.record("dirty_directories", by: roots.count) }
+        if countMetrics { metrics.record("dirty_directories", by: roots.count); metrics.set("active_dirty_directories",to:roots.count) }
+        defer { if countMetrics { metrics.set("active_dirty_directories",to:0) } }
         func mutationPath(_ mutation: IndexMutation) -> String {
             switch mutation { case .upsert(let entry): entry.path; case .remove(let path): path }
         }
@@ -667,7 +694,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
                                           force: true, cancellation: cancellation)
             mutations += plan.mutations
             retryParents.formUnion(plan.retryParents)
-            if plan.requiresRebuild && mayRebuild { requestRebuild(invalidated: false, reason: "reconcile_error") }
+            if plan.requiresRebuild && mayRebuild {
+                // Recovery covers this whole batch from a new pre-scan fence.
+                // Continuing other large scopes would keep the writer busy and
+                // prevent the completed recovery from being installed.
+                requestRebuild(invalidated: false, reason: "reconcile_error")
+                metrics.record("reconcile_deferred_to_rebuild")
+                return
+            }
             if plan.gateSkipped && mayRebuild {
                 // A matching mtime is never the sole correctness evidence. Recheck
                 // once without the gate; explicit namespace events bypass it already.
@@ -699,6 +733,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 parents.formUnion(plan.retryParents)
                 if plan.requiresRebuild && mayRebuild {
                     requestRebuild(invalidated: false, reason: "reconcile_error")
+                    metrics.record("reconcile_deferred_to_rebuild")
+                    return
                 }
             }
             // Each race climbs toward the root, with a visited set as a guard.
@@ -747,6 +783,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         guard !building, !cancellation.isCancelled else { return }
         guard currentState != .paused else { needsStreamRestart = true; return }
         building = true; rebuildEvents = []; rebuildOverflow = false
+        metrics.set("rebuild_buffer_estimated_bytes",to:0)
         lastRebuildStart = Date.timeIntervalSinceReferenceDate
         setState(.rebuilding)
         buildGroup.enter()
@@ -757,15 +794,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 let lease = try self.maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .rebuild, urgency:(self.index as? HybridIndex)?.requiresRecovery == true ? .emergency : .required, cancellation: self.cancellation)
                 lease.validateIdentity { guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("source identity changed") } }
                 self.stateLock.withLock { self.activeMaintenance = lease }
-                defer { self.stateLock.withLock { self.activeMaintenance = nil }; lease.release() }
+                var transferred = false
+                defer { if !transferred { self.stateLock.withLock { self.activeMaintenance = nil }; lease.release() } }
                 let e0 = self.fenceProvider(identity)
                 self.metrics.record("full_scans")
                 let scan = try self.makeScanner(lease:lease).scan(cancellation: self.cancellation)
                 self.metrics.set("rebuild_index_entries", to: 0)
                 let fresh = try self.makePrivateIndex(scan.entries, counter: "rebuild_index_entries")
                 guard try self.identityProvider(self.root)==identity else{throw SnapshotError.identity("root changed during recovery scan")}
+                guard !self.cancellation.isCancelled else { throw SnapshotError.cancelled }
+                self.scanObserver?(scan.scannedEntries,fresh)
+                transferred = true
                 return PreparedIndex(index: fresh, rootDeviceID: scan.rootDeviceID, cancelled: scan.cancelled,
-                    identity: identity, fence: e0)
+                    identity: identity, fence: e0, lease:lease)
             }
             self.writer.async { [weak self] in self?.completeRebuild(result) }
             self.buildGroup.leave()
@@ -777,9 +818,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let cancelled: Bool
         let identity: VolumeIdentity
         let fence: UInt64
+        let lease: MaintenanceLease
     }
     private func completeRebuild(_ result: Result<PreparedIndex, Error>) {
         building = false
+        defer {
+            stateLock.withLock { activeMaintenance = nil }
+            if case .success(let scan) = result { scan.lease.release() }
+        }
         guard !cancellation.isCancelled else { return }
         do {
             let scan = try result.get()
@@ -788,19 +834,29 @@ public final class UpdateCoordinator: @unchecked Sendable {
             rootDevice = scan.rootDeviceID
             let scanner = makeScanner()
             let freshReconciler = DirectoryReconciler(scanner: scanner, index: fresh, rootDeviceID: rootDevice, metrics: metrics)
-            // Apply all buffered namespace changes to the private index before the
-            // exchange; callbacks queued later are processed by this same writer.
-            process(rebuildEvents, into: fresh, using: freshReconciler, countMetrics: false, mayRebuild: false)
-            index.replace(with: fresh)
+            let restart = needsStreamRestart
+            // A fresh stream replays every change since the pre-scan fence.
+            // Applying historical buffered hints to a newer scan can resurrect
+            // already vanished paths and needlessly re-walk large old scopes.
+            if !restart {
+                process(rebuildEvents, into: fresh, using: freshReconciler, countMetrics: false, mayRebuild: false)
+            }
+            if restart, let baseInstaller {
+                // Publish the validated scan under its existing maintenance
+                // lease before replay. Large recovery graphs must not become
+                // the searchable warm runtime while HistoryDone is pending.
+                try baseInstaller(fresh,scan.fence,scan.identity)
+            } else { index.replace(with: fresh) }
             reconciler = DirectoryReconciler(scanner: scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
             rebuildEvents = []
+            metrics.set("rebuild_buffer_estimated_bytes",to:0)
             metrics.record("full_rebuilds")
-            let restart = needsStreamRestart
             needsStreamRestart = false
             if restart {
                 watcher.stop()
                 inboxLock.withLock {
                     inbox = []; inboxHistoryDone = false; inboxOverflow = false; drainScheduled = false
+                    metrics.set("inbox_estimated_bytes",to:0)
                 }
                 stateLock.withLock { historyDone = false }
                 volumeIdentity = scan.identity
@@ -811,7 +867,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             } else { setState(stateLock.withLock { historyDone } ? .live : .replaying) }
             failureCount = 0
             stateLock.withLock { errorDescription = nil; recoveryReason = nil }
-            if rebuildOverflow { requestRebuild(invalidated: true, reason: "rebuild_buffer_overflow") }
+            if rebuildOverflow && !restart { requestRebuild(invalidated: true, reason: "rebuild_buffer_overflow") }
+            writer.async { [weak self] in self?.metrics.record("rebuild_allocator_released_bytes",by:Int(apfs_release_allocator_pages())) }
         } catch is MaintenanceYield {
             metrics.record("maintenance_yields"); setState(.dirty); requestRebuild(invalidated:true,reason:"resource_yield")
         } catch {
@@ -874,6 +931,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
 
     public func synchronizeWriter() { writer.sync {} }
+    private static func estimatedEventBytes(_ events:ArraySlice<FileSystemEvent>) -> Int {
+        events.reduce(0) { $0 + MemoryLayout<FileSystemEvent>.stride + $1.path.utf8.count }
+    }
+    /// On-demand estimates, not allocation ledgers. Core retains no query cache.
+    public func eventBufferEstimates() -> [String:Int] {
+        let counters = metrics.snapshot()
+        return ["pending_event_estimated_bytes":counters["inbox_estimated_bytes",default:0]+counters["rebuild_buffer_estimated_bytes",default:0]+counters["compaction_buffer_estimated_bytes",default:0],"core_query_cache_bytes":0]
+    }
     /// Opt-in benchmark counter for one owned fixture; no paths are logged.
     public func measureContentEvents(at path: String?) {
         writer.sync {
@@ -938,6 +1003,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 throw SnapshotError.busy
             }
             let id = UUID(); compactionID = id; compactionEvents = []; compactionOverflow = false
+            metrics.set("compaction_buffer_estimated_bytes",to:0)
             metrics.set("compaction_buffered_events", to: 0)
             metrics.set("compaction_replayed_events", to: 0)
             return .init(id:id, snapshot:snapshot, checkpoint:.init(metadata:index.captureSnapshotMetadata(),
@@ -945,7 +1011,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
     }
     public func abortCompaction(_ ticket:CompactionTicket) {
-        writer.sync { if compactionID == ticket.id { compactionID=nil; compactionEvents=[]; compactionOverflow=false } }
+        writer.sync { if compactionID == ticket.id { compactionID=nil; compactionEvents=[]; compactionOverflow=false; metrics.set("compaction_buffer_estimated_bytes",to:0) } }
     }
     public func finishCompaction(_ ticket:CompactionTicket, base:MMapBaseIndex, directories:[String:EntryRef],
                                  publish:()throws->Void) throws {
@@ -960,6 +1026,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             hybrid.install(base:base,directoryMap:directories,generation:ticket.snapshot.generation)
             let buffered=compactionEvents
             compactionID=nil;compactionEvents=[];compactionOverflow=false
+            metrics.set("compaction_buffer_estimated_bytes",to:0)
             process(buffered,into:index,using:reconciler,countMetrics:false,mayRebuild:true)
             hybrid.ensureGeneration(atLeast:visibleGeneration)
             metrics.set("compaction_replayed_events",to:buffered.count)
@@ -978,6 +1045,6 @@ public final class UpdateCoordinator: @unchecked Sendable {
         // Establish that no writer can enter the rebuild group after wait begins.
         writer.sync {}
         buildGroup.wait()
-        writer.sync { inboxLock.withLock { inbox.removeAll() }; setState(.stopped) }
+        writer.sync { inboxLock.withLock { inbox.removeAll(); metrics.set("inbox_estimated_bytes",to:0) }; setState(.stopped) }
     }
 }

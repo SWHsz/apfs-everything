@@ -1,9 +1,98 @@
 import Foundation
 import Darwin
+import CoreServices
 import XCTest
 @testable import APFSFindCore
 
 final class ReconcilerTests: XCTestCase {
+    func testDeletedWideBaseRecoversBeforeMaterializingOldChildPaths() throws {
+        let cache = try TemporaryTree(cache:true), identity = snapshotIdentity(), ram = FileIndex(root:identity.root)
+        ram.apply((0..<100_001).map { .upsert(.init(path:identity.root+"/file\($0)",kind:.file)) })
+        let store = try SnapshotStore(directory:cache.root,identity:identity)
+        _ = try SnapshotV2Writer.write(source:.ram(ram,ram.stats().generation),identity:identity,generation:ram.stats().generation,cursor:1,store:store)
+        let hybrid = HybridIndex(base:try store.reader(expectedIdentity:identity).mappedBase!)
+        let metrics = Metrics(), reconciler = DirectoryReconciler(scanner:EmptyScopeReader(),index:hybrid,rootDeviceID:identity.deviceID,metrics:metrics)
+        let plan = reconciler.prepare(identity.root,force:true)
+        XCTAssertTrue(plan.requiresRebuild); XCTAssertTrue(plan.mutations.isEmpty)
+        XCTAssertEqual(hybrid.stats().liveEntries,100_002)
+        XCTAssertEqual(metrics.snapshot()["reconcile_old_children_limit"],1)
+    }
+    func testInvalidatedAndRootDirtyBatchesSkipObsoleteScopes() throws {
+        for invalidatingFlag in [kFSEventStreamEventFlagUserDropped,kFSEventStreamEventFlagMustScanSubDirs] {
+            let tree = try TemporaryTree(); try tree.directory("scope"); try tree.file("scope/old")
+            let scanner = BulkScanner(root:tree.root), scan = try scanner.scan(), index = FileIndex(root:tree.root)
+            index.apply(scan.entries.map { .upsert($0) }); let before = index.snapshotPaths()
+            let reader = FatalScopeReader(), metrics = Metrics()
+            let reconciler = DirectoryReconciler(scanner:reader,index:index,rootDeviceID:scan.rootDeviceID,metrics:metrics)
+            let core = try UpdateCoordinator(root:tree.root,index:index,maintenanceScheduler:.init())
+            defer { core.stop() }
+            core.process([.init(path:tree.root,flags:UInt32(invalidatingFlag)),
+                          .init(path:tree.path("scope/renamed"),flags:UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile))],into:index,using:reconciler,countMetrics:true,mayRebuild:true)
+            XCTAssertEqual(reader.reads,0)
+            XCTAssertEqual(index.snapshotPaths(),before)
+            XCTAssertEqual(core.currentState,.dirty)
+        }
+    }
+    func testRecoveryBuffersEventsWithoutReconcilingObsoleteBase() throws {
+        let tree = try TemporaryTree(); try tree.file("old")
+        let scanner = BulkScanner(root:tree.root), scan = try scanner.scan(), index = FileIndex(root:tree.root)
+        index.apply(scan.entries.map { .upsert($0) })
+        let scheduler = MaintenanceScheduler(), root = tree.root
+        let core = try UpdateCoordinator(root:tree.root,configuration:.init(fullRebuildMinInterval:0),index:index,
+            fenceProvider:{ _ in 100 },maintenanceScheduler:scheduler,replayStarter:{ _,deliver in
+                deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:100)])
+            })
+        defer { core.stop() }
+        try core.start(restored:index,cursor:100)
+        XCTAssertTrue(core.waitUntilLive())
+        let blocker = try scheduler.acquireBlocking(volumeID:UUID(),kind:.metadataBootstrap,cancellation:.init())
+        defer { blocker.release() }
+        core.rebuild()
+        waitFor("recovery waits for global maintenance lease") { core.currentState == .rebuilding }
+        let oldGeneration = index.stats().generation
+        try tree.file("new")
+        core.enqueue([.init(path:tree.root,flags:UInt32(kFSEventStreamEventFlagMustScanSubDirs),id:101),
+                      .init(path:tree.path("new"),flags:UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile),id:102),
+                      .init(path:tree.path("vanished-historical-create"),flags:UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile),id:99)])
+        waitFor("events are buffered during recovery") { core.metrics.snapshot()["namespace_events_deferred_during_recovery"] == 3 }
+        XCTAssertEqual(index.stats().generation,oldGeneration)
+        XCTAssertEqual(core.metrics.snapshot()["directory_reconciles",default:0],0)
+        XCTAssertNil(index.entry(at:tree.path("new")))
+        XCTAssertNotNil(index.entry(at:tree.path("old")))
+        XCTAssertGreaterThan(core.eventBufferEstimates()["pending_event_estimated_bytes",default:0],0)
+        blocker.release()
+        waitFor("recovery installs buffered changes",timeout:10) {
+            core.currentState == .live && core.metrics.snapshot()["full_rebuilds"] == 1
+        }
+        XCTAssertNotNil(index.entry(at:tree.path("new")))
+        XCTAssertNil(index.entry(at:tree.path("vanished-historical-create")))
+        XCTAssertEqual(core.metrics.snapshot()["full_scans"],1)
+        XCTAssertEqual(core.eventBufferEstimates()["pending_event_estimated_bytes"],0)
+    }
+    func testLargeUnchangedSubtreeDoesNotLoopThroughFullRecovery() throws {
+        let tree = try TemporaryTree(), index = FileIndex(root:tree.root), reader = WideScopeReader(root:tree.root)
+        index.apply(reader.entries.map { .upsert($0) })
+        let metrics = Metrics(), reconciler = DirectoryReconciler(scanner:reader,index:index,rootDeviceID:7,metrics:metrics)
+        let plan = reconciler.prepare(tree.root,subtree:true,force:true)
+        XCTAssertFalse(plan.requiresRebuild); XCTAssertTrue(plan.mutations.isEmpty)
+        XCTAssertEqual(metrics.snapshot()["directory_reconciles"],30_001)
+    }
+    func testRecoveryRequestStopsRemainingLargeScopesAndPreservesOldIndex() throws {
+        let tree = try TemporaryTree(); try tree.directory("a"); try tree.directory("b")
+        try tree.file("a/old"); try tree.file("b/old")
+        let scanner = BulkScanner(root:tree.root), scan = try scanner.scan(), index = FileIndex(root:tree.root)
+        index.apply(scan.entries.map { .upsert($0) }); let before = index.snapshotPaths()
+        let reader = FatalScopeReader(), metrics = Metrics()
+        let reconciler = DirectoryReconciler(scanner:reader,index:index,rootDeviceID:scan.rootDeviceID,metrics:metrics)
+        let core = try UpdateCoordinator(root:tree.root,index:index,maintenanceScheduler:.init())
+        defer { core.stop() }
+        let flags = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile)
+        core.process([.init(path:tree.path("a/new"),flags:flags),.init(path:tree.path("b/new"),flags:flags)],into:index,using:reconciler,countMetrics:true,mayRebuild:true)
+        XCTAssertEqual(reader.reads,1)
+        XCTAssertEqual(index.snapshotPaths(),before)
+        XCTAssertEqual(core.currentState,.dirty)
+        XCTAssertEqual(core.metrics.snapshot()["reconcile_deferred_to_rebuild"],1)
+    }
     func testDirectoryDiffAndTypeChange() {
         let old = [NamespaceEntry(path: "/test/remove", kind: .directory), .init(path: "/test/type", kind: .file)]
         let new = [NamespaceEntry(path: "/test/add", kind: .file), .init(path: "/test/type", kind: .directory)]
@@ -193,4 +282,32 @@ final class ReconcilerTests: XCTestCase {
         XCTAssertEqual(index.snapshotPaths(), Set(try scanner.scan().entries.map(\.path)))
         XCTAssertTrue(reconciler.prepare(tree.root, force: true).mutations.isEmpty)
     }
+}
+
+private final class FatalScopeReader: DirectoryReading {
+    var reads = 0
+    func readDirectory(_ path:String,rootDeviceID:UInt64,cancellation:CancellationToken) throws -> [NamespaceEntry] {
+        reads += 1; throw ScannerError(path:path,code:EIO)
+    }
+}
+
+private final class WideScopeReader: DirectoryReading {
+    let root:String
+    var entries:[NamespaceEntry] {
+        var result:[NamespaceEntry] = []
+        for d in 0..<30_000 {
+            let parent = root+"/d\(d)"
+            result.append(.init(path:parent,kind:.directory,deviceID:7,fileID:UInt64(d+1)))
+        }
+        return result
+    }
+    init(root:String) { self.root = root }
+    func readDirectory(_ path:String,rootDeviceID:UInt64,cancellation:CancellationToken) throws -> [NamespaceEntry] {
+        if path == root { return entries }
+        return []
+    }
+}
+
+private final class EmptyScopeReader: DirectoryReading {
+    func readDirectory(_ path:String,rootDeviceID:UInt64,cancellation:CancellationToken) throws -> [NamespaceEntry] { [] }
 }

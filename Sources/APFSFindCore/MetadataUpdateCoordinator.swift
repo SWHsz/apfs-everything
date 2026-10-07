@@ -136,7 +136,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             }
         }
         if pending.isEmpty && collapsed.isEmpty { index.advance(maximumID,historyDone:historyDone); changed(); return }
-        index.markPending(); changed()
+        metrics.set("pending_metadata_lookups",to:pending.count); index.markPending(); changed()
         schedule(after:policy.debounceSeconds)
     }
     private func schedule(after delay:Double) {
@@ -158,7 +158,10 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             for path in paths {
                 if renameOnly.contains(path), let item = namespace.entry(at:path),let id = item.fileID,
                    let origin = renameOrigins["\(device):\(id)"] {
-                    if item.kind == .directory { index.reuseDirectoryRename(original:origin.0,destination:path,from:origin.3); discoveredSubtrees.remove(path) }
+                    if item.kind == .directory {
+                        if index.reuseDirectoryRename(original:origin.0,destination:path,from:origin.3) { discoveredSubtrees.remove(path) }
+                        else { metrics.record("metadata_rename_alias_cap_hits") }
+                    }
                     index.update(path:path,value:origin.1); consumedOrigins.insert("\(device):\(id)"); metrics.record("metadata_rename_reuses"); continue
                 }
                 if let item = namespace.entry(at:path), let id = item.fileID,
@@ -219,7 +222,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 }
                 metrics.record("metadata_parent_bulk_enumerations")
                 do {
-                    let entries = try scanner.readScannedDirectory(parent,rootDeviceID:device)
+                    let entries = try scanner.readScannedDirectory(parent,rootDeviceID:device,maximumEntries:100_000,yieldToQueries:true)
                     let requested = Set(groups[parent] ?? [])
                     var found = Set<String>()
                     for entry in entries where collapsed.contains(parent) || requested.contains(entry.namespace.path) {
@@ -248,14 +251,22 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     metrics.record("metadata_subtree_yields"); break
                 }
                 do {
-                    let entries = try scanner.readScannedDirectory(directory,rootDeviceID:device,cancellation:scanCancellation)
+                    let entries = try scanner.readScannedDirectory(directory,rootDeviceID:device,cancellation:scanCancellation,maximumEntries:100_000,yieldToQueries:true)
                     metrics.record("metadata_subtree_bulk_enumerations")
                     for entry in entries {
                         guard namespace.entry(at:entry.namespace.path) == entry.namespace else { continue }
                         index.update(path:entry.namespace.path,value:entry.metadata)
                         if BulkScanner.shouldTraverse(entry:entry.namespace,rootDeviceID:device) { directories.append(entry.namespace.path) }
                     }
+                } catch is MaintenanceYield {
+                    remainingSubtrees.formUnion([directory]+directories); break
                 } catch {
+                    // Match namespace scanning: inaccessible descendants and
+                    // normal disappearance races do not invalidate the entire
+                    // sidecar. Unexpected I/O or the bounded enumeration limit
+                    // still requests authoritative metadata recovery.
+                    let code = (error as? ScannerError)?.code ?? EIO
+                    if DirectoryReconciler.recovery(for:code,isRoot:directory == root) == .rebuild { invalidated() }
                     if !scanCancellation.isCancelled { metrics.record("metadata_subtree_read_failures") }
                 }
             }
@@ -273,7 +284,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             for path in deferredPaths { pending[path] = [path] }
             schedule(after:max(0.001,1-(ProcessInfo.processInfo.systemUptime-lookupWindow))); changed(); return
         }
-        index.advance(maximumID,historyDone:historyDone); changed()
+        metrics.set("pending_metadata_lookups",to:0); index.advance(maximumID,historyDone:historyDone); changed()
     }
     public func resetReplay() { queue.sync { historyDone = false; maximumID = index.processedCursor; index.restartReplay() } }
     public func suspend() { queue.sync { work?.cancel(); work = nil; epoch &+= 1; drain(); work?.cancel(); work = nil; epoch &+= 1; suspended = true } }

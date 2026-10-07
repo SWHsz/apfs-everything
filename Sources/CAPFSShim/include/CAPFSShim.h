@@ -68,6 +68,8 @@ typedef struct APFSCPUCounter {
     uint32_t user, system, nice, idle;
 } APFSCPUCounter;
 int apfs_system_cpu(APFSCPUCounter *output);
+/* Best-effort release of already freed allocator pages after cache pressure. */
+size_t apfs_release_allocator_pages(void);
 /* Incremental IEEE CRC32, pass 0 for the first chunk. */
 uint32_t apfs_crc32(uint32_t previous, const void *bytes, size_t length);
 /* Component-wise O_NOFOLLOW cache directory walk. Creates only when requested. */

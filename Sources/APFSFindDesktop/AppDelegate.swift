@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let login = LaunchAtLoginController()
   private let launchPreferences = DesktopLaunchPreferences()
   private var terminating = false
+  private var resourceSmokeTask: Task<Void,Never>?
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.regular); installMenu()
     do {
@@ -39,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       lifecycle = WorkspaceLifecycleController(coordinator: coordinator); lifecycle?.start()
       stateTask = Task { [weak self] in
         await coordinator.start()
+        self?.startResourceSmoke(coordinator)
         for await snapshots in await coordinator.sessionsStream() {
           if Task.isCancelled { break }
           self?.model?.updateSessions(snapshots)
@@ -51,6 +53,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       NSApp.terminate(nil)
     }
   }
+  private func startResourceSmoke(_ coordinator:MultiVolumeCoordinator) {
+    guard Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.") == true,
+      Bundle.main.object(forInfoDictionaryKey:"APFSFindResourceSmoke") as? Bool == true else { return }
+    resourceSmokeTask = Task { [weak self] in
+      self?.panel?.hide()
+      let deadline = ProcessInfo.processInfo.systemUptime+1800
+      var nextReport = ProcessInfo.processInfo.systemUptime+30
+      while ProcessInfo.processInfo.systemUptime < deadline {
+        if ProcessInfo.processInfo.systemUptime >= nextReport {
+          if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("startup_progress",data:data) }
+          nextReport += 30
+        }
+        let states = await coordinator.sessionsSnapshot()
+        if states.count == 2 && states.allSatisfy({$0.state == .live && $0.metadataAvailable}) {
+          do { try await Task.sleep(for:.seconds(2)) } catch { return }
+          let settled = await coordinator.sessionsSnapshot()
+          if settled.count == 2 && settled.allSatisfy({$0.state == .live && $0.metadataAvailable}) { break }
+        }
+        do { try await Task.sleep(for:.milliseconds(250)) } catch { return }
+      }
+      let states = await coordinator.sessionsSnapshot()
+      guard states.count == 2, states.allSatisfy({$0.state == .live && $0.metadataAvailable}) else { Self.smoke("live_timeout",data:Data("{}".utf8)); return }
+      // Measure a busy live system too, and explicitly distinguish it from a
+      // no-work idle gate. Do not force resource signals to normal to settle it.
+      let quiet = states.allSatisfy({$0.maintenanceStatus == nil}) && !SystemResourceSignals.shared.isSampling
+      Self.smoke("quiet_start_condition",data:Data(("{\"satisfied\":"+(quiet ? "true" : "false")+"}").utf8))
+      self?.panel?.hide()
+      if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("hidden_idle_start",data:data) }
+      try? FileHandle.standardOutput.synchronize()
+      let before = ProcessResourceSample.capture()
+      do { try await Task.sleep(for:.seconds(600)) } catch { return }
+      let after = ProcessResourceSample.capture()
+      if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("hidden_idle_600",data:data) }
+      if let data = try? JSONSerialization.data(withJSONObject:after.delta(since:before),options:[.sortedKeys]) { Self.smoke("idle_delta",data:data) }
+      let originalPressure = SystemResourceSignals.shared.current().memoryPressure
+      SystemResourceSignals.shared.simulateMemoryPressureForTesting(.warning)
+      do { try await Task.sleep(for:.milliseconds(100)) } catch { return }
+      if let data = try? await coordinator.resourceDiagnosticsJSON() { Self.smoke("memory_warning",data:data) }
+      SystemResourceSignals.shared.simulateMemoryPressureForTesting(originalPressure)
+      Self.smoke("resource_smoke_complete",data:Data("{}".utf8))
+    }
+  }
+  private static func smoke(_ stage:String,data:Data) { FileHandle.standardOutput.write(Data(("[resource-smoke] "+stage+" "+String(decoding:data,as:UTF8.self)+"\n").utf8)) }
   private func installMenu() {
     let menu = NSMenu(), appMenu = NSMenu(), top = NSMenuItem()
     menu.addItem(top); top.submenu = appMenu
@@ -74,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     if terminating { return .terminateLater }; terminating = true
-    statusBar?.stop(); lifecycle?.stop(); hotKey?.stop(); panel?.stop(); stateTask?.cancel()
+    resourceSmokeTask?.cancel(); statusBar?.stop(); lifecycle?.stop(); hotKey?.stop(); panel?.stop(); stateTask?.cancel()
     Task {
       await model?.cancel(); await coordinator?.stop(policy: .fast)
       sender.reply(toApplicationShouldTerminate: true)

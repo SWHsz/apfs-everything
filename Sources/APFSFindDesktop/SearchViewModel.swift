@@ -14,7 +14,7 @@ final class SearchViewModel: ObservableObject {
   private let defaults: UserDefaults
   private var searchVisible = true
   private var deferredSort: SearchSortDescriptor?
-  @Published var query = "" { didSet { if oldValue != query { scheduleQuery() } } }
+  @Published var query = "" { didSet { if oldValue != query { if searchVisible { InteractiveActivityController.shared.interaction() }; scheduleQuery() } } }
   @Published private(set) var hits: [VolumeSearchHit] = []
   @Published var selectedIndex = 0
   @Published private(set) var sessions: [VolumeSessionSnapshot] = []
@@ -45,7 +45,8 @@ final class SearchViewModel: ObservableObject {
   var metadataAvailable: Bool { !sessions.filter(\.searchAvailable).isEmpty && sessions.filter(\.searchAvailable).allSatisfy(\.metadataAvailable) }
   var metadataWarning: String? {
     if !metadataAvailable { return "正在建立文件大小与修改时间索引" }
-    if sessions.contains(where: { $0.searchAvailable && $0.metadataFreshness == .catchingUp }) { return "元数据正在更新，顺序可能短暂变化" }
+    if let maintenance = sessions.compactMap(\.maintenanceStatus).first { return maintenance }
+    if sessions.contains(where: { $0.searchAvailable && ($0.metadataFreshness == .catchingUp || $0.metadataFreshness == .building) }) { return "元数据正在更新，顺序可能短暂变化" }
     return nil
   }
   func selectSort(_ key: SearchSortKey) {
@@ -94,7 +95,6 @@ final class SearchViewModel: ObservableObject {
   }
   func refreshQuery() { if !query.isEmpty { scheduleQuery(resetLimit: false) } }
   private func scheduleQuery(resetLimit: Bool = true) {
-    InteractiveActivityController.shared.interaction()
     if resetLimit {
       resultLimit = Self.pageSize; hasMoreResults = false
       hits = []; selectedIndex = 0

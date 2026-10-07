@@ -5,6 +5,32 @@ import XCTest
 @testable import APFSFindCore
 
 final class PersistentRecoveryTests: XCTestCase {
+    func testRecoveryPublishesMappedBaseAndScannedMetadataBeforeHistoryDone() throws {
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache:true), root = tree.root
+        try tree.file("seed")
+        let cold = try PersistentIndexCoordinator(root:root,cacheDirectory:cache.root,maintenanceScheduler:.init(),replayStarter:{ id,deliver in
+            deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:id)])
+        },fenceProvider:{ _ in 1 })
+        try cold.start(); XCTAssertTrue(cold.waitUntilLive()); cold.stop(policy:.fast)
+        let probe = RecoveryReplayGate(root:root)
+        let c = try PersistentIndexCoordinator(root:root,configuration:.init(fullRebuildMinInterval:0),cacheDirectory:cache.root,maintenanceScheduler:.init(),replayStarter:{ id,deliver in probe.start(id,deliver:deliver) },fenceProvider:{ _ in 100 })
+        defer { c.stop(policy:.fast) }
+        try c.start(); XCTAssertTrue(c.waitUntilLive())
+        let oldGeneration = c.index.stats().generation
+        let fd = open(tree.path("seed"),O_WRONLY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(fd,0); XCTAssertEqual(ftruncate(fd,9472),0); close(fd)
+        c.rebuild()
+        waitFor("new stream is held before HistoryDone",timeout:10) { probe.count == 2 }
+        XCTAssertEqual(c.currentState,.replaying)
+        let hybrid = try XCTUnwrap(c.index as? HybridIndex)
+        XCTAssertNotNil(hybrid.mappedBase)
+        XCTAssertGreaterThan(hybrid.stats().generation,oldGeneration)
+        XCTAssertEqual(hybrid.hybridStats()["materialized_file_entries"] as? Int,0)
+        XCTAssertEqual(c.metadata.capture().value(path:tree.path("seed")).logicalSize,9472)
+        XCTAssertEqual(hybrid.mappedBase?.header.lastProcessedEventID,100)
+        probe.finish()
+        XCTAssertTrue(c.waitUntilLive()); XCTAssertEqual(c.metrics.snapshot()["full_rebuilds"],1)
+    }
     private func make(_ tree: TemporaryTree, _ cache: TemporaryTree, ephemeral: Bool = false,
                       rebuild: Bool = false) throws -> PersistentIndexCoordinator {
         try .init(root: tree.root, configuration: .init(fullRebuildMinInterval: 0),
@@ -262,5 +288,21 @@ final class PersistentRecoveryTests: XCTestCase {
         var s = stat()
         guard lstat(path, &s) == 0 else { throw SnapshotError.io("test stat", errno) }
         return [s.st_ino, UInt64(s.st_size), UInt64(s.st_mtimespec.tv_sec), UInt64(s.st_mtimespec.tv_nsec)]
+    }
+}
+
+private final class RecoveryReplayGate: @unchecked Sendable {
+    private let lock = NSLock(), root:String
+    private var starts = 0, cursor:UInt64 = 0
+    private var sink:(@Sendable ([FileSystemEvent])->Void)?
+    init(root:String) { self.root = root }
+    var count:Int { lock.withLock { starts } }
+    func start(_ id:UInt64,deliver:@escaping @Sendable ([FileSystemEvent])->Void) {
+        let first = lock.withLock { starts += 1; cursor = id; sink = deliver; return starts == 1 }
+        if first { deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:id)]) }
+    }
+    func finish() {
+        let (id,deliver) = lock.withLock { (cursor,sink) }
+        deliver?([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:id)])
     }
 }

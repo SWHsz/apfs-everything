@@ -1,9 +1,15 @@
-# APFSFind — v0.5.0 Metadata Index and Sorting
+# APFSFind — v0.6.0 Lightweight Residency and Resource-Aware Maintenance
 
 APFSFind 是一个 macOS 本地文件名搜索工具。按 Option+Space 打开搜索窗口，搜索系统卷与自己选择的本地卷。
 Swift 6 / macOS 14+，无第三方 Swift package；目前是可运行的桌面 Alpha。
 
 > 截图位置预留。尚未提供 notarized 安装包，请在本机从源码构建。
+
+v0.6 删除 namespace 和 metadata 两份全量目录路径表，改为按路径组件查找 mmap 中的父子关系。每份热目录缓存默认最多 8192 项，范围 1024–16384；内存压力下会缩小，不会永久记住全部目录。mmap 的文件大小不代表所有页面常驻 RAM。
+
+后台扫描、压缩和元数据重建会根据 CPU、内存、热状态、低电量模式及搜索交互让路。系统繁忙时普通维护可能延迟；搜索和实时小更新继续工作。达到更新层安全上限时会保留回放游标并进入恢复，不会无限增加 RAM。外置索引存储留到 v0.6.1 / Issue #2。
+
+本轮仍有未通过的实盘资源门槛，Issue #1/#3 保持 open；尚未发布正式 v0.6.0 tag。资源诊断和复现命令见 [资源调度](docs/resource-scheduling.md)、[路径解析](docs/path-resolution.md)、[验证记录](docs/v06-validation.md) 和 [STATUS](STATUS.md)。`residency-bench` 只读打开现有缓存；真实 live/桌面 soak 单独记录，二者不可混称。
 
 ## 构建与运行
 
@@ -89,7 +95,7 @@ swift test
 
 ## 已知限制
 
-目前单进程、线性子串扫描、SF Symbols 图标；无 fuzzy、内容搜索、预览、后台 daemon、开机启动或缓存删除 UI。
+目前单进程、线性子串扫描、SF Symbols 图标；无 fuzzy、内容搜索、预览、后台 daemon 或缓存删除 UI。
 未 notarize / App Sandbox；macOS 14、Intel、真实 iCloud dataless 和掉电耐久未专项实机验证。
 活动系统目录可能短暂陈旧；特殊节点（例如 Unix socket）的事件交付随系统版本不同。
 新扫描、rebuild、compaction 全局串行，以控制多卷维护的峰值内存。
@@ -103,6 +109,8 @@ swift test --sanitize=address
 .build/release/apfsfind serve --root "$HOME"
 .build/release/apfsfind bench --files 1000 --latency-ms 20
 .build/release/apfsfind multivolume-bench --entries-per-volume 100000 --volumes 2
+.build/release/apfsfind residency-bench --root / --second-root "/Volumes/Data 1" --idle-seconds 600
+.build/release/apfsfind lightweight-bench --entries 1000000
 .build/release/apfsfind usability-bench --root / --idle-seconds 60
 .build/release/apfsfind usability-bench --root "/Volumes/Data 1" --idle-seconds 60
 ```

@@ -113,6 +113,7 @@ public final class SystemResourceSignals: ResourceSignalProviding, @unchecked Se
         }
     }
     private func sampleCPU() {
+        refreshEnvironment() // Pending-work fallback also covers CLI processes without a main run loop.
         var current = APFSCPUCounter(); guard apfs_system_cpu(&current) == 0 else { return }
         let value:Double? = lock.withLock {
             guard timer != nil else { return nil }; metrics.record("cpu_sampler_wakeups")
@@ -126,6 +127,8 @@ public final class SystemResourceSignals: ResourceSignalProviding, @unchecked Se
         }
         if let value { modify { $0.cpuIdleEWMA = value } }
     }
+    /// Explicit smoke/test hook; the production desktop never calls this.
+    public func simulateMemoryPressureForTesting(_ level:MemoryPressureLevel) { modify { $0.memoryPressure = level } }
     public func reportVisibility(_ isVisible:Bool) {
         lock.withLock { visible = isVisible; interactionAt = ProcessInfo.processInfo.systemUptime }
         modify { _ in }

@@ -1,0 +1,432 @@
+{
+  "benchmark" : "metadata",
+  "bulk_build_ms" : 85625.678374955896,
+  "bulk_build_resources" : {
+    "compressed_before_bytes" : 507904,
+    "compressed_bytes" : 15286272,
+    "disk_bytes_read" : 1808867328,
+    "disk_bytes_written" : 84287488,
+    "idle_wakeups" : 18,
+    "interrupt_wakeups" : 329,
+    "logical_bytes_read" : null,
+    "logical_bytes_written" : 85209600,
+    "major_faults" : 1079,
+    "minor_faults" : 193211,
+    "pageins" : 1079,
+    "peak_compressed_bytes" : 540524544,
+    "peak_rss_bytes" : 896663552,
+    "rss_after_bytes" : 764870656,
+    "rss_before_bytes" : 8339456,
+    "system_cpu_seconds" : 7.0238259999999997,
+    "user_cpu_seconds" : 33.832335999999998,
+    "wall_ms" : 85625.692916684784
+  },
+  "entries" : 1000000,
+  "fixture_preparation_ms" : 72020.662291673943,
+  "many_files_modified" : {
+    "converge_ms" : 2612.9939166712575,
+    "deduplicated" : 0,
+    "events" : 10000,
+    "files" : 10000,
+    "lookups" : 10000,
+    "parent_enumerations" : 0,
+    "parent_microbatches" : 200,
+    "resources" : {
+      "compressed_before_bytes" : 5718016,
+      "compressed_bytes" : 4423680,
+      "disk_bytes_read" : 39706624,
+      "disk_bytes_written" : 0,
+      "idle_wakeups" : 34,
+      "interrupt_wakeups" : 601,
+      "logical_bytes_read" : null,
+      "logical_bytes_written" : 3366912,
+      "major_faults" : 0,
+      "minor_faults" : 2023,
+      "pageins" : 0,
+      "peak_compressed_bytes" : 540524544,
+      "peak_rss_bytes" : 896663552,
+      "rss_after_bytes" : 102350848,
+      "rss_before_bytes" : 92766208,
+      "system_cpu_seconds" : 0.45817199999999758,
+      "user_cpu_seconds" : 1.802611000000006,
+      "wall_ms" : 2613.0053332890384
+    }
+  },
+  "metadata_bytes" : 16250272,
+  "metadata_bytes_per_entry" : 16.250271999999999,
+  "metadata_only_bootstrap" : {
+    "entries" : 1000000,
+    "full_namespace_scans" : 0,
+    "kind" : "fresh process, existing namespace, real-file bulk metadata bootstrap",
+    "passed" : true,
+    "process" : {
+      "compressed_bytes" : 2588672,
+      "dirty_private_pages" : null,
+      "disk_bytes_read" : 1820786688,
+      "disk_bytes_written" : 16269312,
+      "external_resident_bytes" : 74514432,
+      "idle_wakeups" : 699,
+      "internal_resident_bytes" : 4866048,
+      "interrupt_wakeups" : 7513,
+      "logical_bytes_written" : 16453888,
+      "major_faults" : 1024,
+      "minor_faults" : 16167,
+      "pageins" : 1024,
+      "peak_compressed_bytes" : 10600448,
+      "peak_physical_footprint" : 24134304,
+      "peak_rss_bytes" : 115605504,
+      "physical_footprint" : 7914120,
+      "private_anonymous_footprint" : null,
+      "rss_bytes" : 80166912,
+      "system_cpu_seconds" : 6.7050039999999997,
+      "uptime" : 428718.98888583336,
+      "user_cpu_seconds" : 39.118676999999998
+    },
+    "resources" : {
+      "compressed_before_bytes" : 0,
+      "compressed_bytes" : 2588672,
+      "disk_bytes_read" : 1820651520,
+      "disk_bytes_written" : 16269312,
+      "idle_wakeups" : 699,
+      "interrupt_wakeups" : 7345,
+      "logical_bytes_read" : null,
+      "logical_bytes_written" : 16453888,
+      "major_faults" : 995,
+      "minor_faults" : 6153,
+      "pageins" : 995,
+      "peak_compressed_bytes" : 10600448,
+      "peak_rss_bytes" : 115605504,
+      "rss_after_bytes" : 80166912,
+      "rss_before_bytes" : 40009728,
+      "system_cpu_seconds" : 6.6841229999999996,
+      "user_cpu_seconds" : 37.959880999999996,
+      "wall_ms" : 90235.237166692968
+    }
+  },
+  "metadata_visibility_ms" : {
+    "max" : 242.29712499072775,
+    "p50" : 237.48308332869783,
+    "p90" : 239.07545837573707,
+    "p95" : 240.18349999096245,
+    "p99" : 242.29712499072775
+  },
+  "policy" : "raised namespace compaction thresholds; metadata production thresholds unchanged",
+  "restart_matches_fresh_scan" : true,
+  "restart_replay_ms" : 2564.7674166830257,
+  "restart_resources" : {
+    "compressed_before_bytes" : 4112384,
+    "compressed_bytes" : 3653632,
+    "disk_bytes_read" : 114688,
+    "disk_bytes_written" : 0,
+    "idle_wakeups" : 0,
+    "interrupt_wakeups" : 207,
+    "logical_bytes_read" : null,
+    "logical_bytes_written" : 4096,
+    "major_faults" : 5,
+    "minor_faults" : 10533,
+    "pageins" : 5,
+    "peak_compressed_bytes" : 540524544,
+    "peak_rss_bytes" : 896663552,
+    "rss_after_bytes" : 153239552,
+    "rss_before_bytes" : 102776832,
+    "system_cpu_seconds" : 0.099618999999997015,
+    "user_cpu_seconds" : 2.5762400000000056,
+    "wall_ms" : 2564.7816666751169
+  },
+  "single_file_10000_writes" : {
+    "deduplicated" : 6,
+    "events" : 7,
+    "lookup_count" : 1,
+    "namespace_generation_unchanged" : true,
+    "resources" : {
+      "compressed_before_bytes" : 2572288,
+      "compressed_bytes" : 2506752,
+      "disk_bytes_read" : 12288,
+      "disk_bytes_written" : 0,
+      "idle_wakeups" : 0,
+      "interrupt_wakeups" : 185,
+      "logical_bytes_read" : null,
+      "logical_bytes_written" : 40960,
+      "major_faults" : 0,
+      "minor_faults" : 40,
+      "pageins" : 0,
+      "peak_compressed_bytes" : 540524544,
+      "peak_rss_bytes" : 896663552,
+      "rss_after_bytes" : 475742208,
+      "rss_before_bytes" : 475627520,
+      "system_cpu_seconds" : 0.10770300000000077,
+      "user_cpu_seconds" : 0.025350000000003092,
+      "wall_ms" : 346.07487503672019
+    }
+  },
+  "sort_queries" : {
+    "modificationTime_ascending" : {
+      "exact" : {
+        "max" : 28.310250025242567,
+        "metadata_values_read" : 1,
+        "p50" : 6.0276666772551835,
+        "p90" : 10.137791687157005,
+        "p95" : 19.012958335224539,
+        "p99" : 28.310250025242567,
+        "records_scanned" : 999999
+      },
+      "no_result" : {
+        "max" : 3.6352083552628756,
+        "metadata_values_read" : 0,
+        "p50" : 3.5003749653697014,
+        "p90" : 3.5593750071711838,
+        "p95" : 3.5832083085551858,
+        "p99" : 3.6352083552628756,
+        "records_scanned" : 999999
+      },
+      "one_character" : {
+        "max" : 12.753208342473954,
+        "metadata_values_read" : 999900,
+        "p50" : 12.347958341706544,
+        "p90" : 12.566374964080751,
+        "p95" : 12.57558329962194,
+        "p99" : 12.753208342473954,
+        "records_scanned" : 999999
+      },
+      "substring" : {
+        "max" : 38.186874997336417,
+        "metadata_values_read" : 999899,
+        "p50" : 13.057333359029144,
+        "p90" : 28.730958292726427,
+        "p95" : 37.301749980542809,
+        "p99" : 38.186874997336417,
+        "records_scanned" : 999999
+      }
+    },
+    "modificationTime_descending" : {
+      "exact" : {
+        "max" : 6.5143750398419797,
+        "metadata_values_read" : 1,
+        "p50" : 5.8570000110194087,
+        "p90" : 6.0493749915622175,
+        "p95" : 6.1232500011101365,
+        "p99" : 6.5143750398419797,
+        "records_scanned" : 999999
+      },
+      "no_result" : {
+        "max" : 3.5443750093691051,
+        "metadata_values_read" : 0,
+        "p50" : 3.4972916473634541,
+        "p90" : 3.5177500103600323,
+        "p95" : 3.534916671924293,
+        "p99" : 3.5443750093691051,
+        "records_scanned" : 999999
+      },
+      "one_character" : {
+        "max" : 13.203708338551223,
+        "metadata_values_read" : 999900,
+        "p50" : 12.842333293519914,
+        "p90" : 13.077624957077205,
+        "p95" : 13.1627083173953,
+        "p99" : 13.203708338551223,
+        "records_scanned" : 999999
+      },
+      "substring" : {
+        "max" : 13.587541645392776,
+        "metadata_values_read" : 999899,
+        "p50" : 13.381958357058465,
+        "p90" : 13.524541631340981,
+        "p95" : 13.527916686143726,
+        "p99" : 13.587541645392776,
+        "records_scanned" : 999999
+      }
+    },
+    "name_ascending" : {
+      "exact" : {
+        "max" : 11.274374963250011,
+        "metadata_values_read" : 1,
+        "p50" : 8.175958355423063,
+        "p90" : 10.293708357494324,
+        "p95" : 10.748416709247977,
+        "p99" : 11.274374963250011,
+        "records_scanned" : 999999
+      },
+      "no_result" : {
+        "max" : 3.6377083160914481,
+        "metadata_values_read" : 0,
+        "p50" : 3.5799583420157433,
+        "p90" : 3.6116666742600501,
+        "p95" : 3.6118749994784594,
+        "p99" : 3.6377083160914481,
+        "records_scanned" : 999999
+      },
+      "one_character" : {
+        "max" : 53.145666664931923,
+        "metadata_values_read" : 52,
+        "p50" : 49.304041662253439,
+        "p90" : 50.235583330504596,
+        "p95" : 50.298041664063931,
+        "p99" : 53.145666664931923,
+        "records_scanned" : 999999
+      },
+      "substring" : {
+        "max" : 94.794750039000064,
+        "metadata_values_read" : 51,
+        "p50" : 51.943958329502493,
+        "p90" : 57.844541675876826,
+        "p95" : 58.566708292346448,
+        "p99" : 94.794750039000064,
+        "records_scanned" : 999999
+      }
+    },
+    "name_descending" : {
+      "exact" : {
+        "max" : 6.290083343628794,
+        "metadata_values_read" : 1,
+        "p50" : 5.9624166460707784,
+        "p90" : 6.0162916779518127,
+        "p95" : 6.188833387568593,
+        "p99" : 6.290083343628794,
+        "records_scanned" : 999999
+      },
+      "no_result" : {
+        "max" : 4.002541652880609,
+        "metadata_values_read" : 0,
+        "p50" : 3.597125003580004,
+        "p90" : 3.6855833022855222,
+        "p95" : 3.8108750013634562,
+        "p99" : 4.002541652880609,
+        "records_scanned" : 999999
+      },
+      "one_character" : {
+        "max" : 64.108333317562938,
+        "metadata_values_read" : 52,
+        "p50" : 53.627124987542629,
+        "p90" : 57.248416647780687,
+        "p95" : 61.728083353955299,
+        "p99" : 64.108333317562938,
+        "records_scanned" : 999999
+      },
+      "substring" : {
+        "max" : 61.451041663531214,
+        "metadata_values_read" : 51,
+        "p50" : 54.958708351477981,
+        "p90" : 55.892625008709729,
+        "p95" : 56.248833308927715,
+        "p99" : 61.451041663531214,
+        "records_scanned" : 999999
+      }
+    },
+    "relevance_ascending" : {
+      "exact" : {
+        "max" : 19.356458331458271,
+        "metadata_values_read" : 1,
+        "p50" : 6.1322500114329159,
+        "p90" : 8.6634583421982825,
+        "p95" : 8.8515416719019413,
+        "p99" : 19.356458331458271,
+        "records_scanned" : 999999
+      },
+      "no_result" : {
+        "max" : 9.5269583398476243,
+        "metadata_values_read" : 0,
+        "p50" : 3.8001250359229743,
+        "p90" : 5.9919583145529032,
+        "p95" : 6.4440416754223406,
+        "p99" : 9.5269583398476243,
+        "records_scanned" : 999999
+      },
+      "one_character" : {
+        "max" : 38.521250011399388,
+        "metadata_values_read" : 52,
+        "p50" : 34.258208354003727,
+        "p90" : 36.930041620507836,
+        "p95" : 37.202499981503934,
+        "p99" : 38.521250011399388,
+        "records_scanned" : 999999
+      },
+      "substring" : {
+        "max" : 77.589000051375479,
+        "metadata_values_read" : 51,
+        "p50" : 39.41112500615418,
+        "p90" : 59.635583311319351,
+        "p95" : 65.606749965809286,
+        "p99" : 77.589000051375479,
+        "records_scanned" : 999999
+      }
+    },
+    "size_ascending" : {
+      "exact" : {
+        "max" : 5.9333750396035612,
+        "metadata_values_read" : 1,
+        "p50" : 5.8494166587479413,
+        "p90" : 5.8670000289566815,
+        "p95" : 5.8985416544601321,
+        "p99" : 5.9333750396035612,
+        "records_scanned" : 999999
+      },
+      "no_result" : {
+        "max" : 3.5868750419467688,
+        "metadata_values_read" : 0,
+        "p50" : 3.5169583279639482,
+        "p90" : 3.5549166495911777,
+        "p95" : 3.5791249829344451,
+        "p99" : 3.5868750419467688,
+        "records_scanned" : 999999
+      },
+      "one_character" : {
+        "max" : 17.191291670314968,
+        "metadata_values_read" : 999900,
+        "p50" : 16.556999995373189,
+        "p90" : 16.904833319131285,
+        "p95" : 16.98316668625921,
+        "p99" : 17.191291670314968,
+        "records_scanned" : 999999
+      },
+      "substring" : {
+        "max" : 17.200416652485728,
+        "metadata_values_read" : 999899,
+        "p50" : 16.878791677299887,
+        "p90" : 17.085375031456351,
+        "p95" : 17.179250018671155,
+        "p99" : 17.200416652485728,
+        "records_scanned" : 999999
+      }
+    },
+    "size_descending" : {
+      "exact" : {
+        "max" : 5.9463750221766531,
+        "metadata_values_read" : 1,
+        "p50" : 5.8512916439212859,
+        "p90" : 5.8901666780002415,
+        "p95" : 5.9398333542048931,
+        "p99" : 5.9463750221766531,
+        "records_scanned" : 999999
+      },
+      "no_result" : {
+        "max" : 3.5602916614152491,
+        "metadata_values_read" : 0,
+        "p50" : 3.4996250178664923,
+        "p90" : 3.5256666596978903,
+        "p95" : 3.5412500146776438,
+        "p99" : 3.5602916614152491,
+        "records_scanned" : 999999
+      },
+      "one_character" : {
+        "max" : 19.421249977312982,
+        "metadata_values_read" : 999900,
+        "p50" : 16.638916684314609,
+        "p90" : 17.683374986518174,
+        "p95" : 18.390041659586132,
+        "p99" : 19.421249977312982,
+        "records_scanned" : 999999
+      },
+      "substring" : {
+        "max" : 17.727458325680345,
+        "metadata_values_read" : 999899,
+        "p50" : 17.04966661054641,
+        "p90" : 17.641999991610646,
+        "p95" : 17.644416715484113,
+        "p99" : 17.727458325680345,
+        "records_scanned" : 999999
+      }
+    }
+  },
+  "version" : "0.6.0",
+  "warm_full_namespace_scans" : 0
+}

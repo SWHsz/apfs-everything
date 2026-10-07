@@ -5,6 +5,12 @@
 #include <errno.h>
 #include <string.h>
 #include <mach/mach.h>
+#include <malloc/malloc.h>
+
+size_t apfs_release_allocator_pages(void) {
+    /* Only unused allocator pages; live correctness objects remain untouched. */
+    return malloc_zone_pressure_relief(NULL, 0);
+}
 
 int apfs_process_resources(APFSProcessResources *output) {
     if (!output) { errno = EINVAL; return -1; }

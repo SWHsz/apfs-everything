@@ -1,0 +1,113 @@
+{
+  "actual_cpu_busy": {
+    "cpu_idle_ewma": 0.0032208730621783197,
+    "cpu_sampler_wakeups": 17,
+    "ordinary_deferred": true,
+    "owned_cpu_workers": 10,
+    "recovery_resumed": true
+  },
+  "benchmark": "lightweight",
+  "fake_pressure": {
+    "cache_before": {
+      "hot_directory_cache_bytes": 2214126,
+      "hot_directory_cache_capacity": 8192,
+      "hot_directory_cache_entries": 5001
+    },
+    "cache_critical": {
+      "hot_directory_cache_bytes": 236,
+      "hot_directory_cache_capacity": 1,
+      "hot_directory_cache_entries": 1
+    },
+    "cache_warning": {
+      "hot_directory_cache_bytes": 907264,
+      "hot_directory_cache_capacity": 2048,
+      "hot_directory_cache_entries": 2048
+    },
+    "fixture": "5000 distinct directories with 200-byte basename padding; injected pressure, no system-wide pressure allocation",
+    "incremental_during_busy": true,
+    "maintenance_resumed": true,
+    "old_base_queryable": true,
+    "ordinary_deferred": true,
+    "passed": true,
+    "physical_footprint_decreased": false,
+    "process_after_pressure": {
+      "compressed_bytes": 0,
+      "dirty_private_pages": null,
+      "disk_bytes_read": 49152,
+      "disk_bytes_written": 18636800,
+      "external_resident_bytes": 9076736,
+      "idle_wakeups": 0,
+      "internal_resident_bytes": 27246592,
+      "interrupt_wakeups": 193,
+      "logical_bytes_written": 24613888,
+      "major_faults": 1011,
+      "minor_faults": 5832,
+      "pageins": 1011,
+      "peak_compressed_bytes": 0,
+      "peak_physical_footprint": 27673176,
+      "peak_rss_bytes": 41205760,
+      "physical_footprint": 27673176,
+      "private_anonymous_footprint": null,
+      "rss_bytes": 37535744,
+      "system_cpu_seconds": 0.688,
+      "uptime": 441961.5758532084,
+      "user_cpu_seconds": 2.207148
+    },
+    "process_before_pressure": {
+      "compressed_bytes": 0,
+      "dirty_private_pages": null,
+      "disk_bytes_read": 49152,
+      "disk_bytes_written": 18636800,
+      "external_resident_bytes": 8929280,
+      "idle_wakeups": 0,
+      "internal_resident_bytes": 27213824,
+      "interrupt_wakeups": 191,
+      "logical_bytes_written": 24613888,
+      "major_faults": 1011,
+      "minor_faults": 5820,
+      "pageins": 1011,
+      "peak_compressed_bytes": 0,
+      "peak_physical_footprint": 27640408,
+      "peak_rss_bytes": 41205760,
+      "physical_footprint": 27640408,
+      "private_anonymous_footprint": null,
+      "rss_bytes": 37355520,
+      "system_cpu_seconds": 0.687913,
+      "uptime": 441961.45823033334,
+      "user_cpu_seconds": 2.199585
+    },
+    "sampler_inactive_after_stop": true,
+    "sustained_idle_gate": true
+  },
+  "limits": "real filesystem bootstrap peak is measured by metadata-bench in a fresh process; fake pressure never allocates system-wide memory pressure",
+  "metadata_columns": {
+    "buffer_bytes": 16250000,
+    "elapsed_ms": 200.4657083307393,
+    "entries": 1000000,
+    "kind": "synthetic ordinal columns, no namespace Swift graph",
+    "maximum_output_chunk_bytes": 65536,
+    "peak_observed_rss_bytes": 41205760,
+    "process_peak_rss_bytes": 41205760,
+    "resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 0,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 16269312,
+      "idle_wakeups": 0,
+      "interrupt_wakeups": 0,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 16318720,
+      "major_faults": 992,
+      "minor_faults": 2020,
+      "pageins": 992,
+      "peak_compressed_bytes": 0,
+      "peak_rss_bytes": 41205760,
+      "rss_after_bytes": 8765440,
+      "rss_before_bytes": 8470528,
+      "system_cpu_seconds": 0.012379999999999999,
+      "user_cpu_seconds": 0.182036,
+      "wall_ms": 200.47066663391888
+    }
+  },
+  "version": "0.6.0"
+}

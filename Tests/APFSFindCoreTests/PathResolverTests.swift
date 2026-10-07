@@ -12,6 +12,7 @@ final class PathResolverTests: XCTestCase {
         let resolver = PathResolverSnapshot(base:base,cache:hot)
         hot.reset(version:resolver.version,root:identity.root)
         XCTAssertEqual(resolver.resolve(identity.root),.base(0))
+        XCTAssertEqual(resolver.resolve(identity.root+"/d0/深/Café.txt"),resolver.resolve(identity.root+"/d0/深/Cafe\u{301}.txt"))
         XCTAssertNil(resolver.resolve("/outside")); XCTAssertNil(resolver.resolve(identity.root+"/d0/深/Cafe\u{301}.txt/child"))
         for i in 0..<1100 { XCTAssertNotNil(resolver.resolveDirectory(identity.root+"/d\(i)/深")) }
         XCTAssertLessThanOrEqual(hot.statistics["hot_directory_cache_entries"]!,1024)

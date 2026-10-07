@@ -223,7 +223,8 @@ public final class FileIndex: @unchecked Sendable {
     public func search(_ query: String, limit: Int = 50) -> SearchResult {
         return search(.init(query: query, limit: limit))
     }
-    public func search(_ request: SearchRequest) -> SearchResult {
+    public func search(_ request: SearchRequest) -> SearchResult { search(request,metadata:{ _ in .unknown }) }
+    public func search(_ request: SearchRequest, metadata:(String)->FileMetadataValue) -> SearchResult {
         let start = DispatchTime.now().uptimeNanoseconds
         let foldedQuery = FileEntry.fold(request.query)
         let limit = request.limit
@@ -235,7 +236,8 @@ public final class FileIndex: @unchecked Sendable {
                     if ordinal % 4096 == 0, request.cancellation.isCancelled { break }
                     guard !entry.isDeleted && entry.foldedName.contains(foldedQuery) else { continue }
                     let rank = entry.foldedName == foldedQuery ? 0 : (entry.foldedName.hasPrefix(foldedQuery) ? 1 : 2)
-                    ranked.insert(SearchHit(path:entry.path,kind:entry.kind,matchRank:MatchRank(rawValue:rank)!))
+                    let value = metadata(entry.path)
+                    ranked.insert(SearchHit(path:entry.path,kind:entry.kind,matchRank:MatchRank(rawValue:rank)!,logicalSize:entry.kind == .file ? value.logicalSize : nil,modificationTimeNanoseconds:value.modificationTimeNanoseconds))
                 }
             }
             return SearchResult(hits:ranked.sorted(),latencyMilliseconds:Double(DispatchTime.now().uptimeNanoseconds-start)/1_000_000,

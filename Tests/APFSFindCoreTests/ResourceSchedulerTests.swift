@@ -69,9 +69,28 @@ final class ResourceSchedulerTests: XCTestCase, @unchecked Sendable {
     XCTAssertTrue(hybrid.requiresRecovery); XCTAssertEqual(hybrid.capture()?.delta.count,32)
     XCTAssertNotNil(hybrid.entry(at:identity.root+"/link")); hybrid.install(base:base); XCTAssertFalse(hybrid.requiresRecovery)
   }
+  func testDynamicQueuePressureUnblocksAfterStormWithoutAnotherMutation() async throws {
+    let signals = FakeResourceSignals(.init(timestamp:0,cpuIdleEWMA:1)), scheduler = MaintenanceScheduler(signals:signals), volume = UUID()
+    let pressure = QueuePressureBox()
+    scheduler.registerPressure(volumeID:volume) { pressure.current() }
+    let token = CancellationToken(), job = Task { try await scheduler.acquire(volumeID:volume,kind:.compaction,urgency:.opportunistic,cancellation:token) }
+    await waitQueue(scheduler,count:1)
+    signals.update(.init(timestamp:11,cpuIdleEWMA:1)); await settle()
+    let before = await scheduler.snapshot(); XCTAssertNil(before.first?.startedAt)
+    pressure.clear(); signals.update(.init(timestamp:12,cpuIdleEWMA:1))
+    let lease = try await job.value; XCTAssertNoThrow(try lease.checkpoint()); lease.release()
+    await waitQueue(scheduler,count:0); scheduler.unregisterPressure(volumeID:volume)
+  }
   func testScanResourceYieldIsNotAnUnreadableDirectory() throws {
     let tree = try TemporaryTree(); try tree.directory("x"); try tree.file("x/needle")
     let scanner = BulkScanner(root:tree.root,checkpoint:{throw MaintenanceYield(reason:"critical")})
     XCTAssertThrowsError(try scanner.scan()) { XCTAssertTrue($0 is MaintenanceYield) }
   }
+}
+
+private final class QueuePressureBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 1000
+  func current()->InternalResourcePressure { lock.withLock { var result = InternalResourcePressure(); result.eventQueueDepth = count; return result } }
+  func clear() { lock.withLock { count = 0 } }
 }

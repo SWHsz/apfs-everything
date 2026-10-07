@@ -71,24 +71,47 @@ public final class DirectoryReconciler {
         var pending: [(path: String, reset: Bool)] = [(path, false)]
         var seen = Set<String>()
         var retryParents = Set<String>()
+        let start = ProcessInfo.processInfo.systemUptime
         while let work = pending.popLast(), !cancellation.isCancelled {
-            if plan.mutations.count >= 100_000 || seen.count >= 16_384 {
+            if ProcessInfo.processInfo.systemUptime-start >= 0.05 {
+                let resources = SystemResourceSignals.shared.current()
+                if resources.activeQueries > 0 || resources.memoryPressure == .critical { plan.mutations.removeAll(); plan.requiresRebuild = true; metrics.record("reconcile_resource_yields"); break }
+            }
+            if plan.mutations.count >= 100_000 || pending.count > 100_000 {
                 // Atomic diffs cannot grow without bound; recovery keeps the old
                 // cursor and scans on a resource-aware maintenance queue.
+                metrics.record(plan.mutations.count >= 100_000 ? "reconcile_mutation_limit" : "reconcile_frontier_limit")
                 plan.mutations.removeAll(); plan.requiresRebuild = true; break
             }
+            // Filesystem children are strictly deeper paths and symlinks are
+            // never traversed. Keep only a bounded duplicate window: visiting
+            // 16k unchanged directories is not evidence that recovery is needed.
+            if seen.count >= 16_384 { seen.removeAll(keepingCapacity:true) }
             let directory = work.path
             guard seen.insert(directory).inserted else { continue }
             do {
                 let startStamp = BulkScanner.directoryStamp(directory)
                 let actual = try scanner.readDirectory(directory, rootDeviceID: rootDeviceID, cancellation: cancellation)
+                // A mostly deleted wide base can have a tiny actual listing.
+                // Bound the old side before reconstructing all of its paths.
+                if !work.reset, let hybrid = index as? HybridIndex,
+                   let oldCount = hybrid.childCount(of:directory), oldCount > 100_000 {
+                    plan.mutations.removeAll(); plan.requiresRebuild = true
+                    metrics.record("reconcile_old_children_limit"); break
+                }
                 // A parent replacement tombstones its old subtree during apply.
                 // Reinsert all observed descendants even if their inode survives.
                 let existing = work.reset ? [] : index.children(of: directory)
-                plan.mutations += Self.diff(existing: existing, actual: actual)
+                let changes = Self.diff(existing:existing,actual:actual)
+                guard changes.count <= 100_000-plan.mutations.count else {
+                    plan.mutations.removeAll(); plan.requiresRebuild = true
+                    metrics.record("reconcile_mutation_limit"); break
+                }
+                plan.mutations += changes
                 metrics.record("directory_reconciles")
                 let old = Dictionary(existing.map { ($0.path, $0) }, uniquingKeysWith: { _, b in b })
                 for child in actual where BulkScanner.shouldTraverse(entry: child, rootDeviceID: rootDeviceID) {
+                    guard PathCanonicalizer.parent(of:child.path) == directory else { continue }
                     // New/type-replaced directories can already contain a complete tree.
                     let replaced = old[child.path]?.hasSameDirectoryIdentity(as: child) != true
                     if subtree || work.reset || replaced {
@@ -98,6 +121,8 @@ public final class DirectoryReconciler {
                 let endStamp = BulkScanner.directoryStamp(directory)
                 if let startStamp, startStamp == endStamp { if stamps.count >= 8192 { stamps.removeAll(keepingCapacity:false) }; stamps[directory] = startStamp }
                 else { stamps.removeValue(forKey: directory) }
+            } catch is MaintenanceYield {
+                plan.mutations.removeAll(); plan.requiresRebuild = true; metrics.record("reconcile_resource_yields"); break
             } catch {
                 if cancellation.isCancelled { break }
                 let code = (error as? ScannerError)?.code ?? EIO

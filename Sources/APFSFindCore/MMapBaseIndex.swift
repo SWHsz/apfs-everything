@@ -290,8 +290,8 @@ public final class MMapBaseIndex: @unchecked Sendable {
       "file_id_nonzero_files": fileIDs, "file_id_nonzero_directories": directoryIDs]
   }
   static func less(_ a: (String, String, UInt8), _ b: (String, String, UInt8)) -> Bool {
-    if Array(a.0.utf8) != Array(b.0.utf8) { return a.0.utf8.lexicographicallyPrecedes(b.0.utf8) }
-    if Array(a.1.utf8) != Array(b.1.utf8) { return a.1.utf8.lexicographicallyPrecedes(b.1.utf8) }
+    if !a.0.utf8.elementsEqual(b.0.utf8) { return a.0.utf8.lexicographicallyPrecedes(b.0.utf8) }
+    if !a.1.utf8.elementsEqual(b.1.utf8) { return a.1.utf8.lexicographicallyPrecedes(b.1.utf8) }
     return a.2 < b.2
   }
   private func n<T: FixedWidthInteger>(_ o: Int, _ type: T.Type) -> T {
@@ -347,10 +347,26 @@ public final class MMapBaseIndex: @unchecked Sendable {
       let k = (foldedName(at: id), self.name(at: id), record(at: id).kind.snapshotCode)
       if Self.less(k, key) { lo = m + 1 } else { hi = m }
     }
-    guard lo < Int(r.childCount) else { return nil }
-    let id: UInt32 = n(childOffset + (Int(r.firstChild) + lo) * 4, UInt32.self)
-    return Array(self.name(at: id).utf8) == Array(name.utf8) ? id : nil
+    if lo < Int(r.childCount) {
+      let id: UInt32 = n(childOffset + (Int(r.firstChild) + lo) * 4, UInt32.self)
+      if self.name(at:id) == name { return id }
+    }
+    // The on-disk child table remains byte ordered (v2 compatibility). NFC/NFD
+    // equivalents can have different raw-name byte positions inside a folded
+    // group. Find only that group, without allocating a sibling array.
+    lo = 0; hi = Int(r.childCount)
+    while lo < hi {
+      let m = (lo+hi)/2, id:UInt32 = n(childOffset+(Int(r.firstChild)+m)*4,UInt32.self)
+      if foldedBytes(at:id).lexicographicallyPrecedes(key.0.utf8) { lo = m+1 } else { hi = m }
+    }
+    while lo < Int(r.childCount) {
+      let id:UInt32 = n(childOffset+(Int(r.firstChild)+lo)*4,UInt32.self)
+      guard foldedBytes(at:id).elementsEqual(key.0.utf8) else { break }
+      if self.name(at:id) == name { return id }; lo += 1
+    }
+    return nil
   }
+
   public func reconstructPath(_ i: UInt32) -> String {
     var parts: [String] = []
     var id = i

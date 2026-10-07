@@ -113,13 +113,13 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     public func readDirectory(_ path: String, rootDeviceID: UInt64,
                               cancellation: CancellationToken) throws -> [NamespaceEntry] {
         let entries = try readScannedDirectory(path, rootDeviceID: rootDeviceID,
-                                        cancellation: Optional(cancellation)).map(\.namespace)
+                                        cancellation: Optional(cancellation),maximumEntries:100_000, yieldToQueries:true).map(\.namespace)
         guard !cancellation.isCancelled else { throw ScannerError(path: path, code: ECANCELED) }
         return entries
     }
 
     public func readScannedDirectory(_ path: String, rootDeviceID: UInt64,
-                               cancellation: CancellationToken? = nil, collectEntries:Bool = true, visit:(@Sendable ([ScannedEntry])->Void)? = nil) throws -> [ScannedEntry] {
+                               cancellation: CancellationToken? = nil, collectEntries:Bool = true, visit:(@Sendable ([ScannedEntry])->Void)? = nil, maximumEntries:Int? = nil, yieldToQueries:Bool = false) throws -> [ScannedEntry] {
         applyThreadPolicy()
         var error: Int32 = 0
         guard let reader = apfs_bulk_reader_open(path, rootDeviceID, 1, &error) else {
@@ -131,6 +131,10 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
         var result: [ScannedEntry] = []
         while cancellation?.isCancelled != true {
             try checkpoint()
+            if yieldToQueries && result.count >= 4096 {
+                let pressure = SystemResourceSignals.shared.current()
+                if pressure.activeQueries > 0 || pressure.memoryPressure == .critical { throw MaintenanceYield(reason:"reconciliation query/pressure") }
+            }
             var records: UnsafePointer<APFSDirectoryEntry>?
             var count = 0
             guard apfs_bulk_reader_next(reader, &records, &count) == 0 else {
@@ -167,6 +171,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
             }
             visit?(page)
             result += collectEntries ? page : page.filter { Self.shouldTraverse(entry:$0.namespace,rootDeviceID:rootDeviceID) }
+            if let maximumEntries, result.count > maximumEntries { throw ScannerError(path:path,code:EOVERFLOW) }
             metrics.record("scanner_entries",by:page.count)
         }
         metrics.record("scanner_directories")

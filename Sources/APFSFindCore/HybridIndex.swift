@@ -149,6 +149,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   }
   public func replace(with replacement: FileIndex) {
     lock.withLock {
+      overflowed = false
       let old = bootstrap?.stats().generation ?? generation
       generation = max(old, replacement.stats().generation) + 1
       bootstrap = replacement
@@ -363,6 +364,9 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       return overlayBytes >= policy.safetyByteLimit
         || (trigger && ProcessInfo.processInfo.systemUptime - lastMutation >= policy.quietSeconds)
     }
+  }
+  public func resourcePressure() -> InternalResourcePressure {
+    lock.withLock { var result = InternalResourcePressure(); result.namespaceEntries = delta.count; result.namespaceBytes = overlayBytes; result.tombstones = dead; result.tombstoneRatio = Double(dead)/Double(max(1,base?.count ?? 1)); return result }
   }
   public func hybridStats() -> [String: Any] {
     lock.withLock {

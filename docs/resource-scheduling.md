@@ -6,7 +6,7 @@ ResourceSignalProviding is injectable: deterministic tests use FakeResourceSigna
 explicit fixture jobs can use an ungated scheduler. SystemResourceSignals uses
 DispatchSourceMemoryPressure and ProcessInfo thermal/power notifications. Its
 system CPU counter timer runs every two seconds **only with pending/running work**.
-An empty maintenance queue cancels that timer. EWMA alpha is 0.4.
+An empty maintenance queue cancels that timer. EWMA alpha is 0.4. Pending samples also refresh ProcessInfo thermal/power state so CLI jobs do not depend on a main-run-loop notification delivery.
 
 Opportunistic jobs require normal memory pressure, nominal/fair thermal state,
 power mode off, no active query, ten seconds of interaction quiet, event queue
@@ -14,6 +14,8 @@ power mode off, no active query, ten seconds of interaction quiet, event queue
 seconds, or <15% immediately, yields at a chunk boundary. Required recovery can
 run on a busy system with one worker; interaction and critical memory still yield.
 Emergency work proceeds in bounded chunks with a small throttle, even when busy.
+Internal pressure is read through per-volume callbacks at decisions/checkpoints, outside the scheduler lock. A drained event storm can therefore unblock queued work without another namespace mutation; stale queue observations do not keep jobs waiting forever. Event IDs are not interpreted as event counts.
+
 Operating states are interactive, busy, opportunistic, maintaining, emergency and
 suspended. Deferred jobs stay queued; sampling is therefore intentionally active
 while deferred work exists.
@@ -30,6 +32,8 @@ a dirty bootstrap prevents writing a falsely clean metadata cursor.
 
 Correctness overlays survive pressure. Each hot directory cache shrinks to 25%
 (minimum 1024) on warning, and root only on critical; no eager refill on normal.
+After shrinking caches, the C shim asks malloc_zone_pressure_relief to return already freed allocator pages. This is best effort, affects no live objects, and does not replace kernel footprint measurements. A one-shot release also follows completed namespace builds after their temporary frame is released.
+
 Namespace overlay stops accepting changes at 500k entries or 128 MiB estimated
 bytes. Core marks recovery and stops advancing the processed/durable namespace
 cursor. Recovery is emergency, using a fresh scan and conservative replay fence.
@@ -38,14 +42,20 @@ namespace compaction plus metadata recovery. The event inbox and rebuild buffers
 retain their existing bounded overflow recovery. A >100k-record atomic subtree
 delete/diff goes to recovery rather than monopolizing the writer. Metadata subtree
 walks retain bounded pending directories and pause for active queries or critical
-pressure. There is no periodic maintenance or full-disk idle scan.
+pressure. Directory diff/update collection is capped at 100k records and pending directory frontiers at 100k; larger frontiers invalidate and recover. The frontier limit is separate from the 16,384-entry duplicate window. The duplicate window rolls at 16,384 instead of treating a large unchanged tree as a recovery error. Child paths must be direct descendants, so this does not admit filesystem cycles. Metadata bootstrap consumes bulk pages directly instead of accumulating all files in wide directories. There is no periodic maintenance or full-disk idle scan.
 
 The desktop reports window visibility, input, sorting, paging and file actions.
 Active queries are bracketed in the core HybridIndex as well as desktop submission.
-A visible but inactive window does not defer maintenance forever. Pressure gauge
+A visible but inactive window does not defer maintenance forever. The UI shows a short reason while work waits for resource conditions. Hidden result refresh does not reset the interaction quiet period. Pressure gauge
 samples and scheduler counters are exposed through metrics; no telemetry or log
 files are introduced.
 
 Limits: yield restarts a build rather than saving cross-process progress. Recovery
 still temporarily constructs the reference FileIndex. Byte limits are conservative
 application estimates, separate from Mach physical/internal/external gauges.
+
+While recovery is scheduled/running, obsolete namespace reconciliation stops and the durable cursor remains pinned. A restarted stream replays from the new pre-scan fence instead of applying old buffered hints to the fresh scan. Its bounded in-process buffer overflow alone does not invalidate a complete fresh replay; actual stream drop flags still request recovery.
+
+Recovered scans are published as namespace v2 plus streamed metadata v1 under the scan maintenance lease before starting replay. The complete scan FileIndex is then released; catching-up queries use mmap rather than retaining a large Swift object graph until HistoryDone. The scan metadata seed is compact, and the namespace generation advances on recovery publication. A one-shot allocator relief follows the completed frame.
+
+Reconciliation checks a mapped directory’s old child count before reconstructing paths (100k cap), even when most old children have disappeared. Its cumulative atomic diff is strictly capped at 100k, including the final directory. A rejected plan publishes no partial mutations and requests fenced recovery.

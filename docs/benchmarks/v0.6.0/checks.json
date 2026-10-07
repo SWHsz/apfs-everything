@@ -1,0 +1,40 @@
+{
+  "scope": "local final core source; CLI-only wording adjustment followed by release rebuild; optional real mount not supplied",
+  "checks": {
+    "normal": {
+      "core_tests": 200,
+      "desktop_tests": 20,
+      "optional_mount_skips": 1,
+      "failures": 0,
+      "core_seconds": 82.813,
+      "desktop_seconds": 0.923,
+      "sanitizer_diagnostics": false
+    },
+    "asan": {
+      "core_tests": 200,
+      "desktop_tests": 20,
+      "optional_mount_skips": 1,
+      "failures": 0,
+      "core_seconds": 194.512,
+      "desktop_seconds": 0.935,
+      "sanitizer_diagnostics": false
+    },
+    "tsan": {
+      "core_tests": 200,
+      "desktop_tests": 20,
+      "optional_mount_skips": 1,
+      "failures": 0,
+      "core_seconds": 268.816,
+      "desktop_seconds": 1.103,
+      "sanitizer_diagnostics": false
+    }
+  },
+  "source_and_tests_sha256": "dde9f612911bab7b3704ef34e94d87182a35b8be470294c046ee46fba086ed9e",
+  "namespace_format": 2,
+  "metadata_format": 1,
+  "desktop_version": "0.6.0",
+  "desktop_build": 600,
+  "release_build": true,
+  "codesign_verified": true,
+  "ui_limit": "Mac locked; no new physical keyboard, menus, sleep/wake validation"
+}

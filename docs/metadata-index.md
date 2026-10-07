@@ -1,6 +1,10 @@
-# Metadata sidecar v1（v0.5.0）
+# Metadata sidecar v1（v0.6.0；磁盘格式不变）
 
 Namespace snapshot v2 的 record layout 完全保留。每个 namespace base 旁新增可独立失效、重建的 `.apfsmeta` 和 `.apfsmeta.state`。文件只保存列值及身份，不保存路径、String 或预排序 ordinal 数组。运行时使用只读 mmap，加 RAM overrides/delta/deleted overlay；查询捕获强引用及 COW 状态后在锁外扫描。
+
+v0.6 metadata ordinal lookup 使用共享 component-walk resolver，不再保留全量目录表。Cold seed 与 bootstrap 使用 16.25 bytes/entry 的紧凑临时 MAP_PRIVATE buffer，创建后 unlink；输出分块 pwrite，增量 CRC、完整只读验证与 atomic publish 保持不变。没有完整 Swift metadata 对象数组或完整 Data payload。
+
+Bootstrap/checkpoint 在 chunk 边界响应资源及取消。Yield 清理 tmp 并重排队，旧合法 sidecar 保持可查询；bootstrap pending 状态保持 dirty，阻止错误推进 clean cursor。目录 rename frozen alias 深度最多 16、直接 alias 数最多 64、估算保留字节最多 32 MiB。达到上限时拒绝新 alias，改为 bulk subtree refresh 并请求 emergency namespace compaction；查询还有防御性迭代上限。ASCII comparator 保留快速路径，Unicode 按 canonical Swift String 语义统一所有层。
 
 ## 二进制格式
 

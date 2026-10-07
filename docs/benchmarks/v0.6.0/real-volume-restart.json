@@ -1,0 +1,12 @@
+{
+  "scope": "actual Data 1 CLI warm replay after forced termination of owned native app; validates existing owned fixture namespace; UI remains blocked by locked Mac",
+  "live": true,
+  "expected_results": 12,
+  "observed_unique_results": 12,
+  "namespace_matches_owned_fixture": true,
+  "fast_quit_seconds": 9.938689665985294,
+  "exit_code": 0,
+  "full_scans_reported": [
+    "full_scans: 0"
+  ]
+}

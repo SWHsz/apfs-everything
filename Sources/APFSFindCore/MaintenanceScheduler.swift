@@ -33,6 +33,7 @@ private final class ResourceGate: @unchecked Sendable {
   private var idleSince: Double?, busySince: Double?
   private var lastTimestamp = -Double.infinity
   private var pressures: [UUID: InternalResourcePressure] = [:]
+  private var pressureSources: [UUID:@Sendable ()->InternalResourcePressure] = [:]
   init(_ provider: (any ResourceSignalProviding)?, _ policy: MaintenancePolicy) { self.provider = provider; self.policy = policy }
   func update(_ snapshot: ResourceSnapshot) {
     lock.withLock {
@@ -42,12 +43,15 @@ private final class ResourceGate: @unchecked Sendable {
     }
   }
   func pressure(_ value: InternalResourcePressure, volume: UUID) { lock.withLock { pressures[volume] = value } }
+  func register(_ volume:UUID,source:@escaping @Sendable ()->InternalResourcePressure) { lock.withLock { pressureSources[volume] = source } }
+  func unregister(_ volume:UUID) { lock.withLock { pressureSources.removeValue(forKey:volume); pressures.removeValue(forKey:volume) } }
   func clear() { lock.withLock { idleSince = nil; busySince = nil } }
   func state(urgency: MaintenanceUrgency, volume: UUID, starting: Bool) -> MaintenanceOperatingState {
     guard let provider else { return urgency == .emergency ? .emergency : .opportunistic }
     let s = provider.current()
+    let source = lock.withLock { pressureSources[volume] }
+    let internalValue = source?() ?? lock.withLock { pressures[volume] ?? .init() }
     return lock.withLock {
-      let internalValue = pressures[volume] ?? .init()
       if urgency == .emergency || internalValue.emergency { return .emergency }
       if s.memoryPressure == .critical { return .suspended }
       if s.activeQueries > 0 || s.interactive || (urgency == .opportunistic && s.lastInteractionAge < policy.quietSeconds) { return .interactive }
@@ -125,6 +129,8 @@ public actor MaintenanceScheduler {
   /// Explicit jobs/tests can opt out of resource gating; production uses shared.
   public init(signals: (any ResourceSignalProviding)? = nil, policy: MaintenancePolicy = .init()) { self.signals = signals; gate = ResourceGate(signals, policy) }
   deinit { if let signalObserver { signals?.removeObserver(signalObserver) } }
+  nonisolated public func registerPressure(volumeID:UUID,source:@escaping @Sendable ()->InternalResourcePressure) { gate.register(volumeID,source:source) }
+  nonisolated public func unregisterPressure(volumeID:UUID) { gate.unregister(volumeID) }
   public func updatePressure(_ pressure: InternalResourcePressure, volumeID: UUID) { gate.pressure(pressure, volume: volumeID); pump() }
   public func acquire(volumeID: UUID, kind: MaintenanceKind, priority: Int = 0, urgency: MaintenanceUrgency = .required,
                       cancellation: CancellationToken) async throws -> MaintenanceLease {

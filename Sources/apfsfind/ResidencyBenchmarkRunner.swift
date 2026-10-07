@@ -1,4 +1,5 @@
 import APFSFindCore
+import Darwin
 import Foundation
 
 /// Opens daily indexes read-only. Missing metadata is built only in owned scratch.
@@ -41,6 +42,15 @@ struct ResidencyBenchmarkRunner {
             for index in indices { _ = index.search(.init(query:"f",limit:51,sort:sort)) }
         }
         phase("after_30_broad_queries")
+        for (index,source) in zip(indices,sources) {
+            let base = index.mappedBase!
+            var paths:[String] = []
+            for id in 1..<base.count where base.record(at:UInt32(id)).kind == .directory {
+                paths.append(base.reconstructPath(UInt32(id))); if paths.count == 2000 { break }
+            }
+            for _ in 0..<2 { for path in paths { _ = index.entry(at:path); _ = source.capture().ordinal(path) } }
+        }
+        phase("after_hot_directory_probes")
         let queries = metadataQueries(indices,exact:indices[0].mappedBase!.name(at:1))
         phase("after_query_benchmark")
         for (index,source) in zip(indices,sources) {
@@ -71,4 +81,59 @@ struct ResidencyBenchmarkRunner {
         _ = try MetadataWriter.write(store:store,base:base.header,cursor:identity.currentEventID(),value:{ values.value(Int($0)) })
         return try store.metadataReader(base:base.header)
     }
+}
+
+/// Internal setup for an independent native smoke bundle. Cache must already be
+/// an owned UUID benchmark directory; daily indexes are never written here.
+func prepareResourceSmokeCache(_ directory:String) throws -> Int32 {
+    guard PathCanonicalizer.parent(of:directory) == "/private/tmp",
+          URL(fileURLWithPath:directory).lastPathComponent.hasPrefix("apfsfind-real-cache-"),
+          UUID(uuidString:String(URL(fileURLWithPath:directory).lastPathComponent.dropFirst("apfsfind-real-cache-".count))) != nil else { throw CLIError.usage("Smoke preparation requires a UUID benchmark cache") }
+    var reports:[[String:Any]] = []
+    for root in ["/","/Volumes/Data 1"] {
+        let identity = try VolumeIdentity.discover(root:root), store = try SnapshotStore(directory:directory,identity:identity)
+        let base = try store.reader(expectedIdentity:identity).mappedBase!
+        let meta = MetadataIndexCoordinator(); meta.bind(namespace:base); let lookup = meta.capture()
+        let runtime = HybridIndex(base:base), buffer = try MetadataBuildBuffer(count:base.count,directory:directory)
+        let fence = identity.currentEventID(), scanner = BulkScanner(root:root,excludedRoots:[directory,SnapshotStore.defaultDirectory])
+        var pending = [root], unreadable = 0, races = 0
+        TerminalOutput.info("Preparing current namespace and metadata for native smoke: \(root)")
+        // A current full traversal with bounded changed state avoids replaying
+        // days of benchmark fixture events. Capture E0 before traversal; the
+        // native stream still replays every race after that fence.
+        while let path = pending.popLast() {
+            do {
+                let entries = try scanner.readScannedDirectory(path,rootDeviceID:identity.deviceID)
+                buffer.update(entries.compactMap { entry in
+                    if let id = lookup.ordinal(entry.namespace.path) {
+                        let r = base.record(at:id)
+                        if r.kind == entry.namespace.kind, r.fileID == (entry.namespace.fileID ?? 0) { return (Int(id),entry.metadata) }
+                    }
+                    meta.update(path:entry.namespace.path,value:entry.metadata); return nil
+                })
+                let changes = DirectoryReconciler.diff(existing:runtime.children(of:path),actual:entries.map(\.namespace))
+                runtime.apply(changes)
+                guard !runtime.requiresRecovery else { throw CLIError.startupFailed("smoke preparation exceeded bounded delta; use fresh cold cache") }
+                pending += entries.filter { BulkScanner.shouldTraverse(entry:$0.namespace,rootDeviceID:identity.deviceID) }.map(\.namespace.path)
+            } catch let error as ScannerError where [EACCES,EPERM,ENODATA,ENOENT,ENOTDIR,ELOOP].contains(error.code) {
+                if [ENOENT,ENOTDIR,ELOOP].contains(error.code) { races += 1 } else { unreadable += 1 }
+            }
+        }
+        let namespaceCapture = runtime.capture()!, metadataCapture = meta.capture()
+        var metadataFailure:Error?
+        let result = try SnapshotV2Writer.write(source:.hybrid(namespaceCapture),identity:identity,generation:namespaceCapture.generation,cursor:fence,store:store,completed:{ refs,header in
+            do {
+                _ = try MetadataWriter.write(store:store,base:header,cursor:fence,value:{ ordinal in
+                    switch refs[Int(ordinal)] {
+                    case .base(let id): return metadataCapture.overlay.baseOverrides[id] ?? buffer.value(Int(id))
+                    case .delta(let id): return namespaceCapture.delta[id].map { metadataCapture.value(path:$0.entry.path) } ?? .unknown
+                    }
+                })
+            } catch { metadataFailure = error }
+        })
+        if let metadataFailure { throw metadataFailure }
+        let header = try store.metadataReader(base:result.header).header
+        reports.append(["root":root,"entries":result.header.recordCount,"metadata_bytes":header.fileLength,"unreadable_directories":unreadable,"normal_scan_races":races,"namespace_delta_entries":namespaceCapture.delta.count])
+    }
+    print(String(decoding:try JSONSerialization.data(withJSONObject:["prepared":true,"volumes":reports],options:[.sortedKeys]),as:UTF8.self)); return 0
 }

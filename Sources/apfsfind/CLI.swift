@@ -80,7 +80,7 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.5.0 — macOS filename search with snapshot recovery
+    apfsfind v0.6.0 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
@@ -96,6 +96,7 @@ enum CLI {
       apfsfind usability-bench --root PATH [--cache-dir EXISTING_TEST_CACHE] [--idle-seconds 60]
       apfsfind multivolume-bench --entries-per-volume 100000 --volumes 2
       apfsfind background-bench [--idle-seconds 60]
+      apfsfind lightweight-bench [--entries 1000000]
       apfsfind metadata-bench [--entries 100000]
       apfsfind metadata-bench --root PATH [--second-root PATH] [--cache-dir EXISTING_CACHE]
 
@@ -119,7 +120,7 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench", "background-bench", "metadata-bench", "residency-bench"].contains(first) else {
+            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench", "background-bench", "metadata-bench", "residency-bench", "lightweight-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
@@ -149,7 +150,7 @@ enum CLI {
             case "--entries-per-volume":
                 guard options.command == "multivolume-bench", let n = Int(value), (100...1_000_000).contains(n) else { throw CLIError.usage("--entries-per-volume requires 100...1000000") }; options.entries = n
             case "--entries":
-                guard ["persistence-bench", "hybrid-bench", "metadata-bench"].contains(options.command), let number = Int(value), (102...1_000_000).contains(number) else {
+                guard ["persistence-bench", "hybrid-bench", "metadata-bench", "lightweight-bench"].contains(options.command), let number = Int(value), (102...1_000_000).contains(number) else {
                     throw CLIError.usage("--entries must be in 102...1000000 for persistence-bench or hybrid-bench.")
                 }
                 options.entries = number
@@ -211,8 +212,11 @@ enum CLI {
         if arguments.first == "_real-disk-worker" {
             return try RealDiskBenchmarkRunner.worker(Array(arguments.dropFirst()))
         }
+        if arguments.first == "_metadata-bootstrap-worker", arguments.count == 3 { return try metadataBootstrapWorker(root:arguments[1],cache:arguments[2]) }
+        if arguments.first == "_prepare-resource-smoke", arguments.count == 2 { return try prepareResourceSmokeCache(arguments[1]) }
         let options = try parse(arguments)
         if options.help { print(usage); return 0 }
+        if options.command == "lightweight-bench" { return try LightweightBenchmarkRunner(entries:options.entries).run() }
         if options.command == "residency-bench" { return try ResidencyBenchmarkRunner(roots:[options.root]+(options.secondRoot.map { [$0] } ?? []),cacheDirectory:options.cacheDirectory ?? SnapshotStore.defaultDirectory,idleSeconds:options.idleSeconds).run() }
         if options.command == "metadata-bench" {
             if options.rootProvided { return try RealMetadataBenchmarkRunner(roots:[options.root]+(options.secondRoot.map { [$0] } ?? []),cacheDirectory:options.cacheDirectory ?? SnapshotStore.defaultDirectory).run() }
@@ -259,7 +263,9 @@ enum CLI {
         try coordinator.start { TerminalOutput.info($0) }
         if shutdown.isCancelled { throw CLIError.interrupted }
         try waitForStartup(coordinator.core, shutdown: shutdown)
-        TerminalOutput.info("Replay complete; live filename search is ready.")
+        TerminalOutput.info(coordinator.currentState == .live
+            ? "Replay complete; live filename search is ready."
+            : "Filename search is ready; history replay continues in the background.")
         print(coordinator.stats().description)
         let input = InteractiveInput()
         let interactive = isatty(STDIN_FILENO) == 1
