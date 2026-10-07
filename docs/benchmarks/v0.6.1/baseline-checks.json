@@ -1,0 +1,36 @@
+{
+  "release": {
+    "exit": 0,
+    "seconds": 2.111
+  },
+  "normal": {
+    "exit": 0,
+    "seconds": 101.64,
+    "tests": 200,
+    "sanitizer_diagnostics": false
+  },
+  "asan": {
+    "exit": 0,
+    "seconds": 213.407,
+    "tests": 200,
+    "sanitizer_diagnostics": false
+  },
+  "tsan": {
+    "exit": 0,
+    "seconds": 305.825,
+    "tests": 200,
+    "sanitizer_diagnostics": false
+  },
+  "app": {
+    "exit": 0,
+    "seconds": 44.386
+  },
+  "signature": {
+    "exit": 0,
+    "seconds": 0.011
+  },
+  "head": "5caf5ce291d16f8b31606268f3d8e9ae13a99433",
+  "branch": "main",
+  "worktree_clean_at_start": true,
+  "starting_ci": "https://github.com/SWHsz/apfs-everything/actions/runs/37608425645"
+}

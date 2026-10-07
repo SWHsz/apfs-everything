@@ -19,6 +19,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   public let persistenceEnabled: Bool
   public let cacheDirectory: String
   public let metadata = MetadataIndexCoordinator()
+  public let shutdownMetrics = ShutdownMetrics()
   private var metadataUpdater: MetadataUpdateCoordinator?
   private let metadataQueue = DispatchQueue(label:"apfsfind.metadata-maintenance",qos:.utility)
   private let metadataGroup = DispatchGroup()
@@ -546,6 +547,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       return true
     }
     guard first else { return }
+    let shutdownStarted = ProcessInfo.processInfo.systemUptime
+    defer { shutdownMetrics.record("shutdown_total_ms",milliseconds:(ProcessInfo.processInfo.systemUptime-shutdownStarted)*1000) }
+    shutdownMetrics.measure("shutdown_cancel_maintenance_ms") {
     if let identity = lock.withLock({identity}) { maintenanceScheduler.unregisterPressure(volumeID:identity.volumeUUID) }
     if let pressureObserver { maintenanceScheduler.signals?.removeObserver(pressureObserver); self.pressureObserver = nil }
     compactionScheduler.stop()
@@ -553,9 +557,10 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     metadataCancellation.cancel()
     if policy == .fast { checkpointCancellation.cancel() }
     if let identity = lock.withLock({identity}) { Task { await maintenanceScheduler.cancelQueued(volumeID:identity.volumeUUID) } }
+    }
     if saveCheckpoint && persistenceEnabled {
-      core.quiesceForExit()
-      group.wait()
+      core.quiesceForExit(timings:shutdownMetrics)
+      shutdownMetrics.measure("shutdown_wait_checkpoint_group_ms") { group.wait() }
       let capture = try? core.captureCheckpoint()
       let changed = lock.withLock {
         lastCheckpointGeneration != index.stats().generation
@@ -571,17 +576,17 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           active = true
           group.enter()
         }
-        performCheckpoint()
+        shutdownMetrics.measure("shutdown_state_write_ms") { performCheckpoint() }
       } else if changed { metrics.record("fast_exit_unpersisted_namespace") }
     } else {
       checkpointCancellation.cancel()
     }
-    core.stop()
+    shutdownMetrics.measure("shutdown_session_teardown_ms") { core.stop() }
     lock.withLock { metadataSeeds = nil }
-    metadataUpdater?.stop()
-    metadataGroup.wait()
-    saveMetadataStateIfClean()
-    group.wait()
+    shutdownMetrics.measure("shutdown_metadata_updater_ms") { metadataUpdater?.stop() }
+    shutdownMetrics.measure("shutdown_wait_metadata_group_ms") { metadataGroup.wait() }
+    shutdownMetrics.measure("shutdown_state_write_ms") { saveMetadataStateIfClean() }
+    shutdownMetrics.measure("shutdown_wait_checkpoint_group_ms") { group.wait() }
   }
 
   private func installStagedMetadata(_ staged:StagedMetadataFile?,cache:SnapshotStore,header:SnapshotHeader,cursor:UInt64) {
@@ -795,6 +800,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     values["metadata_error"] = lock.withLock { metadataError } ?? ""
     values["metadata_periodic_wakeups"] = 0
     values["resource_stages"] = metrics.resourceSnapshot()
+    values["shutdown_phases"] = shutdownMetrics.snapshot
     values["search_ready_ms"] = metrics.snapshot()["search_ready_ms", default: 0]
     values["compaction_scheduler_state"] = compactionScheduler.currentState.rawValue
     values["compaction_timer_wakeups"] = 0

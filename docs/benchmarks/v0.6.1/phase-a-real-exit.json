@@ -1,0 +1,20 @@
+{
+  "scope": "Data 1 instrumented pre-fix exit; cloned old namespace, metadata may still be pending",
+  "binary_sha256": "16d766c79c21e39bc3554d97b376ac915005eafb1be6915f03fbf25796e4ac93",
+  "reached_live": true,
+  "ready_seconds": 433.7862205829588,
+  "exit_seconds": 0.0361389170284383,
+  "exit_code": 0,
+  "shutdown_phases": {
+    "shutdown_cancel_maintenance_ms": 0.033166666980832815,
+    "shutdown_cancel_queries_ms": 0,
+    "shutdown_metadata_updater_ms": 0.03987498348578811,
+    "shutdown_namespace_drain_ms": 0.025708344765007496,
+    "shutdown_session_teardown_ms": 0.00300002284348011,
+    "shutdown_state_write_ms": 0.6274167099036276,
+    "shutdown_stop_watcher_ms": 0.056083372328430414,
+    "shutdown_total_ms": 1.103958289604634,
+    "shutdown_wait_checkpoint_group_ms": 0.00033335527405142784,
+    "shutdown_wait_metadata_group_ms": 4.1618477553129196e-05
+  }
+}

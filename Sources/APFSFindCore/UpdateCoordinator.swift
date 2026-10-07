@@ -1034,9 +1034,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     /// Stop delivery, then finish every received batch before an exit checkpoint.
     /// Filesystem changes after this fence are recovered from the saved cursor.
-    public func quiesceForExit() {
-        streamControl.sync { pauseRequested = true; watcher.stop() }
-        writer.sync { drain(); exitFrozen = true }
+    public func quiesceForExit(timings: ShutdownMetrics = .init()) {
+        timings.measure("shutdown_stop_watcher_ms") { streamControl.sync { pauseRequested = true; watcher.stop() } }
+        timings.measure("shutdown_namespace_drain_ms") { writer.sync { drain(); exitFrozen = true } }
     }
 
     public func stop() {

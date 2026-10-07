@@ -258,7 +258,14 @@ enum CLI {
             latencyMilliseconds: options.latencyMilliseconds, workerCount: options.workers),
             ephemeral: options.ephemeral, rebuildIndex: options.rebuildIndex, cacheDirectory: options.cacheDirectory)
         let shutdown = ShutdownSignal { coordinator.interrupt() }
-        defer { coordinator.stop(policy: .fast); withExtendedLifetime(shutdown) {} }
+        defer {
+            coordinator.stop(policy: .fast)
+            if ProcessInfo.processInfo.environment["APFSFIND_SHUTDOWN_METRICS"] == "1",
+               let data = try? JSONSerialization.data(withJSONObject:coordinator.shutdownMetrics.snapshot,options:[.sortedKeys]) {
+                FileHandle.standardError.write(Data(("[shutdown] "+String(decoding:data,as:UTF8.self)+"\n").utf8))
+            }
+            withExtendedLifetime(shutdown) {}
+        }
         TerminalOutput.info("Starting filename search in \(options.root)")
         try coordinator.start { TerminalOutput.info($0) }
         if shutdown.isCancelled { throw CLIError.interrupted }
