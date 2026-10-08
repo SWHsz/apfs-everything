@@ -292,7 +292,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         var remainingSubtrees = Set<String>()
         let subtreeSliceStart = ProcessInfo.processInfo.systemUptime
         var subtreeDirectories = 0
-        for (subtreeIndex,subtree) in subtreeRoots.enumerated() {
+        subtreeSlice: for (subtreeIndex,subtree) in subtreeRoots.enumerated() {
             var directories = [subtree]
             while let directory = directories.popLast(), !scanCancellation.isCancelled {
                 let resources = SystemResourceSignals.shared.current()
@@ -300,7 +300,10 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     ProcessInfo.processInfo.systemUptime-subtreeSliceStart >= 0.02 ||
                     resources.activeQueries > 0 || resources.memoryPressure == .critical) {
                     remainingSubtrees.formUnion([directory]+directories+Array(subtreeRoots.dropFirst(subtreeIndex+1)))
-                    metrics.record("metadata_subtree_yields"); break
+                    // The budget covers the whole slice. Continuing the outer
+                    // loop re-merges every remaining suffix, producing quadratic
+                    // work without reading another directory.
+                    metrics.record("metadata_subtree_yields"); break subtreeSlice
                 }
                 do {
                     let entries = try readDirectory(directory,scanCancellation)
@@ -313,7 +316,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                         if BulkScanner.shouldTraverse(entry:entry.namespace,rootDeviceID:device) { directories.append(entry.namespace.path) }
                     }
                 } catch is MaintenanceYield {
-                    remainingSubtrees.formUnion([directory]+directories); break
+                    remainingSubtrees.formUnion([directory]+directories+Array(subtreeRoots.dropFirst(subtreeIndex+1)))
+                    metrics.record("metadata_subtree_yields"); break subtreeSlice
                 } catch {
                     // Match namespace scanning: inaccessible descendants and
                     // normal disappearance races do not invalidate the entire

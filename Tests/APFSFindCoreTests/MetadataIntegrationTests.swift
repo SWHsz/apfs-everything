@@ -6,6 +6,44 @@ import XCTest
 @testable import APFSFindCore
 
 final class MetadataIntegrationTests: XCTestCase {
+    func testWideSubtreeYieldStopsWholeSliceAndRetainsEverySibling() {
+        let root = "/metadata-wide-frontier", ns = FileIndex(root:root)
+        let meta = MetadataIndexCoordinator(), metrics = Metrics()
+        let directories = (0..<1000).map { NamespaceEntry(path:root+"/d-\($0)",kind:.directory) }
+        ns.apply(directories.flatMap { [.upsert($0),.upsert(.init(path:$0.path+"/leaf",kind:.file))] })
+        var policy = MetadataUpdatePolicy(); policy.debounceSeconds = 60
+        let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,policy:policy,
+            invalidated:{ metrics.record("test_recoveries") },readDirectory:{ path,_ in
+                if path == root { return directories.map { .init(namespace:$0) } }
+                metrics.record("test_child_attempts")
+                if metrics.snapshot()["test_child_attempts"] == 1 {
+                    metrics.record("test_injected_yields"); throw MaintenanceYield(reason:"held wide frontier")
+                }
+                return [.init(namespace:.init(path:path+"/leaf",kind:.file),
+                    metadata:.init(logicalSize:123,modificationTimeNanoseconds:456))]
+            })
+        defer { updater.stop() }
+        SystemResourceSignals.shared.beginQuery()
+        updater.enqueue([.init(path:root,flags:UInt32(kFSEventStreamEventFlagMustScanSubDirs),id:101)])
+        updater.flush(); updater.flush(); updater.flush()
+        let snapshot = metrics.snapshot()
+        // One yield ends the whole budget, not each remaining sibling root.
+        // This bound is independent of timer interleaving and frontier width.
+        XCTAssertLessThanOrEqual(snapshot["metadata_subtree_yields",default:0],
+            snapshot["metadata_subtree_bulk_enumerations",default:0]+snapshot["test_injected_yields",default:0])
+        XCTAssertGreaterThan(updater.pendingCount,0); XCTAssertEqual(meta.processedCursor,0)
+        SystemResourceSignals.shared.endQuery()
+        waitFor("every retained sibling receives metadata",timeout:10) {
+            updater.flush(); return updater.pendingCount == 0
+        }
+        let values = meta.capture()
+        for directory in directories {
+            XCTAssertEqual(values.value(path:directory.path+"/leaf"),.init(logicalSize:123,modificationTimeNanoseconds:456))
+        }
+        XCTAssertEqual(meta.processedCursor,101)
+        XCTAssertEqual(metrics.snapshot()["test_injected_yields"],1)
+        XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],0)
+    }
     func testTransientAuthoritativeIORecoversLocallyBeforeBootstrapThreshold() {
         let root = "/metadata-io-retry", parent = root + "/parent", child = parent + "/child"
         let ns = FileIndex(root:root), meta = MetadataIndexCoordinator(), metrics = Metrics()
