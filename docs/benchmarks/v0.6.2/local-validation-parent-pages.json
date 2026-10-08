@@ -1,0 +1,167 @@
+{
+  "code_head": "61f4f627bebc315d458ae9da21693604c138d971",
+  "test_scope": "full suites: 277 tests, 257 Core and 20 Desktop; one optional mount skip",
+  "stages": [
+    {
+      "stage": "parent-pages-final-asan",
+      "exit": 0,
+      "seconds": 218.67861750000156
+    },
+    {
+      "stage": "parent-pages-final-tsan",
+      "exit": 0,
+      "seconds": 328.50850987504236
+    },
+    {
+      "stage": "parent-pages-final-normal",
+      "exit": 0,
+      "seconds": 95.6027187500149
+    },
+    {
+      "stage": "parent-pages-final-release-cli",
+      "exit": 0,
+      "seconds": 49.933928875019774
+    },
+    {
+      "stage": "parent-pages-final-release-app",
+      "exit": 0,
+      "seconds": 5.3284520409069955
+    },
+    {
+      "stage": "parent-pages-final-quiet-60",
+      "exit": 0,
+      "seconds": 70.04318533395417
+    }
+  ],
+  "quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 0,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 0,
+      "interrupt_wakeups": 2,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 1,
+      "pageins": 0,
+      "peak_compressed_bytes": 0,
+      "peak_rss_bytes": 10387456,
+      "rss_after_bytes": 10305536,
+      "rss_before_bytes": 10387456,
+      "system_cpu_seconds": 0.00020700000000000059,
+      "user_cpu_seconds": 6.899999999999962e-05,
+      "wall_ms": 60010.10945835151
+    },
+    "idle_seconds": 60.010143416700885,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 64.82454156503081,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 78.90712504740804,
+        "p50": 20.360249909572303,
+        "p90": 21.84370835311711,
+        "p95": 22.527333232574165,
+        "p99": 22.928833379410207
+      },
+      "delete": {
+        "max": 28.84345839265734,
+        "p50": 19.87700001336634,
+        "p90": 21.230624988675117,
+        "p95": 21.658083307556808,
+        "p99": 24.95545835699886
+      },
+      "rename": {
+        "max": 27.88079169113189,
+        "p50": 21.62645827047527,
+        "p90": 23.18870835006237,
+        "p95": 24.202166707254946,
+        "p99": 27.357541606761515
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "raw_receipts": [
+    {
+      "name": "parent-pages-final-asan.stdout",
+      "bytes": 81283,
+      "sha256": "7469f26baf2e9330f98d807b95e92171476700ff1105c4454a5fcd7b4479c46b"
+    },
+    {
+      "name": "parent-pages-final-asan.stderr",
+      "bytes": 3801,
+      "sha256": "f363a5b4d538cea8ac853a4f57705e82e02ac7eb627738e396364060aa40be11"
+    },
+    {
+      "name": "parent-pages-final-tsan.stdout",
+      "bytes": 81293,
+      "sha256": "7fbfcb148e626c04cd6d3a152bfbce0017af874481f74cd0eb5a6217fe76c1b2"
+    },
+    {
+      "name": "parent-pages-final-tsan.stderr",
+      "bytes": 3713,
+      "sha256": "0794875f489984bb60a67f85c28d12ea23d249fd70c654f602b78c66555d5d25"
+    },
+    {
+      "name": "parent-pages-final-normal.stdout",
+      "bytes": 81269,
+      "sha256": "eaf8a316dd0519650f62d1c0f547ffa5f0d4d2ef608f0cc0559a304997810588"
+    },
+    {
+      "name": "parent-pages-final-normal.stderr",
+      "bytes": 612,
+      "sha256": "0830f0b2d110ed792981065bac6096d87b0987c4436fd65fee6e438939d36399"
+    },
+    {
+      "name": "parent-pages-final-release-cli.stdout",
+      "bytes": 272,
+      "sha256": "54e9645cf60ee1bb16e0857bac4edaf54301cc3c490f438102cde24e81562fa6"
+    },
+    {
+      "name": "parent-pages-final-release-cli.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "parent-pages-final-release-app.stdout",
+      "bytes": 367,
+      "sha256": "4131292cb3549cfec01989dfc2389a3ff465efdb33355f742def413c01ad0407"
+    },
+    {
+      "name": "parent-pages-final-release-app.stderr",
+      "bytes": 93,
+      "sha256": "ffd003b370977f1fe17ba9a8d6fd33390e377bf052dce90b54094608a223e5a2"
+    },
+    {
+      "name": "parent-pages-final-quiet-60.stdout",
+      "bytes": 1993,
+      "sha256": "efb04a5f9a05cfc754263a6e93cf1674d283fb9b95c0e0f97d3acb24fd546127"
+    },
+    {
+      "name": "parent-pages-final-quiet-60.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "ci": {
+    "run_id": 37814623814,
+    "conclusion": "failure",
+    "failed_job": "integration",
+    "reason": "signal 5 in existing immediate watcher teardown test; not suppressed or waived"
+  }
+}

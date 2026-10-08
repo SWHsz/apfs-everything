@@ -2920,7 +2920,7 @@
       ],
       "head": "ceec3c786ec421bf632292d6dab48416430b398c",
       "desktop_sha256": "2535e354a9f13d03b744678e5ee41af01a30cef4916bad789a1d4d48de1fb816",
-      "capture_status": "immutable capture prefix through native_actions_complete; process remains alive awaiting unlocked UI acceptance",
+      "capture_status": "complete capture; no UI acceptance or restart",
       "capture_bytes": 715929,
       "ui_search": "pending locked Mac",
       "menu_verification": "pending locked Mac",
@@ -2935,7 +2935,10 @@
         "dirty_swap_fragment_MiB": 57.0,
         "physical_MiB": 111.8,
         "interpretation": "allocator categories, not proof all fragmented pages can be released"
-      }
+      },
+      "exit": -15,
+      "stop_method": "SIGTERM of verified owned failed candidate while Mac locked; not normal UI Quit",
+      "stop_base_hashes_unchanged": true
     }
   ]
 }

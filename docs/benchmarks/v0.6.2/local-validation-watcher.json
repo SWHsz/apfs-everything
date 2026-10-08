@@ -1,0 +1,173 @@
+{
+  "code_head": "e11b233ff450ce7b99cdc21b4c99eec357f95072",
+  "test_scope": "final full normal: 277 tests; affected ASan/TSan: 15 tests including 1000 immediate watcher teardowns; full ASan also passed exact-head CI",
+  "stages": [
+    {
+      "stage": "watcher-final-asan",
+      "exit": 0,
+      "seconds": 23.186014667036943
+    },
+    {
+      "stage": "watcher-final-tsan",
+      "exit": 0,
+      "seconds": 37.88741950003896
+    },
+    {
+      "stage": "watcher-final-normal",
+      "exit": 0,
+      "seconds": 95.1460976669332
+    },
+    {
+      "stage": "watcher-final-release-cli",
+      "exit": 0,
+      "seconds": 47.59947824990377
+    },
+    {
+      "stage": "watcher-final-release-app",
+      "exit": 0,
+      "seconds": 5.346006083069369
+    },
+    {
+      "stage": "watcher-final-quiet-60",
+      "exit": 0,
+      "seconds": 70.23144324996974
+    }
+  ],
+  "quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 0,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 0,
+      "interrupt_wakeups": 2,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 0,
+      "pageins": 0,
+      "peak_compressed_bytes": 0,
+      "peak_rss_bytes": 10289152,
+      "rss_after_bytes": 10190848,
+      "rss_before_bytes": 10289152,
+      "system_cpu_seconds": 0.00016299999999999995,
+      "user_cpu_seconds": 7.000000000000062e-05,
+      "wall_ms": 60002.73983331863
+    },
+    "idle_seconds": 60.002781041665,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 57.86525004077703,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 324.78712499141693,
+        "p50": 20.49604174681008,
+        "p90": 21.963375038467348,
+        "p95": 22.001541685312986,
+        "p99": 23.090291768312454
+      },
+      "delete": {
+        "max": 22.410750039853156,
+        "p50": 20.070958300493658,
+        "p90": 21.607249975204468,
+        "p95": 21.708041662350297,
+        "p99": 21.87266666442156
+      },
+      "rename": {
+        "max": 26.767333270981908,
+        "p50": 22.51495828386396,
+        "p90": 24.30783328600228,
+        "p95": 24.854291696101427,
+        "p99": 26.757750078104436
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "raw_receipts": [
+    {
+      "name": "watcher-final-asan.stdout",
+      "bytes": 5509,
+      "sha256": "b83f30dca4cb9dd5bf13717355028fa46fee43f3c89f574fcd5f16a586373d9d"
+    },
+    {
+      "name": "watcher-final-asan.stderr",
+      "bytes": 3723,
+      "sha256": "226d427d515fbd257b5e65bc11b59143bae83693a461305daea8c096cc79bd84"
+    },
+    {
+      "name": "watcher-final-tsan.stdout",
+      "bytes": 5509,
+      "sha256": "df4391041396802f5b72ca8a1a5bf7d4a71e3e64c123c27183453c2b15402013"
+    },
+    {
+      "name": "watcher-final-tsan.stderr",
+      "bytes": 3693,
+      "sha256": "837ff715917938c371ab1ca8b5b8b5cc9f0d16eb1db149b21362099557c270de"
+    },
+    {
+      "name": "watcher-final-normal.stdout",
+      "bytes": 81269,
+      "sha256": "c968e3331b77202590a03431ef3e2ff7d0db0781880e4c20f4580b2481c7efa7"
+    },
+    {
+      "name": "watcher-final-normal.stderr",
+      "bytes": 447,
+      "sha256": "0fab978a28a7288cc5ee5c78911095d599dd4667501c3b59188907fdadb11770"
+    },
+    {
+      "name": "watcher-final-release-cli.stdout",
+      "bytes": 278,
+      "sha256": "f5ab75fbef0311793a1a3c32b1f59941656c1f0c1afaf3edb67167c2b5dac201"
+    },
+    {
+      "name": "watcher-final-release-cli.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "watcher-final-release-app.stdout",
+      "bytes": 367,
+      "sha256": "182af47c0daa516bc17bafed83230630e1d8c806d8e4ef865f8fdcc2869bf352"
+    },
+    {
+      "name": "watcher-final-release-app.stderr",
+      "bytes": 93,
+      "sha256": "04061cf5d3d1dce14714fb5ea606398b83a08e65991af44ff41be55e84ec53f0"
+    },
+    {
+      "name": "watcher-final-quiet-60.stdout",
+      "bytes": 1996,
+      "sha256": "68d234eb617ac4b061e2a4a4400dccdc3ce3bc0bf7282a44046d77699cbdb3ff"
+    },
+    {
+      "name": "watcher-final-quiet-60.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "desktop_sha256": "08673992370f87997787cc1abb8235fa2ef12c2d9119093fad23737738ddf297",
+  "cli_sha256": "a19d03b5d719bef39974311704a9cb81d5644a5dcd858f51b02a82855eafcd12",
+  "ci": {
+    "run_id": 37816627231,
+    "required_jobs": {
+      "integration": "success",
+      "deterministic": "success",
+      "desktop-build": "success",
+      "address-sanitizer": "success"
+    }
+  },
+  "provenance": "Full local ASan/TSan suites passed before the watcher stop ordering change on 61f4f6; current affected sanitizer tests and current full normal passed. Full current-head ASan and integration passed in CI. Final native gate remains pending."
+}

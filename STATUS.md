@@ -1,6 +1,6 @@
 # v0.6.2 — Reconciliation Convergence（验收进行中）
 
-从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已按已有内存证据关闭，roadmap #12 已勾选。Issue #2 不开始，NSv2/metav1 和 cold namespace builder 不变。 `ceec3c7` 完整 275 项及报告提交 `01471da` 的四项 required CI 全绿；其真实双卷20分钟和10轮fixture功能收敛通过，资源gate因physical峰值约177.25MiB及deadline checkpoint未完成失败，最终UI/restart因锁屏待验证。最新候选继续将普通 metadata parent refresh 改为跨slice的bulk page，并拒绝 namespace 未索引的兄弟条目；277项完整ASan已通过，TSan/普通测试及新binary实盘正在验收，旧实盘结果不能替代新候选。
+从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已关闭，roadmap #12 已勾选，Issue #2 不开始，NSv2/metav1 和 cold namespace builder 不变。上一候选 ceec3c7 的双卷资源 gate 因 physical 峰值177.25MiB及 deadline checkpoint 未完成失败，10轮功能收敛通过。最新 e11b233 已将普通 metadata parent refresh 改为跨 slice bulk page、拒绝未索引兄弟 metadata，并在 FSEvents Stop 与 Invalidate 之间先排空 callback。完整普通277项、受影响15项ASan/TSan及四项 required CI 通过；此前分页候选完整277项ASan/TSan也通过。当前最终 binary 正在重跑双卷实盘，UI菜单、正常退出及重启待验收；旧候选结果不替代当前验收。
 
 局部修复用有界、合并祖先路径的 `DeferredReconcileQueue` 保存 frontier 与 minimum cursor。每片最多 32 个目录 / 20 ms，查询中至少完成一个原子父目录；one-shot 重试，队列清空后才推进 namespace cursor。权限错误局部保留，反复权威 I/O 失败或 hard overflow 才恢复；真正 stream invalidation 合并为一次 active recovery。Full rebuild 的 yield 重试同一个 recovery epoch，保留旧 base、释放临时 graph，不产生 resource_yield rebuild。
 
