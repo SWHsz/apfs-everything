@@ -66,22 +66,26 @@ enum NativeSmokeActions {
           values[file]=(UInt64(st.st_size),Int64(st.st_mtimespec.tv_sec)*1_000_000_000+Int64(st.st_mtimespec.tv_nsec))
         }
         let start=ProcessInfo.processInfo.systemUptime, end=start+30
-        var actual=Set<String>(),metadataCorrect=false
+        var actual=Set<String>(),metadataCorrect=false, mismatches:[[String:Any]]=[]
         while ProcessInfo.processInfo.systemUptime<end {
           let result=await coordinator.search(.init(query:prefix,limit:100,sort:.init(key:.size)))
           let hits=result.hits.filter{$0.path.hasPrefix(path+"/")}
           actual=Set(hits.map(\.path))
-          metadataCorrect=hits.count==expected.count && hits.allSatisfy { hit in
-            guard let value=values[hit.path] else{return false}
-            return hit.logicalSize==value.0 && hit.modificationTimeNanoseconds==value.1
+          mismatches=hits.compactMap { hit in
+            guard let value=values[hit.path], hit.logicalSize != value.0 || hit.modificationTimeNanoseconds != value.1 else{return nil}
+            // Only owned generated slots; never include real filenames/paths.
+            return ["slot":String(hit.path.dropFirst((path+"/"+prefix).count)),
+              "expected_size":value.0,"actual_size":hit.logicalSize.map{NSNumber(value:$0)} ?? NSNull(),
+              "expected_mtime_ns":value.1,"actual_mtime_ns":hit.modificationTimeNanoseconds.map{NSNumber(value:$0)} ?? NSNull()]
           }
+          metadataCorrect=hits.count==expected.count && hits.allSatisfy{values[$0.path] != nil} && mismatches.isEmpty
           if actual==expected && metadataCorrect {break}
           do {try await Task.sleep(for:.milliseconds(100))} catch{return}
         }
         let after=try await ActiveLiveSmoke.sample(coordinator)
         let passed=actual==expected && metadataCorrect && after.fullScans==before.fullScans && after.resourceYieldRebuilds==before.resourceYieldRebuilds
         allPassed = allPassed && passed
-        emit(restart ? "restart_fixture_verify":"fixture_verify",["round":round,"passed":passed,"expected":expected.count,"actual":actual.count,"metadata_size_mtime_correct":metadataCorrect,"seconds":ProcessInfo.processInfo.systemUptime-start,"full_scans_delta":after.fullScans-before.fullScans,"resource_yield_rebuild_delta":after.resourceYieldRebuilds-before.resourceYieldRebuilds,"scope":"owned fixture; not a full filesystem consistency assertion"])
+        emit(restart ? "restart_fixture_verify":"fixture_verify",["round":round,"passed":passed,"expected":expected.count,"actual":actual.count,"metadata_size_mtime_correct":metadataCorrect,"mismatches":mismatches,"seconds":ProcessInfo.processInfo.systemUptime-start,"full_scans_delta":after.fullScans-before.fullScans,"resource_yield_rebuild_delta":after.resourceYieldRebuilds-before.resourceYieldRebuilds,"scope":"owned fixture; not a full filesystem consistency assertion"])
       }
       pressure?.cancel()
       emit("convergence_rounds",["passed":allPassed,"rounds":restart ? 1 : 10])

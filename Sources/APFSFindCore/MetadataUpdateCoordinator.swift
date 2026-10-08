@@ -15,7 +15,8 @@ public struct MetadataUpdatePolicy: Sendable {
 /// Event-driven bounded debounce on a utility queue; no per-write lookup or repeating timer.
 public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private let inboxLock = NSLock()
-    private var inbox: [FileSystemEvent] = []
+    private var inbox: [String:FileSystemEvent] = [:]
+    private var inboxHistoryDone = false
     private var inboxScheduled = false
     private var inboxOverflow = false
     private let queue = DispatchQueue(label:"apfsfind.metadata-events",qos:.utility)
@@ -41,8 +42,25 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private var buffered: [FileSystemEvent] = []
     private var bufferOverflow = false
     private var renameOnly = Set<String>()
-    private var renameOrigins: [String:(String,FileMetadataValue,EntryKind,MetadataQuerySnapshot)] = [:]
-    private var recent: [String:FileMetadataValue] = [:]
+    private struct RenameOrigin {
+        let path: String
+        let value: FileMetadataValue
+        // Only directories need a frozen subtree source. Files retain scalars.
+        let snapshot: MetadataQuerySnapshot?
+        let retainedBytes: Int
+    }
+    private var renameOrigins: [String:RenameOrigin] = [:]
+    private func originUsage() -> (count:Int,bytes:Int) {
+        renameOrigins.values.reduce(into:(0,0)) { result,origin in
+            if origin.snapshot != nil { result.0 += 1; result.1 += origin.retainedBytes }
+        }
+    }
+    private func recordOrigins() {
+        let usage = originUsage()
+        metrics.set("metadata_rename_origins",to:renameOrigins.count)
+        metrics.set("metadata_rename_origin_snapshots",to:usage.count)
+        metrics.set("metadata_rename_origin_snapshot_bytes",to:usage.bytes)
+    }
     private var localIOFailures: [String:Int] = [:]
     private var entriesSinceRelief = 0
     private var reliefQueued = false
@@ -85,19 +103,41 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     public func enqueue(_ events:[FileSystemEvent]) {
         let schedule = inboxLock.withLock {
             guard !scanCancellation.isCancelled else { return false }
-            let room = max(0,policy.maxPendingEntries-inbox.count)
-            inbox.append(contentsOf:events.prefix(room)); inboxOverflow = inboxOverflow || events.count > room
+            var coalesced = 0
+            for incoming in events {
+                var event = incoming
+                if event.flags & UInt32(kFSEventStreamEventFlagHistoryDone) != 0 {
+                    inboxHistoryDone = true
+                    let remaining = event.flags & ~UInt32(kFSEventStreamEventFlagHistoryDone)
+                    if remaining == 0 { continue }
+                    event = .init(path:event.path,flags:remaining,id:event.id)
+                }
+                if let old = inbox[event.path] {
+                    // Union flags preserves create/remove ambiguity and actual
+                    // stream invalidation. Authoritative refresh observes now.
+                    inbox[event.path] = .init(path:event.path,flags:old.flags | event.flags,id:max(old.id,event.id))
+                    coalesced += 1
+                } else if inbox.count < policy.maxPendingEntries { inbox[event.path] = event }
+                else { inboxOverflow = true }
+            }
+            metrics.record("metadata_inbox_events_received",by:events.count)
+            metrics.record("metadata_inbox_events_coalesced",by:coalesced)
             if inboxScheduled { return false }; inboxScheduled = true; return true
         }
         guard schedule else { return }
         queue.async { [weak self] in
             guard let self else { return }
             let batch = self.inboxLock.withLock {
-                let value = (self.inbox,self.inboxOverflow)
-                self.inbox = []; self.inboxOverflow = false; self.inboxScheduled = false; return value
+                var events = Array(self.inbox.values)
+                // A replay fence follows every path refresh represented by it.
+                if self.inboxHistoryDone { events.append(.init(path:self.root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:UInt64.max)) }
+                let value = (events,self.inboxOverflow)
+                self.inbox = [:]; self.inboxHistoryDone = false; self.inboxOverflow = false; self.inboxScheduled = false; return value
             }
-            self.receive(batch.0)
-            if batch.1 { self.metrics.record("metadata_inbox_overflows"); self.invalidated() }
+            autoreleasepool {
+                self.receive(batch.0)
+                if batch.1 { self.metrics.record("metadata_inbox_overflows"); self.invalidated() }
+            }
         }
     }
     private func receive(_ events:[FileSystemEvent]) {
@@ -152,7 +192,16 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             let rename = e.flags & UInt32(kFSEventStreamEventFlagItemRenamed) != 0 &&
                 e.flags & UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemInodeMetaMod | kFSEventStreamEventFlagItemCreated) == 0
             if rename, item == nil, let record = oldRecord {
-                renameOrigins[key] = (path,snapshot.value(path:path),record.kind,snapshot)
+                if renameOrigins.count >= 4096 { renameOrigins = [:] }
+                var retained: MetadataQuerySnapshot?
+                var bytes = 0
+                if record.kind == .directory {
+                    bytes = snapshot.overlay.estimatedBytes + 200
+                    let usage = originUsage()
+                    if snapshot.available && usage.count < 64 && usage.bytes + bytes <= 8 * 1024 * 1024 { retained = snapshot }
+                    else { bytes = 0; metrics.record("metadata_rename_origin_snapshot_rejected") }
+                }
+                renameOrigins[key] = .init(path:path,value:snapshot.value(path:path),snapshot:retained,retainedBytes:bytes)
             }
             if rename { renameOnly.insert(path) } else { renameOnly.remove(path) }
             if pending[key] != nil { metrics.record("metadata_events_deduplicated") }
@@ -171,6 +220,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 metrics.record("metadata_parent_collapses")
             }
         }
+        recordOrigins()
         if pending.isEmpty && collapsed.isEmpty && discoveredSubtrees.isEmpty { index.advance(maximumID,historyDone:historyDone); changed(); return }
         metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count); index.markPending(); changed()
         schedule(after:policy.debounceSeconds)
@@ -204,10 +254,10 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 if renameOnly.contains(path), let item = namespace.entry(at:path),let id = item.fileID,
                    let origin = renameOrigins["\(device):\(id)"] {
                     if item.kind == .directory {
-                        if index.reuseDirectoryRename(original:origin.0,destination:path,from:origin.3) { discoveredSubtrees.remove(path) }
-                        else { metrics.record("metadata_rename_alias_cap_hits") }
+                        if let source = origin.snapshot, index.reuseDirectoryRename(original:origin.path,destination:path,from:source) { discoveredSubtrees.remove(path) }
+                        else { discoveredSubtrees.insert(path); metrics.record("metadata_rename_alias_cap_hits") }
                     }
-                    index.update(path:path,value:origin.1); consumedOrigins.insert("\(device):\(id)"); metrics.record("metadata_rename_reuses"); continue
+                    index.update(path:path,value:origin.value); consumedOrigins.insert("\(device):\(id)"); metrics.record("metadata_rename_reuses"); continue
                 }
                 if let item = namespace.entry(at:path), let id = item.fileID,
                    let value = reusedIdentities["\(device):\(id)"] {
@@ -225,7 +275,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 let result = apfs_entry_info(path,device,&record); lookupsInWindow += 1; metrics.record("metadata_lookups")
                 if result == 0 && record.device_id == device {
                     let v = FileMetadataValue(record), key = "\(record.device_id):\(record.file_id)"
-                    recent[key] = v; reusedIdentities[key] = v; index.update(path:path,value:v)
+                    reusedIdentities[key] = v; index.update(path:path,value:v)
                 } else { index.update(path:path,value:nil) }
             }
             for key in consumedOrigins { renameOrigins.removeValue(forKey:key) }
@@ -351,8 +401,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         guard !scanCancellation.isCancelled else { return }
         discoveredSubtrees = remainingSubtrees
         if remainingSubtrees.count > 16_384 { discoveredSubtrees.removeAll(); invalidated(); return }
-        if recent.count > 4096 { recent.removeAll(keepingCapacity:true) }
-        if renameOrigins.count > 4096 { renameOrigins.removeAll(keepingCapacity:true) }
+        recordOrigins()
         renameOnly.removeAll(keepingCapacity:true)
         pending.removeAll(keepingCapacity:true); collapsed = deferredParents
         if !deferredPaths.isEmpty || !deferredParents.isEmpty {
@@ -367,13 +416,13 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         metrics.set("pending_metadata_lookups",to:0); index.advance(maximumID,historyDone:historyDone); changed()
     }
     public func resetReplay() { queue.sync { historyDone = false; maximumID = index.processedCursor; index.restartReplay() } }
-    public func suspend() { queue.sync { guard !scanCancellation.isCancelled else { return }; work?.cancel(); work = nil; epoch &+= 1; drain(); work?.cancel(); work = nil; epoch &+= 1; suspended = true } }
+    public func suspend() { queue.sync { guard !scanCancellation.isCancelled else { return }; work?.cancel(); work = nil; epoch &+= 1; autoreleasepool { drain() }; work?.cancel(); work = nil; epoch &+= 1; suspended = true } }
     public func resume() { queue.sync {
         guard !scanCancellation.isCancelled else { return }
         suspended = false; let events = buffered; buffered = []; metrics.set("metadata_buffered_events",to:0); let overflow = bufferOverflow; bufferOverflow = false
-        receive(events); if overflow { invalidated() }
+        autoreleasepool { receive(events) }; if overflow { invalidated() }
     } }
-    public func flush() { queue.sync { work?.cancel(); work = nil; epoch &+= 1; drain() } }
+    public func flush() { queue.sync { work?.cancel(); work = nil; epoch &+= 1; autoreleasepool { drain() } } }
     /// Cancellation is lock-only and can interrupt a running bulk lookup before its queue barrier.
     public func requestStop() { scanCancellation.cancel() }
     public var pendingCount: Int {
@@ -385,7 +434,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         // lookups keep the old processed fence; fast exit must not enumerate a
         // large pending tree. Restart replay recovers these unpersisted values.
         pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll()
-        buffered.removeAll(); renameOrigins.removeAll(); recent.removeAll(); localIOFailures.removeAll()
+        buffered.removeAll(); renameOrigins.removeAll(); recordOrigins(); localIOFailures.removeAll()
         inboxLock.withLock { inbox.removeAll() }; metrics.set("pending_metadata_lookups",to:0)
     } }
 }

@@ -6,6 +6,88 @@ import XCTest
 @testable import APFSFindCore
 
 final class MetadataIntegrationTests: XCTestCase {
+
+    func testDuplicateMetadataBurstCoalescesWithoutInvalidatingButDistinctOverflowRemainsHard() throws {
+        let tree = try TemporaryTree(); try tree.file("mutable")
+        try Data(repeating:1,count:123).write(to:URL(fileURLWithPath:tree.path("mutable")))
+        let ns = FileIndex(root:tree.root),meta = MetadataIndexCoordinator(),metrics = Metrics()
+        ns.apply([.upsert(.init(path:tree.path("mutable"),kind:.file))])
+        var policy = MetadataUpdatePolicy(); policy.maxPendingEntries = 32; policy.debounceSeconds = 60
+        let updater = MetadataUpdateCoordinator(root:tree.root,device:try BulkScanner(root:tree.root).rootDeviceID(),index:meta,namespace:ns,metrics:metrics,policy:policy,invalidated:{metrics.record("test_invalidations")})
+        defer {updater.stop()}
+        let flags = UInt32(kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemIsFile)
+        updater.enqueue((1...10_000).map {.init(path:tree.path("mutable"),flags:flags,id:UInt64($0))} + [.init(path:tree.root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:UInt64.max)])
+        updater.flush()
+        XCTAssertEqual(meta.capture().value(path:tree.path("mutable")).logicalSize,123)
+        XCTAssertEqual(meta.processedCursor,10_000)
+        XCTAssertEqual(metrics.snapshot()["test_invalidations",default:0],0)
+        XCTAssertEqual(metrics.snapshot()["metadata_inbox_events_coalesced"],9999)
+        updater.enqueue([.init(path:tree.path("mutable"),flags:UInt32(kFSEventStreamEventFlagItemCreated|kFSEventStreamEventFlagItemIsFile),id:10_001),.init(path:tree.path("mutable"),flags:UInt32(kFSEventStreamEventFlagItemRemoved|kFSEventStreamEventFlagItemIsFile),id:10_002)])
+        updater.flush()
+        XCTAssertEqual(meta.capture().value(path:tree.path("mutable")).logicalSize,123,"merged create/remove refreshes the authoritative parent")
+        updater.enqueue((1...33).map {.init(path:tree.path("distinct-\($0)"),flags:flags,id:UInt64(10_000+$0))})
+        updater.flush()
+        XCTAssertEqual(metrics.snapshot()["test_invalidations"],1,"distinct pending paths still have a hard cap")
+        updater.enqueue([.init(path:tree.root,flags:UInt32(kFSEventStreamEventFlagHistoryDone|kFSEventStreamEventFlagKernelDropped),id:UInt64.max)]);updater.flush()
+        XCTAssertEqual(metrics.snapshot()["test_invalidations"],2,"a history marker cannot hide real stream invalidation")
+    }
+    func testDirectoryRenameOriginCapFallsBackToScopedMetadataTraversal() throws {
+        let cache = try TemporaryTree(cache:true),identity = snapshotIdentity(),ram = FileIndex(root:snapshotIdentity().root)
+        let store = try SnapshotStore(directory:cache.root,identity:identity)
+        let oldPaths = (1...65).map { identity.root+"/old-\($0)" },newPath = identity.root+"/new"
+        ram.apply(oldPaths.enumerated().map {.upsert(.init(path:$0.element,kind:.directory,deviceID:identity.deviceID,fileID:UInt64($0.offset+1)))})
+        _ = try SnapshotV2Writer.write(source:.ram(ram,ram.stats().generation),identity:identity,generation:ram.stats().generation,cursor:0,store:store)
+        let base = try store.reader(expectedIdentity:identity).mappedBase!,ns = HybridIndex(base:base),meta = MetadataIndexCoordinator(),metrics = Metrics()
+        _ = try MetadataWriter.write(store:store,base:base.header,cursor:0,value:{_ in .init(logicalSize:7)})
+        meta.bind(namespace:base,mapped:try store.metadataReader(base:base.header));meta.advance(0,historyDone:true)
+        var policy = MetadataUpdatePolicy();policy.debounceSeconds = 60
+        let updater = MetadataUpdateCoordinator(root:identity.root,device:identity.deviceID,index:meta,namespace:ns,metrics:metrics,policy:policy,invalidated:{metrics.record("test_invalidations")},readDirectory:{path,_ in
+            path == newPath ? [.init(namespace:.init(path:newPath+"/leaf",kind:.file,deviceID:identity.deviceID,fileID:99),metadata:.init(logicalSize:123,modificationTimeNanoseconds:456))] : []
+        })
+        defer {updater.stop()}
+        ns.apply(oldPaths.map(IndexMutation.remove))
+        updater.enqueue(oldPaths.prefix(64).enumerated().map {.init(path:$0.element,flags:UInt32(kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemIsDir),id:UInt64($0.offset+1))});updater.flush()
+        updater.enqueue([.init(path:oldPaths[64],flags:UInt32(kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemIsDir),id:65)]);updater.flush()
+        XCTAssertEqual(metrics.snapshot()["metadata_rename_origin_snapshots"],64)
+        XCTAssertEqual(metrics.snapshot()["metadata_rename_origin_snapshot_rejected"],1)
+        ns.apply([.upsert(.init(path:newPath,kind:.directory,deviceID:identity.deviceID,fileID:65)),.upsert(.init(path:newPath+"/leaf",kind:.file,deviceID:identity.deviceID,fileID:99))])
+        updater.enqueue([.init(path:newPath,flags:UInt32(kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemIsDir),id:66)]);updater.flush()
+        waitFor("rejected directory origin still repairs its descendants",timeout:10) {updater.flush();return updater.pendingCount == 0}
+        XCTAssertEqual(meta.capture().value(path:newPath+"/leaf"),.init(logicalSize:123,modificationTimeNanoseconds:456))
+        XCTAssertEqual(meta.processedCursor,66)
+        XCTAssertEqual(metrics.snapshot()["test_invalidations",default:0],0)
+    }
+    func testUnpairedFileRenameDoesNotPinObsoleteMetadataMap() throws {
+        let cache = try TemporaryTree(cache:true), identity = snapshotIdentity()
+        let store = try SnapshotStore(directory:cache.root,identity:identity)
+        let ram = FileIndex(root:identity.root), oldPath = identity.root+"/old", newPath = identity.root+"/new"
+        ram.apply([.upsert(.init(path:oldPath,kind:.file,deviceID:identity.deviceID,fileID:17))])
+        _ = try SnapshotV2Writer.write(source:.ram(ram,ram.stats().generation),identity:identity,generation:ram.stats().generation,cursor:0,store:store)
+        let base = try store.reader(expectedIdentity:identity).mappedBase!, namespace = HybridIndex(base:base)
+        _ = try MetadataWriter.write(store:store,base:base.header,cursor:0,value:{ _ in .init(logicalSize:7,modificationTimeNanoseconds:99) })
+        let metadata = MetadataIndexCoordinator(), metrics = Metrics()
+        weak var obsolete: MMapMetadataIndex?
+        do {
+            let mapped = try store.metadataReader(base:base.header)
+            obsolete = mapped; metadata.bind(namespace:base,mapped:mapped)
+        }
+        metadata.advance(0,historyDone:true)
+        let updater = MetadataUpdateCoordinator(root:identity.root,device:identity.deviceID,index:metadata,namespace:namespace,metrics:metrics,invalidated:{ metrics.record("unexpected_recovery") })
+        defer { updater.stop() }
+        namespace.apply([.remove(oldPath)])
+        updater.enqueue([.init(path:oldPath,flags:UInt32(kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemIsFile),id:1)])
+        updater.flush()
+        // The unmatched old-name event only needs its scalar metadata. A base
+        // replacement must release the obsolete map despite that pending pair.
+        metadata.bind(namespace:base); metadata.advance(1,historyDone:true)
+        XCTAssertNil(obsolete,"file rename origins must not retain a whole query snapshot")
+        namespace.apply([.upsert(.init(path:newPath,kind:.file,deviceID:identity.deviceID,fileID:17))])
+        updater.enqueue([.init(path:newPath,flags:UInt32(kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemIsFile),id:2)])
+        updater.flush()
+        XCTAssertEqual(metadata.capture().value(path:newPath),.init(logicalSize:7,modificationTimeNanoseconds:99))
+        XCTAssertEqual(metrics.snapshot()["metadata_rename_reuses"],1)
+        XCTAssertEqual(metrics.snapshot()["unexpected_recovery",default:0],0)
+    }
     func testWideSubtreeYieldStopsWholeSliceAndRetainsEverySibling() {
         let root = "/metadata-wide-frontier", ns = FileIndex(root:root)
         let meta = MetadataIndexCoordinator(), metrics = Metrics()
