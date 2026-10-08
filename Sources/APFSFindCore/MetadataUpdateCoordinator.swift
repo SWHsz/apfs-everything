@@ -202,76 +202,83 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         let floor = index.replayFloor
         var replaying = index.isReplaying
         for e in events {
-            metrics.record("metadata_events_received")
-            let classification = EventClassifier.classify(e)
-            let impact = MetadataEventImpact.classify(e)
-            if impact == .invalidated {
-                metrics.record("metadata_invalidations"); requestRecovery(newStreamInvalidation:true); continue
-            }
-            if classification == .historyDone { historyDone = true; replaying = false; continue }
-            if e.id != UInt64.max { maximumID = max(maximumID,e.id) }
-            let ordinary:Bool
-            switch classification {
-            case .simpleCreate, .simpleRemove, .contentOnly: ordinary = true
-            case .ambiguous:
-                let renameFlags = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile | kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemIsSymlink)
-                ordinary = e.flags & UInt32(kFSEventStreamEventFlagItemRenamed) != 0 && e.flags & ~renameFlags == 0
-            default: ordinary = false
-            }
-            // An ambiguous/unknown event can conceal namespace creation even at an old ID.
-            if replaying && ordinary && e.id > 0 && e.id != UInt64.max && e.id <= floor { metrics.record("metadata_overlap_skipped"); continue }
-            guard impact != .none, let path = PathCanonicalizer.normalize(e.path),
-                  PathCanonicalizer.isWithin(path,root:root) else { continue }
-            if classification == .subtreeDirty {
-                discoveredSubtrees.insert(namespace.entry(at:path)?.kind == .directory ? path : PathCanonicalizer.parent(of:path))
-            }
-            let parent = PathCanonicalizer.parent(of:path)
-            if collapsed.contains(parent) { metrics.record("metadata_events_deduplicated"); continue }
-            let item = namespace.entry(at:path)
-            if impact == .reconcileParent {
-                collapsed.insert(item?.kind == .directory ? path : parent)
-                metrics.record("metadata_parent_collapses")
-            }
-            let snapshot = index.capture()
-            let oldRecord = snapshot.ordinal(path).map { snapshot.namespace!.record(at:$0) }
-            if let item, item.kind == .directory,
-               e.flags & UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRenamed) != 0,
-               (!index.baseDirectoryMatches(path:path,fileID:item.fileID) || e.flags & UInt32(kFSEventStreamEventFlagItemRemoved) != 0) {
-                discoveredSubtrees.insert(path)
-            }
-            let fileID = item?.fileID ?? oldRecord.map { $0.fileID == 0 ? nil : $0.fileID } ?? nil
-            let key = fileID.map { "\(device):\($0)" } ?? path
-            let rename = e.flags & UInt32(kFSEventStreamEventFlagItemRenamed) != 0 &&
-                e.flags & UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemInodeMetaMod | kFSEventStreamEventFlagItemCreated) == 0
-            if rename, item == nil, let record = oldRecord {
-                if renameOrigins.count >= 4096 { renameOrigins = [:] }
-                var retained: MetadataQuerySnapshot?
-                var bytes = 0
-                if record.kind == .directory {
-                    bytes = snapshot.overlay.estimatedBytes + 200
-                    let usage = originUsage()
-                    if snapshot.available && usage.count < 64 && usage.bytes + bytes <= 8 * 1024 * 1024 { retained = snapshot }
-                    else { bytes = 0; metrics.record("metadata_rename_origin_snapshot_rejected") }
+            // Foundation name/path folding can return autoreleased objects.
+            // Retire them per event, rather than retaining an entire replay
+            // callback's temporary objects until all paths are classified.
+            let keepReceiving:Bool = autoreleasepool {
+                metrics.record("metadata_events_received")
+                let classification = EventClassifier.classify(e)
+                let impact = MetadataEventImpact.classify(e)
+                if impact == .invalidated {
+                    metrics.record("metadata_invalidations"); requestRecovery(newStreamInvalidation:true); return true
                 }
-                renameOrigins[key] = .init(path:path,value:snapshot.value(path:path),snapshot:retained,retainedBytes:bytes)
+                if classification == .historyDone { historyDone = true; replaying = false; return true }
+                if e.id != UInt64.max { maximumID = max(maximumID,e.id) }
+                let ordinary:Bool
+                switch classification {
+                case .simpleCreate, .simpleRemove, .contentOnly: ordinary = true
+                case .ambiguous:
+                    let renameFlags = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile | kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemIsSymlink)
+                    ordinary = e.flags & UInt32(kFSEventStreamEventFlagItemRenamed) != 0 && e.flags & ~renameFlags == 0
+                default: ordinary = false
+                }
+                // An ambiguous/unknown event can conceal namespace creation even at an old ID.
+                if replaying && ordinary && e.id > 0 && e.id != UInt64.max && e.id <= floor { metrics.record("metadata_overlap_skipped"); return true }
+                guard impact != .none, let path = PathCanonicalizer.normalize(e.path),
+                      PathCanonicalizer.isWithin(path,root:root) else { return true }
+                if classification == .subtreeDirty {
+                    discoveredSubtrees.insert(namespace.entry(at:path)?.kind == .directory ? path : PathCanonicalizer.parent(of:path))
+                }
+                let parent = PathCanonicalizer.parent(of:path)
+                if collapsed.contains(parent) { metrics.record("metadata_events_deduplicated"); return true }
+                let item = namespace.entry(at:path)
+                if impact == .reconcileParent {
+                    collapsed.insert(item?.kind == .directory ? path : parent)
+                    metrics.record("metadata_parent_collapses")
+                }
+                let snapshot = index.capture()
+                let oldRecord = snapshot.ordinal(path).map { snapshot.namespace!.record(at:$0) }
+                if let item, item.kind == .directory,
+                   e.flags & UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRenamed) != 0,
+                   (!index.baseDirectoryMatches(path:path,fileID:item.fileID) || e.flags & UInt32(kFSEventStreamEventFlagItemRemoved) != 0) {
+                    discoveredSubtrees.insert(path)
+                }
+                let fileID = item?.fileID ?? oldRecord.map { $0.fileID == 0 ? nil : $0.fileID } ?? nil
+                let key = fileID.map { "\(device):\($0)" } ?? path
+                let rename = e.flags & UInt32(kFSEventStreamEventFlagItemRenamed) != 0 &&
+                    e.flags & UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemInodeMetaMod | kFSEventStreamEventFlagItemCreated) == 0
+                if rename, item == nil, let record = oldRecord {
+                    if renameOrigins.count >= 4096 { renameOrigins = [:] }
+                    var retained: MetadataQuerySnapshot?
+                    var bytes = 0
+                    if record.kind == .directory {
+                        bytes = snapshot.overlay.estimatedBytes + 200
+                        let usage = originUsage()
+                        if snapshot.available && usage.count < 64 && usage.bytes + bytes <= 8 * 1024 * 1024 { retained = snapshot }
+                        else { bytes = 0; metrics.record("metadata_rename_origin_snapshot_rejected") }
+                    }
+                    renameOrigins[key] = .init(path:path,value:snapshot.value(path:path),snapshot:retained,retainedBytes:bytes)
+                }
+                if rename { renameOnly.insert(path) } else { renameOnly.remove(path) }
+                if pending[key] != nil { metrics.record("metadata_events_deduplicated") }
+                pending[key,default:[]].insert(path)
+                if e.flags & UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed) != 0,
+                   PathCanonicalizer.isWithin(parent,root:root) {
+                    let parentEntry = namespace.entry(at:parent)
+                    let parentKey = parentEntry?.fileID.map { "\(device):\($0)" } ?? parent
+                    pending[parentKey,default:[]].insert(parent)
+                }
+                if collapsed.count >= 16_384 || discoveredSubtrees.count >= 16_384 {
+                    metrics.record("metadata_pending_frontier_overflows")
+                    pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); metrics.set("pending_metadata_lookups",to:0); requestRecovery(); return false
+                }
+                if pending.count >= policy.maxPendingEntries {
+                    collapsed.formUnion(pending.values.flatMap { $0.map { PathCanonicalizer.parent(of:$0) } }); pending.removeAll()
+                    metrics.record("metadata_parent_collapses")
+                }
+                return true
             }
-            if rename { renameOnly.insert(path) } else { renameOnly.remove(path) }
-            if pending[key] != nil { metrics.record("metadata_events_deduplicated") }
-            pending[key,default:[]].insert(path)
-            if e.flags & UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed) != 0,
-               PathCanonicalizer.isWithin(parent,root:root) {
-                let parentEntry = namespace.entry(at:parent)
-                let parentKey = parentEntry?.fileID.map { "\(device):\($0)" } ?? parent
-                pending[parentKey,default:[]].insert(parent)
-            }
-            if collapsed.count >= 16_384 || discoveredSubtrees.count >= 16_384 {
-                metrics.record("metadata_pending_frontier_overflows")
-                pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); metrics.set("pending_metadata_lookups",to:0); requestRecovery(); return
-            }
-            if pending.count >= policy.maxPendingEntries {
-                collapsed.formUnion(pending.values.flatMap { $0.map { PathCanonicalizer.parent(of:$0) } }); pending.removeAll()
-                metrics.record("metadata_parent_collapses")
-            }
+            if !keepReceiving {return}
         }
         recordOrigins()
         if pending.isEmpty && collapsed.isEmpty && discoveredSubtrees.isEmpty { advanceCompletedCursor(); changed(); return }
@@ -298,6 +305,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         let paths = Set(pending.values.flatMap { $0 })
         var deferredPaths = Set<String>()
         var deferredParents = Set<String>()
+        var parentSliceYield = false
+        var slowDeferred = false
         if paths.count <= policy.smallBatchLimit && collapsed.isEmpty {
             let budget = max(1,policy.maxLookupsPerSecond)
             var reusedIdentities: [String:FileMetadataValue] = [:]
@@ -316,7 +325,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                    let value = reusedIdentities["\(device):\(id)"] {
                     index.update(path:path,value:value); metrics.record("metadata_fileid_lookup_reuses"); continue
                 }
-                if lookupsInWindow >= budget { deferredPaths.insert(path); continue }
+                if lookupsInWindow >= budget { deferredPaths.insert(path);slowDeferred = true;continue }
                 var record = APFSDirectoryEntry(); _ = apfs_deny_dataless_materialization()
                 if path == "/" {
                     var directory = APFSDirectoryInfo()
@@ -337,8 +346,19 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             for (parent,items) in groups where items.count >= policy.stormParentCollapseThreshold {
                 collapsed.insert(parent); metrics.record("metadata_parent_collapses")
             }
-            for parent in Set(groups.keys).union(collapsed) {
+            let parents = Array(Set(groups.keys).union(collapsed))
+            let parentSliceStart = ProcessInfo.processInfo.systemUptime
+            var parentAttempts = 0
+            for (parentIndex,parent) in parents.enumerated() {
                 guard !scanCancellation.isCancelled else { return }
+                if parentAttempts > 0 && (parentAttempts >= 32 || ProcessInfo.processInfo.systemUptime-parentSliceStart >= 0.020) {
+                    for remaining in parents[parentIndex...] {
+                        deferredPaths.formUnion(groups[remaining] ?? [])
+                        if collapsed.contains(remaining) {deferredParents.insert(remaining)}
+                    }
+                    parentSliceYield = true;metrics.record("metadata_parent_slice_yields");break
+                }
+                parentAttempts += 1
                 let requestedPaths = groups[parent] ?? []
                 let siblings = (namespace as? HybridIndex)?.childCount(of:parent) ?? requestedPaths.count
                 // Sparse changes in huge directories use bounded metadata microbatches;
@@ -352,7 +372,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                         let instant = ProcessInfo.processInfo.systemUptime
                         if instant-lookupWindow >= 1 { lookupWindow = instant; lookupsInWindow = 0 }
                         if lookupsInWindow+chunk.count > max(1,policy.maxLookupsPerSecond) {
-                            deferredPaths.formUnion(chunk); continue
+                            deferredPaths.formUnion(chunk);slowDeferred = true;continue
                         }
                         lookupsInWindow += chunk.count
                         let pointers = chunk.map { strdup(($0 as NSString).lastPathComponent) }
@@ -388,9 +408,11 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     // A query/pressure yield is retryable work, not a corrupt
                     // sidecar. Keep the collapsed parent even without item events.
                     deferredPaths.formUnion(requestedPaths); deferredParents.insert(parent)
+                    slowDeferred = true
                     metrics.record("metadata_parent_yields")
                 } catch {
                     if scanCancellation.isCancelled { return }
+                    slowDeferred = true
                     let code = (error as? ScannerError)?.code ?? EIO
                     metrics.record("metadata_parent_read_failures")
                     metrics.record("metadata_parent_errno_\(code)")
@@ -497,7 +519,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         if !deferredPaths.isEmpty || !deferredParents.isEmpty {
             for path in deferredPaths { pending[path] = [path] }
             metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count)
-            schedule(after:max(0.001,1-(ProcessInfo.processInfo.systemUptime-lookupWindow))); changed(); return
+            schedule(after:parentSliceYield && !slowDeferred ? 0.005 : max(0.001,1-(ProcessInfo.processInfo.systemUptime-lookupWindow))); changed(); return
         }
         if !remainingSubtrees.isEmpty {
             metrics.set("pending_metadata_lookups",to:remainingSubtrees.count)

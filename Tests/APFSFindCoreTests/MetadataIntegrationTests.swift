@@ -7,6 +7,40 @@ import XCTest
 
 final class MetadataIntegrationTests: XCTestCase {
 
+    func testOrdinaryParentBatchYieldsWithoutLosingPathsOrAdvancingCursor() {
+        let root = "/bounded-metadata-parents",ns = FileIndex(root:root),meta = MetadataIndexCoordinator(),metrics = Metrics()
+        let files = (0..<100).flatMap {parent in (0..<128).map {slot in
+            ScannedEntry(namespace:.init(path:"\(root)/parent-\(parent)/file-\(slot)",kind:.file),
+                         metadata:.init(logicalSize:UInt64(slot+1),modificationTimeNanoseconds:Int64(parent+1)))
+        }}
+        ns.apply((0..<100).map {.upsert(.init(path:"\(root)/parent-\($0)",kind:.directory))}+files.map {.upsert($0.namespace)})
+        meta.advance(10,historyDone:true)
+        let groups = Dictionary(grouping:files,by:{PathCanonicalizer.parent(of:$0.namespace.path)})
+        var policy = MetadataUpdatePolicy();policy.debounceSeconds = 60
+        let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,policy:policy,
+            invalidated:{metrics.record("unexpected_recovery")},readDirectory:{path,_ in
+                metrics.record("test_parent_reads");return groups[path] ?? []
+            })
+        defer {updater.stop()}
+        let flags = UInt32(kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemIsFile)
+        updater.enqueue(files.enumerated().map {.init(path:$0.element.namespace.path,flags:flags,id:UInt64($0.offset+11))})
+        updater.flush()
+        XCTAssertGreaterThan(metrics.snapshot()["test_parent_reads",default:0],0)
+        XCTAssertLessThanOrEqual(metrics.snapshot()["test_parent_reads",default:0],32)
+        XCTAssertEqual(meta.processedCursor,10,"unread parents retain the conservative fence")
+        XCTAssertGreaterThan(updater.pendingCount,0)
+        waitFor("all ordinary parents converge",timeout:10) {
+            _ = ns.search(.init(query:"file-",limit:10))
+            updater.flush();return updater.pendingCount == 0
+        }
+        XCTAssertEqual(metrics.snapshot()["test_parent_reads"],100)
+        XCTAssertGreaterThan(metrics.snapshot()["metadata_parent_slice_yields",default:0],0)
+        XCTAssertEqual(meta.processedCursor,UInt64(files.count+10))
+        let snapshot = meta.capture()
+        for file in files {XCTAssertEqual(snapshot.value(path:file.namespace.path),file.metadata)}
+        XCTAssertEqual(metrics.snapshot()["unexpected_recovery",default:0],0)
+    }
+
     func testQueuedRepairIsSupersededByValidMetadataOnNewNamespaceBase() async throws {
         let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true),scheduler = MaintenanceScheduler()
         try tree.file("target")
