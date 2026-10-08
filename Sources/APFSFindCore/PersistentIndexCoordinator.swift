@@ -646,7 +646,8 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         guard let base = (self.index as? HybridIndex)?.mappedBase else { throw SnapshotError.generationChanged }
         // A queued repair can be overtaken by a namespace rebuild that also
         // publishes valid metadata. Do not scan that volume again merely
-        // because an older base exhausted its overlay before publication.
+        // for the superseded base. Actual loss, including loss while queued,
+        // still needs a scan: copying known columns does not recover omissions.
         if !force,requestedBase != base.header.snapshotUUID,self.metadata.capture().available,
            !requestedRecovery.overflowed,requestedRecovery.epoch == self.metadata.recoveryState.epoch,
            !self.metadata.requiresRecovery,self.metadataUpdater?.needsRecovery != true {

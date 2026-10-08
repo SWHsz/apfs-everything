@@ -45,13 +45,18 @@ final class MetadataIntegrationTests: XCTestCase {
 
     func testOrdinaryParentBatchYieldsWithoutLosingPathsOrAdvancingCursor() {
         let root = "/bounded-metadata-parents",ns = FileIndex(root:root),meta = MetadataIndexCoordinator(),metrics = Metrics()
-        let files = (0..<100).flatMap {parent in (0..<128).map {slot in
-            ScannedEntry(namespace:.init(path:"\(root)/parent-\(parent)/file-\(slot)",kind:.file),
-                         metadata:.init(logicalSize:UInt64(slot+1),modificationTimeNanoseconds:Int64(parent+1)))
-        }}
-        ns.apply((0..<100).map {.upsert(.init(path:"\(root)/parent-\($0)",kind:.directory))}+files.map {.upsert($0.namespace)})
+        var files:[ScannedEntry] = []
+        for parent in 0..<100 {
+            for slot in 0..<128 {
+                let entry = NamespaceEntry(path:"\(root)/parent-\(parent)/file-\(slot)",kind:.file)
+                let value = FileMetadataValue(logicalSize:UInt64(slot+1),modificationTimeNanoseconds:Int64(parent+1))
+                files.append(ScannedEntry(namespace:entry,metadata:value))
+            }
+        }
+        let directories:[IndexMutation] = (0..<100).map {IndexMutation.upsert(NamespaceEntry(path:"\(root)/parent-\($0)",kind:.directory))}
+        ns.apply(directories+files.map {IndexMutation.upsert($0.namespace)})
         meta.advance(10,historyDone:true)
-        let groups = Dictionary(grouping:files,by:{PathCanonicalizer.parent(of:$0.namespace.path)})
+        let groups:[String:[ScannedEntry]] = Dictionary(grouping:files,by:{PathCanonicalizer.parent(of:$0.namespace.path)})
         var policy = MetadataUpdatePolicy();policy.debounceSeconds = 60
         let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,policy:policy,
             invalidated:{metrics.record("unexpected_recovery")},readDirectory:{path,_ in
@@ -59,7 +64,8 @@ final class MetadataIntegrationTests: XCTestCase {
             })
         defer {updater.stop()}
         let flags = UInt32(kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemIsFile)
-        updater.enqueue(files.enumerated().map {.init(path:$0.element.namespace.path,flags:flags,id:UInt64($0.offset+11))})
+        let events:[FileSystemEvent] = files.enumerated().map {FileSystemEvent(path:$0.element.namespace.path,flags:flags,id:UInt64($0.offset+11))}
+        updater.enqueue(events)
         updater.flush()
         XCTAssertGreaterThan(metrics.snapshot()["test_parent_reads",default:0],0)
         XCTAssertLessThanOrEqual(metrics.snapshot()["test_parent_reads",default:0],32)
