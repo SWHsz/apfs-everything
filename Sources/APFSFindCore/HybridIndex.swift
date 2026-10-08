@@ -199,7 +199,10 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   public func children(of path: String) -> [NamespaceEntry] {
     if let bootstrap = lock.withLock({bootstrap}) { return bootstrap.children(of:path) }
     guard let captured = capture(),let ref = captured.resolver.resolveDirectory(path) else { return [] }
-    return captured.children(ref,path:path).map { child in
+    // Reconciliation needs canonical path order, not search/ranking order.
+    // Sorting the same siblings by folded name first performs thousands of
+    // unnecessary Unicode folds per parent under ASan and query pressure.
+    return captured.resolver.children(of:ref).map { child in
       switch child {
       case .delta(let id): return captured.delta[id]!.entry
       case .base(let id): let r = captured.base.record(at:id)
