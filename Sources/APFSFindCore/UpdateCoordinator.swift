@@ -725,7 +725,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         var mutations = patches
         var retryParents = Set<String>()
         let rootSet = Set(roots)
-        var absorbedRoots = Set<String>(), nestedPatchRoots = Set<String>()
+        var nestedFrontiers: [String:[ReconcileFrontier]] = [:]
         func coveringRoot(_ path: String) -> String? {
             var parent = PathCanonicalizer.parent(of: path)
             while PathCanonicalizer.isWithin(parent, root: root) {
@@ -736,28 +736,31 @@ public final class UpdateCoordinator: @unchecked Sendable {
             return nil
         }
         for path in dirty.keys where !rootSet.contains(path) {
-            if let ancestor = coveringRoot(path) { absorbedRoots.insert(ancestor) }
+            if let ancestor = coveringRoot(path) {
+                nestedFrontiers[ancestor,default:[]].append(.init(path:path,recursive:dirty[path]?.subtree ?? false))
+            }
         }
         for patch in direct {
             let path = mutationPath(patch)
             if let ancestor = coveringRoot(path), PathCanonicalizer.parent(of: path) != ancestor {
-                nestedPatchRoots.insert(ancestor)
+                nestedFrontiers[ancestor,default:[]].append(.init(path:PathCanonicalizer.parent(of:path),recursive:false))
             }
         }
         let sliceStart = ProcessInfo.processInfo.systemUptime
         var attempted = 0
         for directory in roots {
-            let absorbed = absorbedRoots.contains(directory)
-            let nestedPatch = nestedPatchRoots.contains(directory)
             let options = dirty[directory] ?? (true, true)
-            let subtree = options.subtree || absorbed || nestedPatch
+            let subtree = options.subtree
+            // Coalesce queue ownership without expanding a sparse repair into
+            // an unrelated whole-home traversal. The root is consumed first.
+            let frontier = (subtree ? [] : nestedFrontiers[directory] ?? []) + [.init(path:directory,recursive:subtree)]
             if mayRebuild && (attempted >= 32 || ProcessInfo.processInfo.systemUptime-sliceStart >= 0.02) {
                 deferReconcile(.init(root: directory, reason: .event, minimumCursor: lastProcessedEventID,
-                    generation: target.stats().generation, subtree: subtree)); continue
+                    generation: target.stats().generation, subtree: subtree,frontier:frontier)); continue
             }
             attempted += 1
             let plan = reconciler.prepare(directory, subtree: subtree, force: true,
-                cancellation: exitReconciliation, directoryLimit: mayRebuild ? 32 : nil)
+                cancellation: exitReconciliation,frontier:frontier, directoryLimit: mayRebuild ? 32 : nil)
             noteReconcileAllocation(plan.enumeratedEntries)
             if plan.cancelled { exitBatchIncomplete = true; continue }
             if case .invalidated = plan.result, mayRebuild {
@@ -920,9 +923,20 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     generation:index.stats().generation))
                 if rebuildScheduled || building { return }
             }
-            // Metadata may have handled the original event before namespace
-            // discovery. ID 0 hints bypass overlap without inventing a cursor.
-            metadataEventHandler?(plan.completedDirectories.map {
+            // Only published changes require a second metadata pass. Repeating
+            // every unchanged directory in a replayed tree can flood its inbox.
+            // ID 0 hints bypass overlap without inventing a cursor.
+            let published: [IndexMutation]
+            if case .locallyFailed = plan.result { published = [] }
+            else { published = plan.mutations }
+            let changedParents = Set(published.map { mutation -> String in
+                switch mutation {
+                case .upsert(let entry): return PathCanonicalizer.parent(of:entry.path)
+                case .remove(let path): return PathCanonicalizer.parent(of:path)
+                }
+            })
+            metrics.record("metadata_changed_parent_hints",by:changedParents.count)
+            metadataEventHandler?(changedParents.map {
                 .init(path:$0,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:0)
             })
         }

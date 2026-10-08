@@ -22,6 +22,88 @@ private final class InjectedParents: DirectoryReading, @unchecked Sendable {
 }
 
 final class DeferredReconcileTests: XCTestCase {
+    func testNestedDirtyInputRepairsOnlyRequestedScopes() throws {
+        let tree = try TemporaryTree(), device = try VolumeIdentity.discover(root:tree.root).deviceID
+        let index = FileIndex(root:tree.root)
+        func directory(_ path:String,_ id:UInt64)->NamespaceEntry { .init(path:path,kind:.directory,deviceID:device,fileID:id) }
+        let affected = directory(tree.path("affected"),11), unrelated = directory(tree.path("unrelated"),12)
+        let nested = directory(affected.path+"/nested",13)
+        let leaf = NamespaceEntry(path:nested.path+"/new",kind:.file,deviceID:device,fileID:14)
+        index.apply([directory(tree.root,10),affected,unrelated,nested].map{.upsert($0)})
+        let reader = ScopeBoundaryReader([tree.root:[affected,unrelated],affected.path:[nested],nested.path:[leaf]])
+        let reconciler = DirectoryReconciler(scanner:reader,index:index,rootDeviceID:device,metrics:Metrics())
+        let core = try UpdateCoordinator(root:tree.root,index:index,maintenanceScheduler:.init())
+        defer {core.stop()}
+        core.process([.init(path:tree.path("unknown"),flags:UInt32(kFSEventStreamEventFlagItemRenamed),id:11),
+                      .init(path:affected.path,flags:UInt32(kFSEventStreamEventFlagMustScanSubDirs),id:12)],
+                     into:index,using:reconciler,countMetrics:true,mayRebuild:false)
+        XCTAssertNotNil(index.entry(at:leaf.path))
+        XCTAssertEqual(reader.paths,[tree.root,affected.path,nested.path])
+        XCTAssertEqual(core.metrics.snapshot()["full_scans",default:0],0)
+    }
+
+    func testLateAncestorReplacementRevisitsPreviouslyReadChild() {
+        let root = "/owned-late-replacement", device:UInt64 = 77, index = FileIndex(root:root)
+        func directory(_ path:String,_ id:UInt64)->NamespaceEntry { .init(path:path,kind:.directory,deviceID:device,fileID:id) }
+        let affected = directory(root+"/affected",11), nested = directory(affected.path+"/nested",13)
+        let leaf = NamespaceEntry(path:nested.path+"/keep",kind:.file,deviceID:device,fileID:14)
+        index.apply([directory(root,10),affected,nested,leaf].map{.upsert($0)})
+        let replaced = directory(affected.path,21)
+        let reader = ScopeBoundaryReader([root:[replaced],affected.path:[nested],nested.path:[leaf]])
+        let reconciler = DirectoryReconciler(scanner:reader,index:index,rootDeviceID:device,metrics:Metrics())
+        let plan = reconciler.prepare(root,force:true,frontier:[.init(path:root,recursive:false),.init(path:affected.path,recursive:false)])
+        index.apply(plan.mutations)
+        XCTAssertEqual(index.entry(at:affected.path)?.fileID,21)
+        XCTAssertNotNil(index.entry(at:leaf.path),"a later parent replacement must reinsert surviving descendants")
+        XCTAssertTrue(plan.frontier.isEmpty)
+    }
+
+    func testDeferredMetadataHintsOnlyDescribePublishedChangedParents() throws {
+        for changed in [false,true] {
+            let tree = try TemporaryTree(), device = try VolumeIdentity.discover(root:tree.root).deviceID
+            let index = FileIndex(root:tree.root), hints = Metrics(), root = tree.root
+            let old = NamespaceEntry(path:tree.path("old"),kind:.file,deviceID:device,fileID:11)
+            let new = NamespaceEntry(path:tree.path("new"),kind:.file,deviceID:device,fileID:12)
+            index.apply([.upsert(old)])
+            let reader = YieldOnceScopeReader(changed ? [old,new] : [old])
+            let core = try UpdateCoordinator(root:root,index:index,maintenanceScheduler:.init(),reconcileReader:reader,
+                replayStarter:{ cursor,deliver in deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:cursor)]) })
+            defer {core.stop()}
+            core.setMetadataHandlers(scan:{ _,_ in },events:{ events in
+                for event in events where event.id == 0 && event.path == root {hints.record("parents")}
+            })
+            try core.start(restored:index,cursor:10);XCTAssertTrue(core.waitUntilLive())
+            core.enqueue([.init(path:tree.path("unknown"),flags:UInt32(kFSEventStreamEventFlagItemRenamed),id:11)])
+            XCTAssertTrue(core.flushEvents())
+            waitFor("deferred parent completes",timeout:5) { core.stats().dictionary["last_processed_event_id"] as? UInt64 == 11 }
+            XCTAssertEqual(core.metrics.snapshot()["reconcile_resource_yields"],1)
+            XCTAssertEqual(hints.snapshot()["parents",default:0],changed ? 1 : 0)
+            XCTAssertEqual(index.entry(at:new.path) != nil,changed)
+            XCTAssertEqual(core.metrics.snapshot()["full_scans",default:0],0)
+            XCTAssertEqual(core.metrics.snapshot()["rebuild_requests_resource_yield",default:0],0)
+        }
+    }
+
+    func testAncestorMergeDoesNotExpandRecursiveChildIntoUntouchedSiblings() throws {
+        let root = "/owned-scoped-merge",device:UInt64 = 77,index = FileIndex(root:root)
+        func directory(_ path:String,_ id:UInt64)->NamespaceEntry { .init(path:path,kind:.directory,deviceID:device,fileID:id) }
+        let affected = directory(root+"/affected",11),unrelated = directory(root+"/unrelated",12)
+        let child = directory(affected.path+"/child",13),outside = directory(unrelated.path+"/deep",14)
+        let leaf = NamespaceEntry(path:child.path+"/file",kind:.file,deviceID:device,fileID:15)
+        let untouched = NamespaceEntry(path:outside.path+"/keep",kind:.file,deviceID:device,fileID:16)
+        index.apply([directory(root,10),affected,unrelated,child,outside,leaf,untouched].map{.upsert($0)})
+        let reader = ScopeBoundaryReader([root:[affected,unrelated],affected.path:[child],child.path:[leaf],unrelated.path:[outside],outside.path:[untouched]])
+        var queue = DeferredReconcileQueue()
+        XCTAssertTrue(queue.insert(.init(root:affected.path,reason:.event,minimumCursor:7,generation:1,subtree:true)))
+        XCTAssertTrue(queue.insert(.init(root:root,reason:.event,minimumCursor:9,generation:2)))
+        let work = try XCTUnwrap(queue.popReady(now:0))
+        let reconciler = DirectoryReconciler(scanner:reader,index:index,rootDeviceID:device,metrics:Metrics())
+        let plan = reconciler.prepare(work.root,subtree:work.subtree,force:true,frontier:work.frontier)
+        XCTAssertTrue(plan.mutations.isEmpty)
+        XCTAssertTrue(reader.paths.contains(root));XCTAssertTrue(reader.paths.contains(child.path))
+        XCTAssertFalse(reader.paths.contains(unrelated.path),"a parent listing must not turn a child-only subtree request into a whole-root walk")
+        XCTAssertFalse(reader.paths.contains(outside.path));XCTAssertEqual(work.minimumCursor,7)
+    }
     func testRepeatedAncestorInputDoesNotPreemptUnfinishedFrontier() throws {
         var queue = DeferredReconcileQueue()
         XCTAssertTrue(queue.insert(.init(root: "/owned", reason: .event, minimumCursor: 10,
@@ -277,5 +359,28 @@ extension DeferredReconcileTests {
         XCTAssertEqual(core.metrics.snapshot()["full_rebuilds"], 1)
         XCTAssertNil(index.entry(at: tree.path("old")))
         XCTAssertNotNil(index.entry(at: tree.path("present")))
+    }
+}
+
+private final class ScopeBoundaryReader: DirectoryReading, @unchecked Sendable {
+    let entries:[String:[NamespaceEntry]]
+    private let lock = NSLock()
+    private var visited:Set<String> = []
+    var paths:Set<String> {lock.withLock{visited}}
+    init(_ entries:[String:[NamespaceEntry]]) {self.entries = entries}
+    func readDirectory(_ path:String,rootDeviceID:UInt64,cancellation:CancellationToken)throws->[NamespaceEntry] {
+        _ = lock.withLock{visited.insert(path)};return entries[path] ?? []
+    }
+}
+
+private final class YieldOnceScopeReader: DirectoryReading, @unchecked Sendable {
+    private let entries:[NamespaceEntry]
+    private let lock = NSLock()
+    private var yielded = false
+    init(_ entries:[NamespaceEntry]) {self.entries = entries}
+    func readDirectory(_ path:String,rootDeviceID:UInt64,cancellation:CancellationToken)throws->[NamespaceEntry] {
+        let shouldYield = lock.withLock {if yielded {return false};yielded = true;return true}
+        if shouldYield {throw MaintenanceYield(reason:"first parent deferred")}
+        return entries
     }
 }

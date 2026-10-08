@@ -5,7 +5,10 @@ public enum ReconcileInvalidation: String, Sendable { case hardLimit, repeatedIO
 public struct ReconcileFrontier: Sendable, Equatable {
     public let path: String
     public let reset: Bool
-    public init(path: String, reset: Bool = false) { self.path = path; self.reset = reset }
+    public let recursive: Bool?
+    public init(path: String, reset: Bool = false, recursive: Bool? = nil) {
+        self.path = path; self.reset = reset; self.recursive = recursive
+    }
 }
 public enum ReconcileResult: Sendable {
     case completed
@@ -26,7 +29,9 @@ public struct DeferredReconcileWork: Sendable {
                 generation: UInt64, subtree: Bool = false, frontier: [ReconcileFrontier]? = nil) {
         self.root = PathCanonicalizer.normalize(root) ?? root; self.reason = reason; self.minimumCursor = minimumCursor
         self.generation = generation; self.subtree = subtree
-        self.frontier = frontier ?? [.init(path: root)]
+        self.frontier = (frontier ?? [.init(path: root)]).map {
+            .init(path:$0.path,reset:$0.reset,recursive:$0.recursive ?? subtree)
+        }
     }
 }
 
@@ -63,18 +68,23 @@ public struct DeferredReconcileQueue: Sendable {
             old.minimumCursor = min(old.minimumCursor, work.minimumCursor)
             old.generation = max(old.generation, work.generation)
             old.nextAttempt = min(old.nextAttempt, work.nextAttempt)
-            old.subtree = old.subtree || work.subtree || old.root != root
+            // Recursion belongs to the requested path, not every sibling under
+            // a common ancestor used for queue coalescing.
+            if old.root == root {old.subtree = old.subtree || work.subtree}
             merge(work.frontier, into: &old.frontier, preserveProgress: true)
             works.insert(old, at: i)
         } else {
             let children = works.filter { Self.covers($0.root, ancestor: root) }
+            merged.frontier = []
             for old in children {
                 merged.minimumCursor = min(merged.minimumCursor, old.minimumCursor)
                 merged.generation = max(merged.generation, old.generation)
                 merged.nextAttempt = min(merged.nextAttempt, old.nextAttempt)
-                merged.subtree = true
                 merge(old.frontier, into: &merged.frontier)
             }
+            // A newly introduced parent is read before its retained descendants
+            // so replacement/type changes can reset their authoritative diffs.
+            merge(work.frontier,into:&merged.frontier)
             works.removeAll { Self.covers($0.root, ancestor: root) }
             works.append(merged)
         }
@@ -89,7 +99,9 @@ public struct DeferredReconcileQueue: Sendable {
         let priorCount = frontier.count
         for item in extra {
             if let i = positions[item.path] {
-                if item.reset && !frontier[i].reset { frontier[i] = item }
+                let old = frontier[i]
+                frontier[i] = .init(path:old.path,reset:old.reset || item.reset,
+                    recursive:(old.recursive ?? false) || (item.recursive ?? false))
             } else { positions[item.path] = frontier.count; frontier.append(item) }
         }
         // The reconciler consumes from the end. A fresh ancestor event must

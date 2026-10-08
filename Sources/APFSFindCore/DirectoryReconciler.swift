@@ -84,9 +84,9 @@ public final class DirectoryReconciler {
             plan.gateSkipped = true
             return plan
         }
-        var pending = frontier ?? [ReconcileFrontier(path: path)]
+        var pending = frontier ?? [ReconcileFrontier(path: path,recursive:subtree)]
         var completed = 0
-        var seen = Set<String>()
+        var seen: [String:Bool] = [:]
         var retryParents = Set<String>()
         let start = ProcessInfo.processInfo.systemUptime
         while let work = pending.popLast(), !cancellation.isCancelled {
@@ -110,7 +110,10 @@ public final class DirectoryReconciler {
             // 16k unchanged directories is not evidence that recovery is needed.
             if seen.count >= 16_384 { seen.removeAll(keepingCapacity:true) }
             let directory = work.path
-            guard seen.insert(directory).inserted else { continue }
+            // A parent replacement discovered later in the same slice must
+            // upgrade an earlier ordinary visit into a resetting subtree walk.
+            if let reset = seen[directory], reset || !work.reset {continue}
+            seen[directory] = work.reset
             do {
                 let startStamp = BulkScanner.directoryStamp(directory)
                 let actual = try scanner.readDirectory(directory, rootDeviceID: rootDeviceID, cancellation: cancellation)
@@ -137,8 +140,9 @@ public final class DirectoryReconciler {
                     guard PathCanonicalizer.parent(of:child.path) == directory else { continue }
                     // New/type-replaced directories can already contain a complete tree.
                     let replaced = old[child.path]?.hasSameDirectoryIdentity(as: child) != true
-                    if subtree || work.reset || replaced {
-                        pending.append(.init(path: child.path, reset: work.reset || replaced))
+                    let recursive = work.recursive ?? subtree
+                    if recursive || work.reset || replaced {
+                        pending.append(.init(path: child.path, reset: work.reset || replaced,recursive:recursive))
                     }
                 }
                 let endStamp = BulkScanner.directoryStamp(directory)
@@ -179,7 +183,7 @@ public final class DirectoryReconciler {
         if cancellation.isCancelled { plan.mutations.removeAll(); plan.cancelled = true }
         if !plan.cancelled && !plan.requiresRebuild { plan.frontier = pending }
         plan.retryParents = PathCanonicalizer.minimalRoots(Array(retryParents))
-        if subtree { metrics.record("subtree_reconciles") }
+        if subtree || frontier?.contains(where: { $0.recursive == true }) == true { metrics.record("subtree_reconciles") }
         return plan
     }
 }
