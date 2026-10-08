@@ -19,6 +19,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private var inboxHistoryDone = false
     private var inboxScheduled = false
     private var inboxOverflow = false
+    private var inboxInvalidated = false
+    private var inboxMaximumID: UInt64 = 0
     private let queue = DispatchQueue(label:"apfsfind.metadata-events",qos:.utility)
     private let index: MetadataIndexCoordinator
     private let namespace: any NamespaceIndex
@@ -32,6 +34,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private var pending: [String: Set<String>] = [:]
     private var collapsed: Set<String> = []
     private var discoveredSubtrees = Set<String>()
+    private var inboxRootRepair = false
+    private var repeatInboxRootRepair = false
     private let scanCancellation = CancellationToken()
     private var work: DispatchWorkItem?
     private var epoch: UInt64 = 0
@@ -41,6 +45,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private var suspended = false
     private var buffered: [FileSystemEvent] = []
     private var bufferOverflow = false
+    private var bufferedRootRepair = false
     private var renameOnly = Set<String>()
     private struct RenameOrigin {
         let path: String
@@ -105,6 +110,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             guard !scanCancellation.isCancelled else { return false }
             var coalesced = 0
             for incoming in events {
+                if MetadataEventImpact.classify(incoming) == .invalidated { inboxInvalidated = true }
+                if incoming.id != UInt64.max { inboxMaximumID = max(inboxMaximumID,incoming.id) }
                 var event = incoming
                 if event.flags & UInt32(kFSEventStreamEventFlagHistoryDone) != 0 {
                     inboxHistoryDone = true
@@ -131,14 +138,35 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 var events = Array(self.inbox.values)
                 // A replay fence follows every path refresh represented by it.
                 if self.inboxHistoryDone { events.append(.init(path:self.root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:UInt64.max)) }
-                let value = (events,self.inboxOverflow)
-                self.inbox = [:]; self.inboxHistoryDone = false; self.inboxOverflow = false; self.inboxScheduled = false; return value
+                let value = (events,self.inboxOverflow,self.inboxInvalidated,self.inboxMaximumID,self.inboxHistoryDone)
+                self.inbox = [:]; self.inboxHistoryDone = false; self.inboxOverflow = false
+                self.inboxInvalidated = false; self.inboxMaximumID = 0; self.inboxScheduled = false; return value
             }
             autoreleasepool {
-                self.receive(batch.0)
-                if batch.1 { self.metrics.record("metadata_inbox_overflows"); self.invalidated() }
+                if batch.1 && !batch.2 {
+                    // We know every dropped path belongs to this watched root.
+                    // Repair its metadata in bounded directory slices instead
+                    // of allocating a full-volume bootstrap's private columns.
+                    self.metrics.record("metadata_inbox_overflows")
+                    self.repairOverflowedInbox(maximumID:batch.3,historyDone:batch.4)
+                } else {
+                    self.receive(batch.0)
+                    if batch.1 { self.metrics.record("metadata_inbox_overflows"); self.invalidated() }
+                }
             }
         }
+    }
+    private func repairOverflowedInbox(maximumID:UInt64,historyDone:Bool) {
+        guard !stopped, !scanCancellation.isCancelled else {return}
+        self.maximumID = max(self.maximumID,maximumID)
+        self.historyDone = self.historyDone || historyDone
+        if suspended {
+            bufferedRootRepair = true;return
+        }
+        if inboxRootRepair {repeatInboxRootRepair = true;metrics.record("metadata_inbox_scope_repeat")}
+        else {inboxRootRepair = true;discoveredSubtrees.insert(root);metrics.record("metadata_inbox_scope_repairs")}
+        index.markPending();metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count)
+        schedule(after:0.005);changed()
     }
     private func receive(_ events:[FileSystemEvent]) {
         guard !stopped, !scanCancellation.isCancelled else { return }
@@ -234,7 +262,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         work = item; queue.asyncAfter(deadline:.now()+delay,execute:item)
     }
     private func drain() {
-        guard !scanCancellation.isCancelled else { return }
+        guard !scanCancellation.isCancelled, !suspended else { return }
         let resources = ProcessResourceSample.capture()
         metrics.set("metadata_update_active",to:1)
         defer { metrics.set("metadata_update_active",to:0); metrics.recordResources("metadata_event_updates",since:resources) }
@@ -400,6 +428,12 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         }
         guard !scanCancellation.isCancelled else { return }
         discoveredSubtrees = remainingSubtrees
+        if inboxRootRepair && remainingSubtrees.isEmpty {
+            metrics.record("metadata_inbox_scope_passes")
+            if repeatInboxRootRepair {
+                repeatInboxRootRepair = false;discoveredSubtrees.insert(root);remainingSubtrees.insert(root)
+            } else {inboxRootRepair = false}
+        }
         if remainingSubtrees.count > 16_384 { discoveredSubtrees.removeAll(); invalidated(); return }
         recordOrigins()
         renameOnly.removeAll(keepingCapacity:true)
@@ -420,7 +454,12 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     public func resume() { queue.sync {
         guard !scanCancellation.isCancelled else { return }
         suspended = false; let events = buffered; buffered = []; metrics.set("metadata_buffered_events",to:0); let overflow = bufferOverflow; bufferOverflow = false
-        autoreleasepool { receive(events) }; if overflow { invalidated() }
+        let repair = bufferedRootRepair;bufferedRootRepair = false
+        // Install the repair fence before receive's empty-batch fast path can
+        // publish the maximum ID retained while publication was suspended.
+        if repair {repairOverflowedInbox(maximumID:maximumID,historyDone:historyDone)}
+        autoreleasepool { receive(events) }
+        if overflow { invalidated() }
     } }
     public func flush() { queue.sync { work?.cancel(); work = nil; epoch &+= 1; autoreleasepool { drain() } } }
     /// Cancellation is lock-only and can interrupt a running bulk lookup before its queue barrier.

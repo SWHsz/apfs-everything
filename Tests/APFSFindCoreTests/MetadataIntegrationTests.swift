@@ -37,7 +37,7 @@ final class MetadataIntegrationTests: XCTestCase {
         XCTAssertEqual(c.metadata.capture().value(path:tree.path("target")).logicalSize,37)
     }
 
-    func testDuplicateMetadataBurstCoalescesWithoutInvalidatingButDistinctOverflowRemainsHard() throws {
+    func testDuplicateBurstCoalescesAndDistinctOverflowUsesBoundedScopeRepair() throws {
         let tree = try TemporaryTree(); try tree.file("mutable")
         try Data(repeating:1,count:123).write(to:URL(fileURLWithPath:tree.path("mutable")))
         let ns = FileIndex(root:tree.root),meta = MetadataIndexCoordinator(),metrics = Metrics()
@@ -57,9 +57,47 @@ final class MetadataIntegrationTests: XCTestCase {
         XCTAssertEqual(meta.capture().value(path:tree.path("mutable")).logicalSize,123,"merged create/remove refreshes the authoritative parent")
         updater.enqueue((1...33).map {.init(path:tree.path("distinct-\($0)"),flags:flags,id:UInt64(10_000+$0))})
         updater.flush()
-        XCTAssertEqual(metrics.snapshot()["test_invalidations"],1,"distinct pending paths still have a hard cap")
-        updater.enqueue([.init(path:tree.root,flags:UInt32(kFSEventStreamEventFlagHistoryDone|kFSEventStreamEventFlagKernelDropped),id:UInt64.max)]);updater.flush()
-        XCTAssertEqual(metrics.snapshot()["test_invalidations"],2,"a history marker cannot hide real stream invalidation")
+        XCTAssertEqual(metrics.snapshot()["metadata_inbox_scope_repairs"],1)
+        XCTAssertEqual(metrics.snapshot()["test_invalidations",default:0],0,"overflow preserves the hard bound and repairs the known watched root")
+        var droppedInvalidation = (1...33).map {FileSystemEvent(path:tree.path("overflow-\($0)"),flags:flags,id:UInt64(20_000+$0))}
+        droppedInvalidation.append(.init(path:tree.root,flags:UInt32(kFSEventStreamEventFlagHistoryDone|kFSEventStreamEventFlagKernelDropped),id:UInt64.max))
+        updater.enqueue(droppedInvalidation);updater.flush()
+        XCTAssertEqual(metrics.snapshot()["test_invalidations"],1,"a history marker dropped from a full inbox cannot hide real stream invalidation")
+    }
+    func testOverflowedMetadataInboxRepairsEveryFileAndPinsCursorUntilFrontierCompletes() throws {
+        let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true)
+        for i in 0..<40 {try tree.directory("parent-\(i)");try tree.file("parent-\(i)/file")}
+        let scan = try BulkScanner(root:tree.root).scan(),ram = FileIndex(root:tree.root)
+        ram.apply(scan.entries.map(IndexMutation.upsert))
+        let identity = try VolumeIdentity.discover(root:tree.root),store = try SnapshotStore(directory:cache.root,identity:identity)
+        _ = try SnapshotV2Writer.write(source:.ram(ram,ram.stats().generation),identity:identity,generation:ram.stats().generation,cursor:100,store:store)
+        let base = try XCTUnwrap(store.reader(expectedIdentity:identity).mappedBase),meta = MetadataIndexCoordinator(),metrics = Metrics()
+        _ = try MetadataWriter.write(store:store,base:base.header,cursor:100,value:{_ in .init(logicalSize:0)})
+        meta.bind(namespace:base,mapped:try store.metadataReader(base:base.header));meta.advance(100,historyDone:true)
+        let reader = MetadataOverflowReader(root:tree.root,device:identity.deviceID)
+        var policy = MetadataUpdatePolicy();policy.maxPendingEntries = 4
+        let updater = MetadataUpdateCoordinator(root:tree.root,device:identity.deviceID,index:meta,namespace:HybridIndex(base:base),metrics:metrics,policy:policy,
+            invalidated:{metrics.record("unexpected_recovery")},readDirectory:{path,cancellation in try reader.read(path,cancellation)})
+        defer {updater.stop()}
+        for i in 0..<40 {try Data(repeating:1,count:37+i).write(to:URL(fileURLWithPath:tree.path("parent-\(i)/file")))}
+        let events = (0..<40).map {FileSystemEvent(path:tree.path("parent-\($0)/file"),flags:UInt32(kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemIsFile),id:UInt64(101+$0))}
+        updater.suspend();updater.enqueue(events);updater.flush()
+        XCTAssertEqual(meta.processedCursor,100,"a root repair has not yet read any metadata")
+        XCTAssertEqual(metrics.snapshot()["metadata_inbox_scope_repairs",default:0],0,"suspended overflow keeps a scalar repair request")
+        reader.allow(2);updater.resume();updater.flush()
+        XCTAssertEqual(metrics.snapshot()["metadata_inbox_scope_repairs"],1)
+        XCTAssertEqual(reader.readCount,2)
+        XCTAssertEqual(meta.processedCursor,100)
+        for i in 0..<40 {try Data(repeating:2,count:137+i).write(to:URL(fileURLWithPath:tree.path("parent-\(i)/file")))}
+        updater.enqueue((0..<40).map {.init(path:tree.path("parent-\($0)/file"),flags:events[0].flags,id:UInt64(201+$0))});updater.flush()
+        XCTAssertEqual(reader.readCount,2,"a second overflow does not reset or discard the first frontier")
+        XCTAssertEqual(meta.processedCursor,100)
+        XCTAssertEqual(metrics.snapshot()["metadata_inbox_scope_repeat"],1)
+        reader.release()
+        waitFor("overflow repair converges",timeout:5) {updater.flush();return meta.processedCursor == 240}
+        for i in 0..<40 {XCTAssertEqual(meta.capture().value(path:tree.path("parent-\(i)/file")).logicalSize,UInt64(137+i))}
+        XCTAssertEqual(metrics.snapshot()["unexpected_recovery",default:0],0)
+        XCTAssertEqual(metrics.snapshot()["metadata_inbox_scope_passes"],2)
     }
     func testDirectoryRenameOriginCapFallsBackToScopedMetadataTraversal() throws {
         let cache = try TemporaryTree(cache:true),identity = snapshotIdentity(),ram = FileIndex(root:snapshotIdentity().root)
@@ -412,6 +450,23 @@ final class MetadataIntegrationTests: XCTestCase {
 private final class MetadataFaultSwitch: @unchecked Sendable {
     private let lock = NSLock(); private var value = false
     var enabled:Bool { get { lock.withLock { value } } set { lock.withLock { value = newValue } } }
+}
+
+private final class MetadataOverflowReader: @unchecked Sendable {
+    private let scanner:BulkScanner
+    private let device:UInt64
+    private let lock = NSLock()
+    private var permits = 0
+    private var reads = 0
+    var readCount:Int {lock.withLock {reads}}
+    func allow(_ count:Int) {lock.withLock {permits = count}}
+    init(root:String,device:UInt64) {scanner = BulkScanner(root:root);self.device = device}
+    func release() {allow(Int.max)}
+    func read(_ path:String,_ cancellation:CancellationToken)throws->[ScannedEntry] {
+        let allowed = lock.withLock { if permits == 0 {return false};permits -= 1;reads += 1;return true }
+        if !allowed {throw MaintenanceYield(reason:"hold overflow frontier")}
+        return try scanner.readScannedDirectory(path,rootDeviceID:device,cancellation:cancellation)
+    }
 }
 
 extension MetadataIntegrationTests {
