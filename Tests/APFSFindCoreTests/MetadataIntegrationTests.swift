@@ -94,10 +94,15 @@ final class MetadataIntegrationTests: XCTestCase {
         let identity = try VolumeIdentity.discover(root:tree.root), store = try SnapshotStore(directory:cache.root,identity:identity)
         let original = try Data(contentsOf:URL(fileURLWithPath:store.path)), oldMeta = try Data(contentsOf:URL(fileURLWithPath:store.metadataPath))
         let generation = c.index.stats().generation, before = c.metrics.snapshot()
+        let contentStarted = ProcessInfo.processInfo.systemUptime
         for i in 1...10_000 { try Data(repeating:1,count:(i%100)+1).write(to:URL(fileURLWithPath:tree.path("target"))) }
         waitFor("metadata content convergence",timeout:10) { c.metadata.capture().value(path:tree.path("target")).logicalSize == 1 }
         XCTAssertEqual(c.index.stats().generation,generation)
-        XCTAssertLessThanOrEqual(c.metrics.snapshot()["metadata_lookups",default:0]-before["metadata_lookups",default:0],5)
+        // Continuous input now makes bounded progress instead of moving a
+        // trailing deadline forever. Bound lookups by the existing 0.2s batch
+        // interval, including the final converged lookup, rather than host I/O speed.
+        let allowed = Int(ceil((ProcessInfo.processInfo.systemUptime-contentStarted)/MetadataUpdatePolicy().debounceSeconds))+2
+        XCTAssertLessThanOrEqual(c.metrics.snapshot()["metadata_lookups",default:0]-before["metadata_lookups",default:0],allowed)
         c.pause(); let old = c.metadata.capture().value(path:tree.path("target"))
         try Data(repeating:2,count:200).write(to:URL(fileURLWithPath:tree.path("target")))
         XCTAssertEqual(c.metadata.capture().value(path:tree.path("target")),old); XCTAssertEqual(c.metadata.capture().freshness,.pausedStale)

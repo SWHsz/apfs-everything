@@ -835,45 +835,79 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private func drainDeferredReconcile() {
         guard !exitFrozen, !exitReconciliation.isCancelled, !building, !rebuildScheduled,
             currentState != .paused, let reconciler else { return }
-        guard var work = deferredReconcile.popReady(now: ProcessInfo.processInfo.systemUptime) else {
-            scheduleDeferredReconcile(); return
-        }
-        let before = index.stats().generation
-        let plan = reconciler.prepare(work.root, subtree: work.subtree, force: true,
-            cancellation: exitReconciliation, frontier: work.frontier, directoryLimit: 32)
-        if plan.cancelled { exitBatchIncomplete = true; _ = deferredReconcile.insert(work); updateDeferredMetrics(); return }
-        switch plan.result {
-        case .invalidated:
-            requestRebuild(invalidated: true, reason: "reconcile_hard_limit"); return
-        case .locallyFailed:
-            work.retryCount += 1
-            if work.retryCount >= 3 {
-                requestRebuild(invalidated: true, reason: "reconcile_repeated_io"); return
+        let before = index.stats().generation, started = ProcessInfo.processInfo.systemUptime
+        var batch: [(DeferredReconcileWork, ReconciliationPlan)] = []
+        var mutations: [IndexMutation] = [], directories = 0
+        // Queue roots are disjoint. Prepare their authoritative diffs together,
+        // then publish one batch: query captures copy the bitmap/overlay once,
+        // and a burst does not pay a one-shot timer for every tiny parent.
+        while batch.count < 32 && directories < 32,
+              batch.isEmpty || ProcessInfo.processInfo.systemUptime-started < 0.02,
+              let work = deferredReconcile.popReady(now: ProcessInfo.processInfo.systemUptime) {
+            let plan = reconciler.prepare(work.root, subtree: work.subtree, force: true,
+                cancellation: exitReconciliation, frontier: work.frontier, directoryLimit: max(1,32-directories))
+            if plan.cancelled {
+                exitBatchIncomplete = true
+                for old in batch.map({$0.0}) + [work] { _ = deferredReconcile.insert(old) }
+                updateDeferredMetrics(); return
             }
-            work.nextAttempt = ProcessInfo.processInfo.systemUptime + min(1, 0.05 * pow(2, Double(work.retryCount)))
-            deferReconcile(work)
-        case .deferred(let frontier):
-            index.apply(plan.mutations); work.frontier = frontier
-            work.nextAttempt = ProcessInfo.processInfo.systemUptime + 0.005
-            metrics.record("deferred_reconcile_yields"); deferReconcile(work)
-        case .completed:
-            index.apply(plan.mutations); metrics.record("deferred_reconcile_completed")
+            if case .invalidated = plan.result {
+                requestRebuild(invalidated: true, reason: "reconcile_hard_limit"); return
+            }
+            if case .locallyFailed = plan.result {
+                // Prefix diffs from an unexpectedly failed scope stay private.
+            } else {
+                // Bound aggregate retained mutations in addition to the atomic
+                // per-parent cap. Roots remain disjoint across these flushes.
+                if mutations.count + plan.mutations.count > 4096 {
+                    index.apply(mutations); mutations.removeAll(keepingCapacity:false)
+                    if (index as? HybridIndex)?.requiresRecovery == true {
+                        requestRebuild(invalidated:true,reason:"overlay_safety_limit"); return
+                    }
+                }
+                mutations += plan.mutations
+            }
+            directories += max(1,plan.completedDirectories.count)
+            batch.append((work,plan))
         }
-        for parent in plan.retryParents {
-            deferReconcile(.init(root: parent, reason: .parentRepair, minimumCursor: work.minimumCursor,
-                generation: index.stats().generation))
+        index.apply(mutations)
+        if (index as? HybridIndex)?.requiresRecovery == true {
+            requestRebuild(invalidated:true,reason:"overlay_safety_limit"); return
         }
-        // Metadata may have handled the original event before namespace discovery.
-        // These bounded parent refresh hints use ID 0 to bypass historical overlap,
-        // and do not invent a newer durable metadata cursor.
-        metadataEventHandler?(plan.completedDirectories.map {
-            .init(path: $0, flags: UInt32(kFSEventStreamEventFlagItemXattrMod), id: 0)
-        })
+        for (original,plan) in batch {
+            var work = original
+            switch plan.result {
+            case .invalidated: break // Handled before publication above.
+            case .locallyFailed:
+                work.retryCount += 1
+                if work.retryCount >= 3 {
+                    requestRebuild(invalidated: true, reason: "reconcile_repeated_io"); return
+                }
+                work.nextAttempt = ProcessInfo.processInfo.systemUptime + min(1,0.05 * pow(2,Double(work.retryCount)))
+                deferReconcile(work)
+                if rebuildScheduled || building { return }
+            case .deferred(let frontier):
+                work.frontier = frontier; work.nextAttempt = ProcessInfo.processInfo.systemUptime + 0.005
+                metrics.record("deferred_reconcile_yields"); deferReconcile(work)
+                if rebuildScheduled || building { return }
+            case .completed: metrics.record("deferred_reconcile_completed")
+            }
+            for parent in plan.retryParents {
+                deferReconcile(.init(root:parent,reason:.parentRepair,minimumCursor:work.minimumCursor,
+                    generation:index.stats().generation))
+                if rebuildScheduled || building { return }
+            }
+            // Metadata may have handled the original event before namespace
+            // discovery. ID 0 hints bypass overlap without inventing a cursor.
+            metadataEventHandler?(plan.completedDirectories.map {
+                .init(path:$0,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:0)
+            })
+        }
         updateDeferredMetrics()
         if before != index.stats().generation { mutationHandler?() }
         if deferredReconcile.count == 0 {
-            if !exitBatchIncomplete { lastProcessedEventID = max(lastProcessedEventID, deliveredCursorHighWatermark) }
-            if stateLock.withLock({ historyDone }) { setState(.live) }
+            if !exitBatchIncomplete { lastProcessedEventID = max(lastProcessedEventID,deliveredCursorHighWatermark) }
+            if stateLock.withLock({historyDone}) { setState(.live) }
         } else { scheduleDeferredReconcile() }
     }
 
