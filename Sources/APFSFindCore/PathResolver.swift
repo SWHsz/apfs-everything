@@ -146,13 +146,16 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
     }
     public func resolve(_ path:String) -> EntryRef? {
         metrics.record("path_resolver_calls")
-        guard PathCanonicalizer.normalize(path) == path,PathCanonicalizer.isWithin(path,root:base.root) else { metrics.record("path_resolver_failures"); return nil }
+        // The mapped root is validated when the snapshot opens; normalize the
+        // requested path once. Repeating lexical validation for both operands
+        // on every tombstone lookup dominated ASan's dirty-parent workload.
+        guard PathCanonicalizer.normalize(path) == path,withinBase(path) else { metrics.record("path_resolver_failures"); return nil }
         if path == base.root { return rootRef }
         if let hit = cache?.lookup(path,version:version),validCached(hit,path:path) { return hit }
         var prefix = base.root, ref = rootRef
         if let cache {
             var parent = PathCanonicalizer.parent(of:path)
-            while parent != base.root && PathCanonicalizer.isWithin(parent,root:base.root) {
+            while parent != base.root && withinBase(parent) {
                 if let cached = cache.lookup(parent,version:version),kind(cached) == .directory,validCached(cached,path:parent) {
                     prefix = parent; ref = cached; break
                 }
@@ -167,6 +170,9 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
         }
         if kind(ref) == .directory { cache?.insert(path,ref:ref,version:version) }
         return ref
+    }
+    private func withinBase(_ canonicalPath:String) -> Bool {
+        base.root == "/" || canonicalPath == base.root || canonicalPath.hasPrefix(base.root + "/")
     }
     public func resolveDirectory(_ path:String) -> EntryRef? {
         guard let ref = resolve(path),kind(ref) == .directory else { return nil }; return ref

@@ -14,6 +14,9 @@ final class PathResolverTests: XCTestCase {
         XCTAssertEqual(resolver.resolve(identity.root),.base(0))
         XCTAssertEqual(resolver.resolve(identity.root+"/d0/深/Café.txt"),resolver.resolve(identity.root+"/d0/深/Cafe\u{301}.txt"))
         XCTAssertNil(resolver.resolve("/outside")); XCTAssertNil(resolver.resolve(identity.root+"/d0/深/Cafe\u{301}.txt/child"))
+        XCTAssertNil(resolver.resolve(identity.root+"-neighbor/d0"))
+        XCTAssertNil(resolver.resolve(identity.root+"/d0/../d1"))
+        XCTAssertNil(resolver.resolve(identity.root+"/d0\0"))
         for i in 0..<1100 { XCTAssertNotNil(resolver.resolveDirectory(identity.root+"/d\(i)/深")) }
         XCTAssertLessThanOrEqual(hot.statistics["hot_directory_cache_entries"]!,1024)
         XCTAssertGreaterThan(hot.metrics.snapshot()["hot_directory_cache_evictions",default:0],0)
