@@ -61,7 +61,7 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree()
         let identity = try VolumeIdentity.discover(root: tree.root)
-        for i in 0..<100 {
+        for i in 0..<1000 {
             let watcher = FSEventsWatcher()
             try watcher.start(root: tree.root, since: identity.currentEventID(),
                               latencyMilliseconds: 1, identity: identity) { _ in }

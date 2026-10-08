@@ -234,3 +234,8 @@ Root metadata bootstrap先yield busy，重试等待lease时捕获旧base；更�
 
 
 报告提交 `01471da77b4aefabdd7953c758a7fb5428352191` 已推送，[四项required CI](https://github.com/SWHsz/apfs-everything/actions/runs/37811795130)全绿。后续分页候选完整ASan218.679s、277项（257 Core+20 Desktop）、0 failures、1可选mount skip；TSan及普通/release/quiet仍在进行。首轮专项暴露RAM fixture没有device/fileID但新guard要求完整identity的兼容问题，已改为仅校验已知identity，并保留类型/mount校验，34项专项重新通过；不把该首轮测试失败隐藏。
+
+
+`61f4f6` 本机完整277项ASan218.679s、TSan328.509s、普通95.603s全部通过，release CLI49.934s/app5.328s，controlled quiet70.043s wrapper通过，原始pipeline保留。远端 [CI37814623814](https://github.com/SWHsz/apfs-everything/actions/runs/37814623814) integration在既有100轮watcher immediate teardown测试中signal5崩溃，主线程停在FSEventsWatcher.stop的callbackQueue barrier，worker为system trap；不能声称该HEAD四项CI全绿。失败job日志已保存，不删除或自动无限重跑。
+
+目标SDK声明Stop阻止后续callback、Invalidate取消dispatch调度。原顺序先Invalidate再排空，可能与已执行的callback source teardown并发；下一候选在Stop后先排空在执行的callback，再Invalidate并排空取消边界，最后Release。该机制目前是针对崩溃位置的修复假设，未将其写成已证实的framework内部根因。立即停止回归增加到1000轮，不延长现有deadline；新的watcher改动需重新验证并运行最终binary。

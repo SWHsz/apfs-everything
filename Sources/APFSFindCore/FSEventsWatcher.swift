@@ -107,6 +107,11 @@ public final class FSEventsWatcher: @unchecked Sendable {
         lock.withLock {
             guard let stream else { return }
             FSEventStreamStop(stream)
+            // Stop prevents new deliveries, but a callback already executing
+            // must leave the stream's dispatch source before it is unscheduled.
+            // Invalidate first can race that in-flight source during immediate
+            // teardown. Keep both stream and queue alive across both boundaries.
+            callbackQueue.sync {}
             FSEventStreamInvalidate(stream)
             callbackQueue.sync {}
             FSEventStreamRelease(stream)
