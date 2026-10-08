@@ -18,7 +18,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   public var metrics: Metrics { core.metrics }
   public let persistenceEnabled: Bool
   public let cacheDirectory: String
-  public let metadata = MetadataIndexCoordinator()
+  public let metadata:MetadataIndexCoordinator
   public let shutdownMetrics = ShutdownMetrics()
   private var metadataUpdater: MetadataUpdateCoordinator?
   private let metadataQueue = DispatchQueue(label:"apfsfind.metadata-maintenance",qos:.utility)
@@ -85,8 +85,10 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     maintenanceScheduler: MaintenanceScheduler = .shared,
     reconcileReader: (any DirectoryReading)? = nil,
     replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)? = nil,
-    fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() }
+    fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() },
+    metadataIndex:MetadataIndexCoordinator = .init()
   ) throws {
+    metadata = metadataIndex
     persistenceEnabled = !ephemeral
     self.rebuildIndex = rebuildIndex
     self.compactionPolicy = compactionPolicy
@@ -624,6 +626,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
     guard allowed else { return }
     let requestedBase = (index as? HybridIndex)?.mappedBase?.header.snapshotUUID
+    let requestedRecovery = metadata.recoveryState
     metadataQueue.async { [weak self] in
       guard let self else { return }
       var yielded = false
@@ -645,6 +648,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         // publishes valid metadata. Do not scan that volume again merely
         // because an older base exhausted its overlay before publication.
         if !force,requestedBase != base.header.snapshotUUID,self.metadata.capture().available,
+           !requestedRecovery.overflowed,requestedRecovery.epoch == self.metadata.recoveryState.epoch,
            !self.metadata.requiresRecovery,self.metadataUpdater?.needsRecovery != true {
           self.metrics.record("metadata_bootstraps_superseded");lease.recordCompletion();return
         }

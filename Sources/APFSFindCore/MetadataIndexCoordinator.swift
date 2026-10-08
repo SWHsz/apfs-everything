@@ -79,12 +79,14 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     private var paused = false
     private var bootstrapPending = false
     private var overflowed = false
+    private var overflowEpoch:UInt64 = 0
     private var safetyBytes = 0
     private var aliasPressure = false
     private let overlayByteLimit:Int
     private let overlayEntryLimit:Int
     public var renameNeedsMaintenance: Bool { lock.withLock { aliasPressure } }
     public var requiresRecovery: Bool { lock.withLock { overflowed } }
+    var recoveryState:(overflowed:Bool,epoch:UInt64) {lock.withLock {(overflowed,overflowEpoch)}}
     public init() { overlayByteLimit = 128*1024*1024;overlayEntryLimit = 500_000 }
     // Smaller limits let tests exercise the same production boundary without
     // allocating a second large index under the sanitizers.
@@ -187,7 +189,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     }
     private func canGrow(bytes:Int,entries:Int) -> Bool {
         guard safetyBytes+overlay.retainedRenameBytes+bytes <= overlayByteLimit,
-              overlay.entryCount+entries <= overlayEntryLimit else {overflowed = true;return false}
+              overlay.entryCount+entries <= overlayEntryLimit else {overflowed = true;overflowEpoch &+= 1;return false}
         return true
     }
     @discardableResult public func reuseDirectoryRename(original:String,destination:String,from snapshot:MetadataQuerySnapshot) -> Bool {

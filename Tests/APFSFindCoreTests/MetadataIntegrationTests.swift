@@ -7,6 +7,42 @@ import XCTest
 
 final class MetadataIntegrationTests: XCTestCase {
 
+    func testNamespacePublicationCannotSupersedeLostMetadataUpdates() async throws {
+        // Exercise loss both before scheduling and while the repair waits.
+        // A compaction copies known values; it cannot repair the dropped values.
+        for overflowBeforeQueue in [true,false] {
+            let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true),scheduler = MaintenanceScheduler()
+            for i in 0..<6 {try tree.file("target-\(i)");try Data([1]).write(to:URL(fileURLWithPath:tree.path("target-\(i)")))}
+            let meta = MetadataIndexCoordinator(overlayByteLimit:1024,overlayEntryLimit:4),root = tree.root
+            let c = try PersistentIndexCoordinator(root:root,cacheDirectory:cache.root,maintenanceScheduler:scheduler,
+                replayStarter:{cursor,deliver in deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:cursor)]) },metadataIndex:meta)
+            defer {c.stop(policy:.fast)}
+            try c.start();XCTAssertTrue(c.waitUntilLive());XCTAssertTrue(c.waitForMetadata());c.flushMetadata()
+            let blocker = try scheduler.acquireBlocking(volumeID:UUID(),kind:.coldScan,cancellation:.init())
+            defer {blocker.release()}
+            let scheduling = await scheduler.metrics
+            func overflow() throws {
+                for i in 0..<6 {
+                    try Data(repeating:1,count:37+i).write(to:URL(fileURLWithPath:tree.path("target-\(i)")))
+                    meta.update(path:tree.path("target-\(i)"),value:.init(logicalSize:UInt64(37+i)))
+                }
+                XCTAssertTrue(meta.requiresRecovery)
+            }
+            if overflowBeforeQueue {try overflow()}
+            c.scheduleMetadataBootstrap(urgency:.required)
+            waitFor("repair queued",timeout:5) {scheduling.snapshot()["maintenance_pending",default:0] == 1}
+            if !overflowBeforeQueue {try overflow()}
+            XCTAssertTrue(c.compact(urgency:.emergency))
+            waitFor("compaction queued",timeout:5) {scheduling.snapshot()["maintenance_pending",default:0] == 2}
+            blocker.release()
+            waitFor("lost metadata is fully repaired",timeout:10) {c.metrics.snapshot()["metadata_bootstraps",default:0] == 1}
+            XCTAssertEqual(c.metrics.snapshot()["metadata_bootstraps_superseded",default:0],0)
+            XCTAssertEqual(c.metrics.snapshot()["metadata_bootstrap_failures",default:0],0)
+            for i in 0..<6 {XCTAssertEqual(meta.capture().value(path:tree.path("target-\(i)")).logicalSize,UInt64(37+i))}
+            XCTAssertEqual(c.metrics.snapshot()["full_scans"],1,"only the initial cold scan; metadata loss does not require another namespace scan")
+        }
+    }
+
     func testOrdinaryParentBatchYieldsWithoutLosingPathsOrAdvancingCursor() {
         let root = "/bounded-metadata-parents",ns = FileIndex(root:root),meta = MetadataIndexCoordinator(),metrics = Metrics()
         let files = (0..<100).flatMap {parent in (0..<128).map {slot in
