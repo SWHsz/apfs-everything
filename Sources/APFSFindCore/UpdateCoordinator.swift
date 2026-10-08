@@ -811,6 +811,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     private func deferReconcile(_ work: DeferredReconcileWork) {
         guard !exitReconciliation.isCancelled else { exitBatchIncomplete = true; return }
+        // Once this batch has invalidated the stream, its remaining scopes are
+        // covered by the fresh recovery fence. Never refill the cleared queue
+        // with obsolete work which would pin HistoryDone after publication.
+        guard !building, !rebuildScheduled else { return }
         guard deferredReconcile.insert(work) else {
             metrics.record("deferred_reconcile_overflows")
             requestRebuild(invalidated: true, reason: "reconcile_queue_overflow"); return

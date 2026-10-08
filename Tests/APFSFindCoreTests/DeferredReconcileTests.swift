@@ -188,6 +188,23 @@ private final class ErrorScopeReader: DirectoryReading, @unchecked Sendable {
 }
 
 extension DeferredReconcileTests {
+    func testHardQueueOverflowClearsObsoleteWorkAndFinishesOneRecovery() throws {
+        let tree = try TemporaryTree(), index = FileIndex(root:tree.root), root = tree.root
+        for i in 0..<8 { try tree.directory("parent-\(i)"); try tree.file("parent-\(i)/present") }
+        index.apply((0..<8).map { .upsert(.init(path:tree.path("parent-\($0)"),kind:.directory)) })
+        let core = try UpdateCoordinator(root:root,configuration:.init(fullRebuildMinInterval:0,deferredReconcileLimit:1),
+            index:index,maintenanceScheduler:.init(),reconcileReader:AlwaysYieldReader(),
+            replayStarter:{ cursor, deliver in deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:cursor)]) })
+        defer { core.stop() }; try core.start(restored:index,cursor:100); XCTAssertTrue(core.waitUntilLive())
+        core.enqueue((0..<8).map { .init(path:tree.path("parent-\($0)/present"),flags:UInt32(kFSEventStreamEventFlagItemRenamed),id:UInt64(101+$0)) })
+        XCTAssertTrue(core.flushEvents())
+        waitFor("overflow recovery finishes",timeout:10) { core.metrics.snapshot()["full_rebuilds",default:0] == 1 && core.currentState == .live }
+        XCTAssertEqual(core.metrics.snapshot()["full_scans"],1)
+        XCTAssertEqual(core.metrics.snapshot()["rebuild_requests_reconcile_queue_overflow"],1)
+        XCTAssertEqual(core.metrics.snapshot()["deferred_reconcile_roots"],0)
+        XCTAssertEqual(core.metrics.snapshot()["deferred_reconcile_timer"],0)
+        for i in 0..<8 { XCTAssertNotNil(index.entry(at:tree.path("parent-\(i)/present"))) }
+    }
     func testRootMustScanIsScopedRepairNotStreamInvalidation() throws {
         let tree = try TemporaryTree(); try tree.file("present")
         let index = FileIndex(root: tree.root)
