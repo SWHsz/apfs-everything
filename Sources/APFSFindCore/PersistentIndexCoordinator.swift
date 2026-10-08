@@ -628,19 +628,22 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       var yielded = false
       defer { self.lock.withLock { self.metadataBootstrapActive = false }; self.metadataGroup.leave(); if yielded { self.scheduleMetadataBootstrap(urgency:urgency) } }
       guard self.currentState != .paused, !self.metadataCancellation.isCancelled,
-            let base = (self.index as? HybridIndex)?.mappedBase else { return }
+            (self.index as? HybridIndex)?.mappedBase != nil else { return }
       do {
         let identity = try self.identityProvider(self.root)
-        guard identity.volumeUUID == base.header.volumeUUID, identity.historyUUID == base.header.historyUUID,
-              identity.deviceID == base.header.rootDeviceID, identity.rootFileID == base.header.rootFileID else {
-          throw SnapshotError.identity("metadata awaits matching namespace identity")
-        }
         let lease = try self.maintenanceScheduler.acquireBlocking(volumeID:identity.volumeUUID,kind:.metadataBootstrap,urgency:urgency,cancellation:self.metadataCancellation)
         lease.validateIdentity { guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("source identity changed") } }
         self.metrics.set("metadata_maintenance_running",to:1)
         defer { self.metrics.set("metadata_maintenance_running",to:0); lease.release() }
         guard self.currentState != .paused else { return }
-        guard (self.index as? HybridIndex)?.mappedBase?.header.snapshotUUID == base.header.snapshotUUID else { throw SnapshotError.generationChanged }
+        // A higher-priority namespace publication may overtake this queued job.
+        // Acquire its immutable base after the lease, rather than invalidating
+        // a newer, already valid metadata sidecar using the old queued base.
+        guard let base = (self.index as? HybridIndex)?.mappedBase else { throw SnapshotError.generationChanged }
+        guard identity.volumeUUID == base.header.volumeUUID, identity.historyUUID == base.header.historyUUID,
+              identity.deviceID == base.header.rootDeviceID, identity.rootFileID == base.header.rootFileID else {
+          throw SnapshotError.identity("metadata awaits matching namespace identity")
+        }
         let resources = ProcessResourceSample.capture()
         defer {self.metrics.recordResources("metadata_bootstrap",since:resources)}
         self.metadataUpdater?.suspend()
@@ -649,13 +652,14 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         self.metadata.beginBootstrap(fence:fence)
         self.metadataUpdater?.resume()
         self.core.notifyMetadataChanged()
-        let lookup = self.metadata.capture()
+        // The scan needs immutable ordinals, not a retained overlay snapshot.
+        let lookup = self.metadata.capture().resolver
         let values = try MetadataBuildBuffer(count:base.count,directory:self.cacheDirectory)
         let scan = try BulkScanner(root:self.root,workerCount:min(self.core.configuration.workerCount,lease.workerLimit),metrics:self.metrics,
           excludedRoots:[self.cacheDirectory],checkpoint:{ try lease.checkpoint() }).scan(cancellation:self.metadataCancellation,collectEntries:false,visit:{ entries in
             var pairs:[(Int,FileMetadataValue)] = []
             for entry in entries {
-              if let ordinal = lookup.ordinal(entry.namespace.path) {
+              if case .base(let ordinal)? = lookup?.resolve(entry.namespace.path) {
                 let record = base.record(at:ordinal)
                 if record.kind == entry.namespace.kind, record.fileID == (entry.namespace.fileID ?? 0) {
                   pairs.append((Int(ordinal),entry.metadata)); continue
