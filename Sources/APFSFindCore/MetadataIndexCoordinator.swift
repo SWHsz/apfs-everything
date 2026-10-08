@@ -81,9 +81,17 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     private var overflowed = false
     private var safetyBytes = 0
     private var aliasPressure = false
+    private let overlayByteLimit:Int
+    private let overlayEntryLimit:Int
     public var renameNeedsMaintenance: Bool { lock.withLock { aliasPressure } }
     public var requiresRecovery: Bool { lock.withLock { overflowed } }
-    public init() {}
+    public init() { overlayByteLimit = 128*1024*1024;overlayEntryLimit = 500_000 }
+    // Smaller limits let tests exercise the same production boundary without
+    // allocating a second large index under the sanitizers.
+    init(overlayByteLimit:Int,overlayEntryLimit:Int) {
+        self.overlayByteLimit = min(128*1024*1024,max(1,overlayByteLimit))
+        self.overlayEntryLimit = min(500_000,max(1,overlayEntryLimit))
+    }
     public func capture() -> MetadataQuerySnapshot {
         lock.withLock { .init(namespace:namespace,base:base,overlay:overlay,freshness:freshness,resolver:resolver,renamedDirectories:renamedDirectories) }
     }
@@ -103,6 +111,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
             "metadata_hot_directory_cache_hits":hotDirectoryCache.metrics.snapshot()["hot_directory_cache_hits",default:0],
             "metadata_hot_directory_cache_misses":hotDirectoryCache.metrics.snapshot()["hot_directory_cache_misses",default:0],
             "metadata_overlay_entries":overlay.entryCount,"metadata_overlay_bytes":overlay.estimatedBytes,
+            "metadata_overlay_accounted_bytes":safetyBytes+overlay.retainedRenameBytes,"metadata_overlay_overflowed":overflowed,
             "rename_alias_count":renamedDirectories.count,"rename_alias_bytes":overlay.retainedRenameBytes,"rename_alias_depth":renamedDirectories.values.map(\.depth).max() ?? 0,"rename_alias_cap_hits":aliasPressure ? 1 : 0] }
     }
     public var processedCursor: UInt64 { lock.withLock { cursor } }
@@ -118,6 +127,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
             self.namespace = namespace; resolver = pathResolver
             base = mapped?.header.matches(namespace.header) == true ? mapped : nil
             if !retainOverlay { overlay = .init(); renamedDirectories = [:] }
+            else {safetyBytes = overlay.estimatedBytes-overlay.retainedRenameBytes}
             let c = cursor ?? mapped?.header.cursor ?? 0
             self.cursor = c; floor = c
             freshness = base == nil ? .building : .catchingUp
@@ -146,25 +156,39 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     }
     private func updateLocked(path:String,value:FileMetadataValue?,ordinal:UInt32?) {
             guard !overflowed else { return }
-            if safetyBytes + overlay.retainedRenameBytes >= 128*1024*1024 || overlay.entryCount >= 500_000 { overflowed = true; return }
             let old = overlay.deltaValues[path] ?? ordinal.map { overlay.baseOverrides[$0] ?? base?.value(at:$0) ?? .unknown } ?? .unknown
             if let value {
                 if old == value && !overlay.deleted.contains(path) { return }
-                overlay.deleted.remove(path)
+                let deletedBytes = overlay.deleted.contains(path) ? 48+path.utf8.count : 0
+                let addedBytes = ordinal.map {overlay.baseOverrides[$0] == nil ? 64 : 0} ?? (overlay.deltaValues[path] == nil ? 96+path.utf8.count : 0)
+                let addedEntries = addedBytes == 0 ? 0 : 1
+                guard canGrow(bytes:addedBytes-deletedBytes,entries:addedEntries-(deletedBytes == 0 ? 0 : 1)) else {return}
+                if overlay.deleted.remove(path) != nil {safetyBytes -= deletedBytes}
                 if let ordinal { if overlay.baseOverrides[ordinal] == nil { safetyBytes += 64 }; overlay.baseOverrides[ordinal] = value }
                 else { if overlay.deltaValues[path] == nil { safetyBytes += 96+path.utf8.count }; overlay.deltaValues[path] = value }
                 overlay.generation &+= 1
             } else {
                 if overlay.deleted.contains(path),overlay.deltaValues[path] == nil,renamedDirectories[path] == nil {return}
+                let removedBytes = overlay.deltaValues[path] == nil ? 0 : 96+path.utf8.count
+                let addedOverride = ordinal.map {overlay.baseOverrides[$0] == nil ? 64 : 0} ?? 0
+                let addedDeletion = ordinal != nil && !overlay.deleted.contains(path) ? 48+path.utf8.count : 0
+                guard canGrow(bytes:addedOverride+addedDeletion-removedBytes,
+                              entries:(addedOverride == 0 ? 0 : 1)+(addedDeletion == 0 ? 0 : 1)-(removedBytes == 0 ? 0 : 1)) else {return}
                 if let old = renamedDirectories.removeValue(forKey:path) {
                     overlay.retainedRenameBytes -= old.snapshot.overlay.estimatedBytes + 200
                     overlay.renameCount = renamedDirectories.count
                 }
                 let removed = overlay.deltaValues.removeValue(forKey:path)
+                if removed != nil {safetyBytes -= removedBytes}
                 guard ordinal != nil || removed != nil else { return }
-                if let ordinal { if !overlay.deleted.contains(path) { safetyBytes += 112+path.utf8.count }; overlay.deleted.insert(path); overlay.baseOverrides[ordinal] = .unknown }
+                if let ordinal {safetyBytes += addedOverride+addedDeletion;overlay.deleted.insert(path);overlay.baseOverrides[ordinal] = .unknown}
                 overlay.generation &+= 1
             }
+    }
+    private func canGrow(bytes:Int,entries:Int) -> Bool {
+        guard safetyBytes+overlay.retainedRenameBytes+bytes <= overlayByteLimit,
+              overlay.entryCount+entries <= overlayEntryLimit else {overflowed = true;return false}
+        return true
     }
     @discardableResult public func reuseDirectoryRename(original:String,destination:String,from snapshot:MetadataQuerySnapshot) -> Bool {
         lock.withLock {

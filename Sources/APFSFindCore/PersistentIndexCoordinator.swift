@@ -616,17 +616,18 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       metrics.record("metadata_publish_failures"); scheduleMetadataBootstrap()
     }
   }
-  private func scheduleMetadataBootstrap(urgency:MaintenanceUrgency = .opportunistic) {
+  func scheduleMetadataBootstrap(urgency:MaintenanceUrgency = .opportunistic,force:Bool = false) {
     guard persistenceEnabled else { return }
     let allowed = lock.withLock {
       guard !shuttingDown, !metadataBootstrapActive else { return false }
       metadataBootstrapActive = true; metadataGroup.enter(); return true
     }
     guard allowed else { return }
+    let requestedBase = (index as? HybridIndex)?.mappedBase?.header.snapshotUUID
     metadataQueue.async { [weak self] in
       guard let self else { return }
       var yielded = false
-      defer { self.lock.withLock { self.metadataBootstrapActive = false }; self.metadataGroup.leave(); if yielded { self.scheduleMetadataBootstrap(urgency:urgency) } }
+      defer { self.lock.withLock { self.metadataBootstrapActive = false }; self.metadataGroup.leave(); if yielded { self.scheduleMetadataBootstrap(urgency:urgency,force:force) } }
       guard self.currentState != .paused, !self.metadataCancellation.isCancelled,
             (self.index as? HybridIndex)?.mappedBase != nil else { return }
       do {
@@ -640,6 +641,13 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         // Acquire its immutable base after the lease, rather than invalidating
         // a newer, already valid metadata sidecar using the old queued base.
         guard let base = (self.index as? HybridIndex)?.mappedBase else { throw SnapshotError.generationChanged }
+        // A queued repair can be overtaken by a namespace rebuild that also
+        // publishes valid metadata. Do not scan that volume again merely
+        // because an older base exhausted its overlay before publication.
+        if !force,requestedBase != base.header.snapshotUUID,self.metadata.capture().available,
+           !self.metadata.requiresRecovery,self.metadataUpdater?.needsRecovery != true {
+          self.metrics.record("metadata_bootstraps_superseded");lease.recordCompletion();return
+        }
         guard identity.volumeUUID == base.header.volumeUUID, identity.historyUUID == base.header.historyUUID,
               identity.deviceID == base.header.rootDeviceID, identity.rootFileID == base.header.rootFileID else {
           throw SnapshotError.identity("metadata awaits matching namespace identity")
@@ -722,7 +730,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
     return false
   }
-  public func rebuildMetadata(urgency:MaintenanceUrgency = .required) { scheduleMetadataBootstrap(urgency:urgency) }
+  public func rebuildMetadata(urgency:MaintenanceUrgency = .required) { scheduleMetadataBootstrap(urgency:urgency,force:true) }
   public func flushMetadata() { metadataUpdater?.flush() }
   public func checkpointMetadata(urgency:MaintenanceUrgency = .required) {
     let allowed = lock.withLock {

@@ -7,6 +7,32 @@ import XCTest
 
 final class MetadataIntegrationTests: XCTestCase {
 
+    func testQueuedRepairIsSupersededByValidMetadataOnNewNamespaceBase() async throws {
+        let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true),scheduler = MaintenanceScheduler()
+        try tree.file("target")
+        try Data(repeating:1,count:37).write(to:URL(fileURLWithPath:tree.path("target")))
+        let root = tree.root
+        let c = try PersistentIndexCoordinator(root:root,cacheDirectory:cache.root,maintenanceScheduler:scheduler,
+            replayStarter:{cursor,deliver in deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:cursor)]) })
+        defer {c.stop(policy:.fast)}
+        try c.start();XCTAssertTrue(c.waitUntilLive());XCTAssertTrue(c.waitForMetadata());c.flushMetadata()
+        let oldUUID = try XCTUnwrap((c.index as? HybridIndex)?.mappedBase?.header.snapshotUUID)
+        let blocker = try scheduler.acquireBlocking(volumeID:UUID(),kind:.coldScan,cancellation:.init())
+        defer {blocker.release()}
+        let scheduling = await scheduler.metrics
+        c.scheduleMetadataBootstrap(urgency:.required)
+        waitFor("repair is queued",timeout:5) {scheduling.snapshot()["maintenance_pending",default:0] == 1}
+        XCTAssertTrue(c.compact(urgency:.emergency))
+        waitFor("compaction is queued",timeout:5) {scheduling.snapshot()["maintenance_pending",default:0] == 2}
+        blocker.release()
+        waitFor("obsolete repair finishes",timeout:10) {c.metrics.snapshot()["metadata_bootstraps_superseded",default:0] == 1}
+        XCTAssertNotEqual((c.index as? HybridIndex)?.mappedBase?.header.snapshotUUID,oldUUID)
+        XCTAssertEqual(c.metrics.snapshot()["metadata_bootstraps",default:0],0)
+        XCTAssertEqual(c.metrics.snapshot()["metadata_bootstrap_failures",default:0],0)
+        XCTAssertTrue(c.metadataAvailable)
+        XCTAssertEqual(c.metadata.capture().value(path:tree.path("target")).logicalSize,37)
+    }
+
     func testQueuedBootstrapUsesBasePublishedWhileWaitingForLease() async throws {
         let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true),scheduler = MaintenanceScheduler()
         try tree.file("target")
