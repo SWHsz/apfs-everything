@@ -86,7 +86,7 @@ public final class DirectoryReconciler {
         }
         var pending = frontier ?? [ReconcileFrontier(path: path,recursive:subtree)]
         var completed = 0
-        var seen: [String:Bool] = [:]
+        var seen: [String:(reset:Bool,recursive:Bool)] = [:]
         var retryParents = Set<String>()
         let start = ProcessInfo.processInfo.systemUptime
         while let work = pending.popLast(), !cancellation.isCancelled {
@@ -112,8 +112,12 @@ public final class DirectoryReconciler {
             let directory = work.path
             // A parent replacement discovered later in the same slice must
             // upgrade an earlier ordinary visit into a resetting subtree walk.
-            if let reset = seen[directory], reset || !work.reset {continue}
-            seen[directory] = work.reset
+            let recursive = work.recursive ?? subtree
+            if let prior = seen[directory], (prior.reset || !work.reset) &&
+                (prior.recursive || !(recursive || work.reset)) {continue}
+            let prior = seen[directory]
+            seen[directory] = (work.reset || prior?.reset == true,
+                recursive || work.reset || prior?.recursive == true)
             do {
                 let startStamp = BulkScanner.directoryStamp(directory)
                 let actual = try scanner.readDirectory(directory, rootDeviceID: rootDeviceID, cancellation: cancellation)
@@ -140,7 +144,6 @@ public final class DirectoryReconciler {
                     guard PathCanonicalizer.parent(of:child.path) == directory else { continue }
                     // New/type-replaced directories can already contain a complete tree.
                     let replaced = old[child.path]?.hasSameDirectoryIdentity(as: child) != true
-                    let recursive = work.recursive ?? subtree
                     if recursive || work.reset || replaced {
                         pending.append(.init(path: child.path, reset: work.reset || replaced,recursive:recursive))
                     }

@@ -769,7 +769,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
             if case .locallyFailed = plan.result, mayRebuild {
                 var work = DeferredReconcileWork(root: directory, reason: .retry, minimumCursor: lastProcessedEventID,
-                    generation: target.stats().generation, subtree: subtree)
+                    generation: target.stats().generation, subtree: subtree,frontier:frontier)
                 work.retryCount = 1; work.nextAttempt = ProcessInfo.processInfo.systemUptime + 0.05
                 deferReconcile(work); continue
             }

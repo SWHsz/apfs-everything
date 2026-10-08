@@ -58,6 +58,20 @@ final class DeferredReconcileTests: XCTestCase {
         XCTAssertTrue(plan.frontier.isEmpty)
     }
 
+    func testLateRecursiveAncestorUpgradesEarlierListingOnlyVisit() {
+        let root = "/owned-late-recursion", device:UInt64 = 77, index = FileIndex(root:root)
+        func directory(_ path:String,_ id:UInt64)->NamespaceEntry { .init(path:path,kind:.directory,deviceID:device,fileID:id) }
+        let affected = directory(root+"/affected",11), nested = directory(affected.path+"/nested",13)
+        let leaf = NamespaceEntry(path:nested.path+"/new",kind:.file,deviceID:device,fileID:14)
+        index.apply([directory(root,10),affected,nested].map{.upsert($0)})
+        let reader = ScopeBoundaryReader([root:[affected],affected.path:[nested],nested.path:[leaf]])
+        let reconciler = DirectoryReconciler(scanner:reader,index:index,rootDeviceID:device,metrics:Metrics())
+        let plan = reconciler.prepare(root,force:true,frontier:[.init(path:root,recursive:true),.init(path:affected.path,recursive:false)])
+        index.apply(plan.mutations)
+        XCTAssertNotNil(index.entry(at:leaf.path))
+        XCTAssertTrue(plan.frontier.isEmpty)
+    }
+
     func testDeferredMetadataHintsOnlyDescribePublishedChangedParents() throws {
         for changed in [false,true] {
             let tree = try TemporaryTree(), device = try VolumeIdentity.discover(root:tree.root).deviceID
