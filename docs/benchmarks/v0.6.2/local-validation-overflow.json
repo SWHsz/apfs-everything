@@ -1,0 +1,117 @@
+{
+  "code_head": "542030da25717366350c0f4782e3a1780e2c42b8",
+  "desktop_sha256": "b3704dcc3e0999714120999e4923e9389e2dc8e31c94cb902b2c4e83aa186c2d",
+  "cli_sha256": "03412e05c104029598f65fd975eb0c087062f0816100fc89e0cae0977249b092",
+  "test_counts": {
+    "core": 246,
+    "desktop": 20,
+    "optional_mount_skipped": 1
+  },
+  "stages": [
+    {
+      "stage": "overflow-retry-asan",
+      "exit": 0,
+      "seconds": 201.94902120903134
+    },
+    {
+      "stage": "overflow-retry-tsan",
+      "exit": 0,
+      "seconds": 331.9756812499836
+    },
+    {
+      "stage": "overflow-retry-normal",
+      "exit": 0,
+      "seconds": 95.35554083297029
+    },
+    {
+      "stage": "overflow-retry-release-cli",
+      "exit": 0,
+      "seconds": 48.63278700003866
+    },
+    {
+      "stage": "overflow-retry-release-app",
+      "exit": 0,
+      "seconds": 5.776290375040844
+    },
+    {
+      "stage": "overflow-retry-quiet-60",
+      "exit": 0,
+      "seconds": 70.10456100001466
+    }
+  ],
+  "quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 2359296,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 1,
+      "interrupt_wakeups": 2,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 2,
+      "pageins": 0,
+      "peak_compressed_bytes": 2375680,
+      "peak_rss_bytes": 10289152,
+      "rss_after_bytes": 7438336,
+      "rss_before_bytes": 10289152,
+      "system_cpu_seconds": 0.00022299999999999924,
+      "user_cpu_seconds": 5.3999999999998494e-05,
+      "wall_ms": 60003.62220837269
+    },
+    "idle_seconds": 60.00368420826271,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 227.9326666612178,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 37.602500058710575,
+        "p50": 20.540916710160673,
+        "p90": 21.990125067532063,
+        "p95": 22.295708302408457,
+        "p99": 23.932583397254348
+      },
+      "delete": {
+        "max": 22.99054164905101,
+        "p50": 19.319541635923088,
+        "p90": 20.81350004300475,
+        "p95": 21.440124954096973,
+        "p99": 21.990083274431527
+      },
+      "rename": {
+        "max": 25.010166689753532,
+        "p50": 21.72008331399411,
+        "p90": 23.19408336188644,
+        "p95": 23.386750021018088,
+        "p99": 23.698250064626336
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "ci": {
+    "run": 37778168573,
+    "required_jobs": "all four success"
+  },
+  "logs_sha256": {
+    "overflow-retry-asan.stdout": "3c6e34dc74bba4b51cfafb60249efc77358388ac61cf5fb926318773b91fb293",
+    "overflow-retry-tsan.stdout": "0126bb92d6f036caa98a16732504a1a8ccf42abd157c1cb781a114a9832d3d3d",
+    "overflow-retry-normal.stdout": "0f8f9a3bb5a7dd8b0275381f9b4a2b3696874dc937b9acc858a94cc769c34633",
+    "overflow-retry-release-cli.stdout": "d1ea6f04262c2906554452433f96c1fb14558932922eecde4d176518c0eb98d1",
+    "overflow-retry-release-app.stdout": "6339feb1baf68eb47fcf6e644141a470d63b9737cdfd300ad33c5c54853f599b",
+    "overflow-retry-quiet-60.stdout": "09a94566a8eb6f22bd92a94edd0f63b1f3285e71a026a9d703cf21d4c59342b2"
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "code_head": "0ee3573e741458349695d2c9eda0a0c233d6d319",
+  "test_counts": {
+    "core": 238,
+    "desktop": 20,
+    "optional_mount_skipped": 1
+  },
+  "stages": [
+    {
+      "stage": "point-final-asan",
+      "exit": 0,
+      "seconds": 215.0806157910265
+    },
+    {
+      "stage": "point-final-tsan",
+      "exit": 0,
+      "seconds": 324.89678129099775
+    },
+    {
+      "stage": "point-final-normal",
+      "exit": 0,
+      "seconds": 91.7627431669971
+    },
+    {
+      "stage": "point-final-release-cli",
+      "exit": 0,
+      "seconds": 49.19372179196216
+    },
+    {
+      "stage": "point-final-release-app",
+      "exit": 0,
+      "seconds": 5.16812016593758
+    },
+    {
+      "stage": "point-final-quiet-60",
+      "exit": 0,
+      "seconds": 70.17835966695566
+    }
+  ],
+  "quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 0,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 1,
+      "interrupt_wakeups": 2,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 1,
+      "pageins": 0,
+      "peak_compressed_bytes": 0,
+      "peak_rss_bytes": 10354688,
+      "rss_after_bytes": 10272768,
+      "rss_before_bytes": 10354688,
+      "system_cpu_seconds": 0.00019899999999999952,
+      "user_cpu_seconds": 6.199999999999956e-05,
+      "wall_ms": 60010.094416560605
+    },
+    "idle_seconds": 60.01010491664056,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 56.2286248896271,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 156.93137503694743,
+        "p50": 20.514416741207242,
+        "p90": 21.917125093750656,
+        "p95": 22.154666716232896,
+        "p99": 23.06358329951763
+      },
+      "delete": {
+        "max": 22.345124976709485,
+        "p50": 20.076041691936553,
+        "p90": 21.43837499897927,
+        "p95": 21.771083353087306,
+        "p99": 22.079833317548037
+      },
+      "rename": {
+        "max": 26.265208260156214,
+        "p50": 22.14525011368096,
+        "p90": 23.66312500089407,
+        "p95": 24.28608329501003,
+        "p99": 24.84812494367361
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "ci": {
+    "run": 37757694838,
+    "required_jobs": "all four success"
+  },
+  "logs_sha256": {
+    "point-final-quiet-60.stdout": "e424af38d07e9590fd4283a5a06b8a74b274397493e0ae8a32032adae10f6f31",
+    "point-final-release-app.stdout": "8b519df3cdb466ee3c580968db0cc839bda209408f84311525972e5bd58abfa9",
+    "point-final-release-cli.stdout": "64bbaf2f532b1bd5ae26150568eb412083299c4d6ed07c03861e536c4e626b9d",
+    "point-final-tsan.stdout": "d9619b405aba41d83ec4c7f6bf4e7c5926fc9278f3dd46e60d84cadce3b55fe3",
+    "point-final-normal.stdout": "9d95973831eb09b5e551d3947018492dc5969cf78578b1bc3cf14655cb1747e0",
+    "point-final-asan.stdout": "8be17a28dfed03eacd94256b29e6fc9cec515ce11b3c2ef5e95cf3e76fb40ccc"
+  }
+}

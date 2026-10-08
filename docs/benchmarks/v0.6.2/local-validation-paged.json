@@ -1,0 +1,109 @@
+{
+  "code_head": "44dd583b501762b41012a479d5d72b992b5101a5",
+  "desktop_sha256": "ef57a58d571871f811f0ba1513a43a06fb660be6606cfc4825ec1624659b2f89",
+  "cli_sha256": "a1e92a6ae23f246324bc5a8827e4d2384b8aebe5d4688d0d588f85585443cbdc",
+  "test_counts": {
+    "core": 249,
+    "desktop": 20,
+    "optional_mount_skipped": 1
+  },
+  "stages": [
+    {
+      "stage": "paged-final-asan",
+      "exit": 0,
+      "seconds": 221.80251249996945
+    },
+    {
+      "stage": "paged-final-tsan",
+      "exit": 0,
+      "seconds": 330.1744222920388
+    },
+    {
+      "stage": "paged-final-normal",
+      "exit": 0,
+      "seconds": 93.0207653749967
+    },
+    {
+      "stage": "paged-final-release-cli",
+      "exit": 0,
+      "seconds": 49.53374012501445
+    },
+    {
+      "stage": "paged-final-release-app",
+      "exit": 0,
+      "seconds": 5.293060916941613
+    },
+    {
+      "stage": "paged-final-quiet-60",
+      "exit": 0,
+      "seconds": 70.11951595800929
+    }
+  ],
+  "quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 2801664,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 0,
+      "interrupt_wakeups": 2,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 5,
+      "pageins": 0,
+      "peak_compressed_bytes": 2867200,
+      "peak_rss_bytes": 10158080,
+      "rss_after_bytes": 6815744,
+      "rss_before_bytes": 10158080,
+      "system_cpu_seconds": 0.0002870000000000008,
+      "user_cpu_seconds": 7.899999999999921e-05,
+      "wall_ms": 60005.149458302185
+    },
+    "idle_seconds": 60.005321708275005,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 222.83174993935972,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 38.48554159048945,
+        "p50": 20.471041672863066,
+        "p90": 21.51375007815659,
+        "p95": 21.90475002862513,
+        "p99": 25.493958382867277
+      },
+      "delete": {
+        "max": 47.536916681565344,
+        "p50": 19.311374984681606,
+        "p90": 20.73500002734363,
+        "p95": 21.016750019043684,
+        "p99": 22.11312495637685
+      },
+      "rename": {
+        "max": 35.56224994827062,
+        "p50": 21.66708337608725,
+        "p90": 23.059875005856156,
+        "p95": 23.393374984152615,
+        "p99": 25.715374969877303
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "ci": {
+    "run_id": 37785605375,
+    "required_jobs": "four passed"
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "code_head": "ceec3c786ec421bf632292d6dab48416430b398c",
+  "desktop_sha256": "2535e354a9f13d03b744678e5ee41af01a30cef4916bad789a1d4d48de1fb816",
+  "cli_sha256": "7553fec154e558d4b2db89716fb01c16d9c585d5ba993b559a494448a88497a4",
+  "test_counts": {
+    "core": 255,
+    "desktop": 20,
+    "optional_mount_skipped": 1
+  },
+  "stages": [
+    {
+      "stage": "loss-final-asan",
+      "exit": 0,
+      "seconds": 216.7920330830384
+    },
+    {
+      "stage": "loss-final-tsan",
+      "exit": 0,
+      "seconds": 330.02226591692306
+    },
+    {
+      "stage": "loss-final-normal",
+      "exit": 0,
+      "seconds": 92.9518691659905
+    },
+    {
+      "stage": "loss-final-release-cli",
+      "exit": 0,
+      "seconds": 49.21422737499233
+    },
+    {
+      "stage": "loss-final-release-app",
+      "exit": 0,
+      "seconds": 5.224620833992958
+    },
+    {
+      "stage": "loss-final-quiet-60",
+      "exit": 0,
+      "seconds": 71.06073200004175
+    }
+  ],
+  "stage_provenance": "Full ASan/TSan ran on 0f291e6; final test-only Swift 6.0 typing refactor validated by targeted ASan/TSan and final-head full CI ASan. Normal tests finished after ceec3c7; release CLI/app explicitly rebuilt on ceec3c7. No production behavior changed in ceec3c7.",
+  "compat_sanitizers": [
+    {
+      "stage": "compat-asan",
+      "exit": 0,
+      "seconds": 22.02485937497113
+    },
+    {
+      "stage": "compat-tsan",
+      "exit": 0,
+      "seconds": 33.06611679191701
+    }
+  ],
+  "quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 0,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 1,
+      "interrupt_wakeups": 3,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 0,
+      "pageins": 0,
+      "peak_compressed_bytes": 0,
+      "peak_rss_bytes": 10371072,
+      "rss_after_bytes": 10256384,
+      "rss_before_bytes": 10371072,
+      "system_cpu_seconds": 0.0001449999999999993,
+      "user_cpu_seconds": 7.000000000000062e-05,
+      "wall_ms": 60001.72991666477
+    },
+    "idle_seconds": 60.001746249967255,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 66.9844166841358,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 1263.044249964878,
+        "p50": 20.493000047281384,
+        "p90": 20.89691674336791,
+        "p95": 21.786500001326203,
+        "p99": 22.030291613191366
+      },
+      "delete": {
+        "max": 21.686166641302407,
+        "p50": 19.172291737049818,
+        "p90": 20.503083360381424,
+        "p95": 20.58766665868461,
+        "p99": 21.586416638456285
+      },
+      "rename": {
+        "max": 24.460583343170583,
+        "p50": 20.9695000667125,
+        "p90": 23.033875040709972,
+        "p95": 23.443958372808993,
+        "p99": 24.211708339862525
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "ci": {
+    "run_id": 37804919468,
+    "required_jobs": "all four success"
+  }
+}

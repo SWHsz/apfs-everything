@@ -37,8 +37,14 @@ Namespace overlay stops accepting changes at 500k entries or 128 MiB estimated
 bytes. Core marks recovery and stops advancing the processed/durable namespace
 cursor. Recovery is emergency, using a fresh scan and conservative replay fence.
 Metadata overlay similarly stops at its hard bound, pins its cursor and requests
-namespace compaction plus metadata recovery. The event inbox and rebuild buffers
-retain their existing bounded overflow recovery. A >100k-record atomic subtree
+namespace compaction plus metadata recovery. Namespace event inbox and rebuild buffers
+retain their existing bounded overflow recovery. Ordinary metadata inbox overflow
+keeps its event hard cap and repairs the known watched root using bounded directory
+slices, without allocating full-volume bootstrap columns. A second overflow while
+that frontier is active requests one follow-up pass after the current pass finishes;
+the metadata cursor stays pinned through both. Suspension retains only a scalar
+repair fence. Real stream invalidation is remembered even if its event was dropped
+from the full inbox, and still requests authoritative recovery. A >100k-record atomic subtree
 delete/diff goes to recovery rather than monopolizing the writer. Metadata subtree
 walks retain bounded pending directories and pause for active queries or critical
 pressure. Directory diff/update collection is capped at 100k records and pending directory frontiers at 100k; larger frontiers invalidate and recover. The frontier limit is separate from the 16,384-entry duplicate window. The duplicate window rolls at 16,384 instead of treating a large unchanged tree as a recovery error. Child paths must be direct descendants, so this does not admit filesystem cycles. Metadata bootstrap consumes bulk pages directly instead of accumulating all files in wide directories. There is no periodic maintenance or full-disk idle scan.
@@ -70,3 +76,10 @@ Maintenance records retain kind/volume/urgency, queued/running time, checkpoints
 Metadata parent enumeration now uses the same local-error policy as subtree reconciliation: descendant permission/dataless failures preserve known values, ordinary disappearance/boundary races do not invalidate an entire sidecar, and root/unexpected I/O failures still request recovery. Query/pressure yields keep deferred parents and do not advance the metadata cursor. Errno, recovery-request and yield counters expose these causes.
 
 Only an explicitly prepared smoke bundle polls the strict quiet gate. All volumes must be namespace live and metadata live, with no event/batch/metadata pending work, no scheduled compaction/metadata jobs, no queued/running maintenance, and 30 seconds of unchanged namespace/metadata generations. The deadline remains 20 minutes. Timeout emits blockers plus queues, tasks, overlays and cursors; it never starts or labels an idle measurement. A passing gate starts a hidden 600-second window, with a 60-second CPU checkpoint and final generation/resource checks. Benchmark captures live inside its excluded owned cache so their own stdout writes do not manufacture new filesystem events. Production has no such polling or capture files.
+
+Metadata overlay accounting tracks retained overrides, delta values and tombstones, subtracting allocations on delete/recreate. The unchanged 500k-entry/128-MiB hard cap applies to net growth, so replacing an existing value at capacity remains possible. Diagnostics expose estimated and accounted bytes plus the overflow flag. A queued automatic metadata bootstrap is superseded only when a different namespace base has published valid metadata and no recovery remains pending or metadata overflow occurred before/during the queued wait. A monotonic overflow epoch survives namespace binding, because compaction copies known columns without repairing dropped values; explicit user rebuilds keep their force flag across yielded retries.
+
+
+Ordinary metadata parent refresh also yields after at most 32 parents or 20 ms, retaining unstarted requested paths and genuinely collapsed parents. Pure budget continuation uses a short one-shot delay; rate limiting and read failures retain their original backoff. Event classification retires Foundation temporaries per event. Neither budget continuation advances the cursor through unfinished refresh.
+
+The v0.6.2 owned real-volume smoke uses a separate fixed 20-minute active-live gate: real generations may change, but full scans, resource-yield rebuilds, restart loops, monotonically growing backlogs and unfinished deadline maintenance fail. Physical footprint above 150 MiB remains a failure; startup lifetime peaks are reported separately and never substituted for active samples. Controlled quiet still requires the original 60-second CPU/write/timer checks.

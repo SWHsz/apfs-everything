@@ -1,10 +1,10 @@
 # v0.6.2 — Reconciliation Convergence（验收进行中）
 
-从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已按已有内存证据关闭，roadmap #12 已勾选。Issue #2 不开始，NSv2/metav1 和 cold namespace builder 不变。
+从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已按已有内存证据关闭，roadmap #12 已勾选。Issue #2 不开始，NSv2/metav1 和 cold namespace builder 不变。 最新代码 `ceec3c7` 为普通 metadata parent 批次增加 32 个目录 / 20 ms 分片，并保留 hard-cap 丢失更新的恢复证据，防止 namespace compaction 错误取代必要 repair。普通/ASan/TSan 共 275 项通过；最新四项 required CI 全绿。最终真实双卷20分钟及10轮fixture已完成：功能收敛通过，资源gate因physical峰值约177.25MiB及deadline checkpoint未完成失败；锁屏后的最终UI/restart待验证。
 
 局部修复用有界、合并祖先路径的 `DeferredReconcileQueue` 保存 frontier 与 minimum cursor。每片最多 32 个目录 / 20 ms，查询中至少完成一个原子父目录；one-shot 重试，队列清空后才推进 namespace cursor。权限错误局部保留，反复权威 I/O 失败或 hard overflow 才恢复；真正 stream invalidation 合并为一次 active recovery。Full rebuild 的 yield 重试同一个 recovery epoch，保留旧 base、释放临时 graph，不产生 resource_yield rebuild。
 
-Metadata 连续输入保持既有批次截止时间，subtree continuation 不进入每秒 lookup 限流。退出保守保存 cursor，下一次 replay 继续修复。真实卷使用 active-live gate，受控 quiet gate 未放宽。测试与真实 binary 验收见 [v0.6.2 validation](docs/v062-validation.md)，当前 #3 OPEN、无 release tag。
+Metadata 连续输入保持既有批次截止时间，subtree continuation 不进入每秒 lookup 限流。普通 metadata inbox 溢出以有界 watched-root traversal 修复，重复溢出在当前 frontier 完成后补偿一轮，游标不越过未完成工作；真正 stream invalidation 仍恢复。Bootstrap 在获准 maintenance lease 后才读取 base，避免排队期间 compaction 发布新 base 后误清空有效 metadata。退出保守保存 cursor，下一次 replay 继续修复。真实卷使用 active-live gate，受控 quiet gate 未放宽。测试与真实 binary 验收见 [v0.6.2 validation](docs/v062-validation.md)，当前 #3 OPEN、无 release tag。
 
 ---
 
