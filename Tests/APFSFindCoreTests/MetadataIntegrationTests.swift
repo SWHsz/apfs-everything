@@ -85,6 +85,7 @@ final class MetadataIntegrationTests: XCTestCase {
         XCTAssertEqual(meta.processedCursor,100,"a root repair has not yet read any metadata")
         XCTAssertEqual(metrics.snapshot()["metadata_inbox_scope_repairs",default:0],0,"suspended overflow keeps a scalar repair request")
         reader.allow(2);updater.resume();updater.flush()
+        waitFor("two bounded directory slices",timeout:5) {updater.flush();return reader.readCount == 2}
         XCTAssertEqual(metrics.snapshot()["metadata_inbox_scope_repairs"],1)
         XCTAssertEqual(reader.readCount,2)
         XCTAssertEqual(meta.processedCursor,100)
