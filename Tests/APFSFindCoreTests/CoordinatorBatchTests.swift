@@ -127,7 +127,9 @@ final class CoordinatorBatchTests: XCTestCase {
         ], into: coordinator.index, using: reconciler, countMetrics: true, mayRebuild: false)
         XCTAssertNotNil(coordinator.index.entry(at: tree.path("nested/created")))
         XCTAssertEqual(coordinator.metrics.snapshot()["direct_patches", default: 0], 0)
-        XCTAssertEqual(coordinator.metrics.snapshot()["subtree_reconciles", default: 0], 1)
+        XCTAssertEqual(coordinator.metrics.snapshot()["directory_reconciles", default: 0], 2)
+        XCTAssertEqual(coordinator.metrics.snapshot()["subtree_reconciles", default: 0], 0,
+            "the root and requested child listings do not require recursive siblings")
     }
 
     func testVanishedDirtyDirectoryRepairsParentWithoutFullRebuild() throws {
