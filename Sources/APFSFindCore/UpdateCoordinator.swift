@@ -803,9 +803,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
         })
         metrics.record("metadata_changed_parent_hints",by:parents.count)
         // ID 0 bypasses overlap without inventing a durable event cursor.
-        metadataEventHandler?(parents.map {
+        var hints:[FileSystemEvent] = parents.map {
             .init(path:$0,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:0)
-        })
+        }
+        // A parent listing cannot observe a child that disappeared. Keep an
+        // explicit removal even when the original event precedes metadata's
+        // replay floor, so old sidecar values and delta values are invalidated.
+        let removed = mutations.compactMap { mutation -> FileSystemEvent? in
+            guard case .remove(let path) = mutation else {return nil}
+            return .init(path:path,flags:UInt32(kFSEventStreamEventFlagItemRemoved),id:0)
+        }
+        metrics.record("metadata_removed_path_hints",by:removed.count)
+        hints.append(contentsOf:removed)
+        metadataEventHandler?(hints)
     }
 
     @discardableResult private func repairDirectories(_ paths: [String], into target: any NamespaceIndex,

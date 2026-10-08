@@ -36,6 +36,7 @@ final class MetadataCursorTests: XCTestCase {
         XCTAssertNil(coordinator.index.entry(at:old))
         XCTAssertEqual(coordinator.metadata.capture().value(path:born),expected[born])
         XCTAssertEqual(coordinator.metadata.capture().value(path:renamed),expected[renamed])
+        XCTAssertEqual(coordinator.metadata.capture().value(path:old),.unknown)
         XCTAssertEqual(coordinator.metrics.snapshot()["full_scans",default:0],0)
         XCTAssertEqual(coordinator.metrics.snapshot()["rebuild_requests_resource_yield",default:0],0)
     }

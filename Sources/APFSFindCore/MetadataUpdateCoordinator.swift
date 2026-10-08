@@ -295,7 +295,13 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 if let sweep = parentSweep, parent == sweep.cursor.path || path == sweep.cursor.path {
                     sweep.repeatPass = true
                 }
-                if collapsed.contains(parent) { metrics.record("metadata_events_deduplicated"); return true }
+                if collapsed.contains(parent) {
+                    metrics.record("metadata_events_deduplicated")
+                    // Enumeration refreshes present siblings, but cannot clear
+                    // a disappeared child's previous sidecar/delta value.
+                    if impact == .remove {pending[path,default:[]].insert(path)}
+                    return true
+                }
                 let item = namespace.entry(at:path)
                 if impact == .reconcileParent {
                     collapsed.insert(item?.kind == .directory ? path : parent)

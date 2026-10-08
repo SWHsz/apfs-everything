@@ -492,7 +492,11 @@ final class MetadataIntegrationTests: XCTestCase {
             c.index.entry(at:tree.path("incoming/sub/child")) != nil && c.metadata.capture().value(path:tree.path("incoming/sub/child")).logicalSize == 1234
         }
         XCTAssertEqual(c.search(.init(query:"child",sort:.init(key:.size))).hits.first?.logicalSize,1234)
-        XCTAssertGreaterThan(c.metrics.snapshot()["metadata_subtree_bulk_enumerations",default:0],0)
+        let counters = c.metrics.snapshot()
+        // Published namespace descendants can be filled by their changed-parent
+        // bulk pages before the fallback subtree walk starts.
+        XCTAssertGreaterThan(counters["metadata_subtree_bulk_enumerations",default:0] +
+            counters["metadata_parent_bulk_enumerations",default:0],0)
     }
     func testSparseMicrobatchUsesOneParentOpenAndMetadataOnlyLookups() throws {
         let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true)

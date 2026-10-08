@@ -1,0 +1,68 @@
+{
+  "code_head": "7066a07dc63212e758d022c12c2787f837163095",
+  "full_asan": [
+    {
+      "stage": "publication-final-asan",
+      "exit": 1,
+      "seconds": 229.41684583306778
+    }
+  ],
+  "failures": [
+    "metadata removal retained old value after collapsed parent deduplicated the removed path",
+    "incoming directory already populated via parent bulk pages; assertion required only subtree counter"
+  ],
+  "ci_run_id": 37823638708,
+  "ci_integration": "failure",
+  "raw_receipts": [
+    {
+      "name": "publication-final-asan.stdout",
+      "bytes": 82388,
+      "sha256": "01238dfba1b595b4ac5d77e1393cee0d2431abe5a45b9a6e64461a412978c22b"
+    },
+    {
+      "name": "publication-final-asan.stderr",
+      "bytes": 3783,
+      "sha256": "adb8e15fc9e62c88d31e8768c0a43dc0c359a0e6c33a3f69b0eb4975d50a8570"
+    },
+    {
+      "name": "metadata-floor-before.stdout",
+      "bytes": 2310,
+      "sha256": "17ee00467a7a2a42acc671fe02f1f0a146b8a6c071422995d01bd4d3d72ecfa5"
+    },
+    {
+      "name": "metadata-floor-before.stderr",
+      "bytes": 3637,
+      "sha256": "d14025a9fcf3c055e5d4c82a8383aaab252e80c8f67392155e669257f364cf66"
+    },
+    {
+      "name": "metadata-floor-after.stdout",
+      "bytes": 7565,
+      "sha256": "20c89d10433874cb56068ef362c33ccf81a4c3168a506708518958d282ef4e0b"
+    },
+    {
+      "name": "metadata-floor-after.stderr",
+      "bytes": 735,
+      "sha256": "612f291304fdbbfe5efecacecd6bbb98d7502424536eea106d5237f0d26c2298"
+    },
+    {
+      "name": "publication-delete-before.stdout",
+      "bytes": 1786,
+      "sha256": "59554485e4326cbce66d3dd51789e8abf1e6f5ec4ac3a658c7d4c68e779b7258"
+    },
+    {
+      "name": "publication-delete-before.stderr",
+      "bytes": 464,
+      "sha256": "62cd9e97ef86107791dc80c6f744784067279739757f466e7718ae0e0ea6388d"
+    },
+    {
+      "name": "publication-delete-after.stdout",
+      "bytes": 13747,
+      "sha256": "6bb5673320938c357de97972fa0d76b35876b43dc7788968148e4aff6c0da981"
+    },
+    {
+      "name": "publication-delete-after.stderr",
+      "bytes": 391,
+      "sha256": "d7a842eae563cce3700495c0a7f9c1bbcb3ea8f3cfa09d72de89ab3c4da14555"
+    }
+  ]
+}
