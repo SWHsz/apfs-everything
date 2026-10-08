@@ -41,11 +41,16 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private var epoch: UInt64 = 0
     private var maximumID: UInt64 = 0
     private var historyDone = false
+    private var recoveryPending = false
+    private var recoverySerial:UInt64 = 0
     private var stopped = false
     private var suspended = false
     private var buffered: [FileSystemEvent] = []
     private var bufferOverflow = false
     private var bufferedRootRepair = false
+    private let pagedRepairs: Bool
+    private let repairExclusions: [String]
+    private var repairCursor: MetadataDirectoryCursor?
     private var renameOnly = Set<String>()
     private struct RenameOrigin {
         let path: String
@@ -100,6 +105,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 readDirectory:(@Sendable (String,CancellationToken) throws -> [ScannedEntry])? = nil) {
         self.root = root; self.device = device; self.index = index; self.namespace = namespace
         self.metrics = metrics; self.policy = policy; self.invalidated = invalidated; self.changed = changed
+        pagedRepairs = readDirectory == nil
+        repairExclusions = BulkScanner.maintenanceExclusions(root:root)
         let scanner = BulkScanner(root:root,workerCount:1,metrics:metrics)
         self.readDirectory = readDirectory ?? { path,cancellation in
             try scanner.readScannedDirectory(path,rootDeviceID:device,cancellation:cancellation,maximumEntries:100_000,yieldToQueries:false)
@@ -151,11 +158,28 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     self.repairOverflowedInbox(maximumID:batch.3,historyDone:batch.4)
                 } else {
                     self.receive(batch.0)
-                    if batch.1 { self.metrics.record("metadata_inbox_overflows"); self.invalidated() }
+                    if batch.1 { self.metrics.record("metadata_inbox_overflows"); self.requestRecovery(newStreamInvalidation:batch.2) }
                 }
             }
         }
     }
+    private func requestRecovery(newStreamInvalidation:Bool = false) {
+        let first = !recoveryPending
+        if first || newStreamInvalidation {recoverySerial &+= 1}
+        recoveryPending = true;index.markPending()
+        if first || newStreamInvalidation {metrics.record("metadata_recovery_requests");invalidated()}
+        else {metrics.record("metadata_recovery_requests_coalesced")}
+    }
+    private func advanceCompletedCursor() {
+        guard !recoveryPending else {return}
+        index.advance(maximumID,historyDone:historyDone)
+    }
+    public var recoveryTicket:UInt64 {queue.sync {recoverySerial}}
+    public var needsRecovery:Bool {queue.sync {recoveryPending}}
+    @discardableResult public func completeRecovery(ticket:UInt64) -> Bool {queue.sync {
+        guard ticket == recoverySerial else {index.markPending();return false}
+        recoveryPending = false;return true
+    }}
     private func repairOverflowedInbox(maximumID:UInt64,historyDone:Bool) {
         guard !stopped, !scanCancellation.isCancelled else {return}
         self.maximumID = max(self.maximumID,maximumID)
@@ -182,7 +206,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             let classification = EventClassifier.classify(e)
             let impact = MetadataEventImpact.classify(e)
             if impact == .invalidated {
-                metrics.record("metadata_invalidations"); invalidated(); continue
+                metrics.record("metadata_invalidations"); requestRecovery(newStreamInvalidation:true); continue
             }
             if classification == .historyDone { historyDone = true; replaying = false; continue }
             if e.id != UInt64.max { maximumID = max(maximumID,e.id) }
@@ -241,7 +265,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 pending[parentKey,default:[]].insert(parent)
             }
             if collapsed.count >= 16_384 || discoveredSubtrees.count >= 16_384 {
-                pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); metrics.set("pending_metadata_lookups",to:0); invalidated(); return
+                metrics.record("metadata_pending_frontier_overflows")
+                pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); metrics.set("pending_metadata_lookups",to:0); requestRecovery(); return
             }
             if pending.count >= policy.maxPendingEntries {
                 collapsed.formUnion(pending.values.flatMap { $0.map { PathCanonicalizer.parent(of:$0) } }); pending.removeAll()
@@ -249,7 +274,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             }
         }
         recordOrigins()
-        if pending.isEmpty && collapsed.isEmpty && discoveredSubtrees.isEmpty { index.advance(maximumID,historyDone:historyDone); changed(); return }
+        if pending.isEmpty && collapsed.isEmpty && discoveredSubtrees.isEmpty { advanceCompletedCursor(); changed(); return }
         metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count); index.markPending(); changed()
         schedule(after:policy.debounceSeconds)
     }
@@ -266,7 +291,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         let resources = ProcessResourceSample.capture()
         metrics.set("metadata_update_active",to:1)
         defer { metrics.set("metadata_update_active",to:0); metrics.recordResources("metadata_event_updates",since:resources) }
-        guard !pending.isEmpty || !collapsed.isEmpty || !discoveredSubtrees.isEmpty else { metrics.set("pending_metadata_lookups",to:0); index.advance(maximumID,historyDone:historyDone); return }
+        guard !pending.isEmpty || !collapsed.isEmpty || !discoveredSubtrees.isEmpty else { metrics.set("pending_metadata_lookups",to:0); advanceCompletedCursor(); return }
         metrics.record("metadata_scheduler_wakeups")
         let now = ProcessInfo.processInfo.systemUptime
         if now-lookupWindow >= 1 { lookupWindow = now; lookupsInWindow = 0 }
@@ -370,7 +395,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     metrics.record("metadata_parent_read_failures")
                     metrics.record("metadata_parent_errno_\(code)")
                     if DirectoryReconciler.recovery(for:code,isRoot:parent == root) == .rebuild {
-                        if needsRecovery(parent,code:code) { metrics.record("metadata_parent_recovery_requests"); invalidated() }
+                        if needsRecovery(parent,code:code) { metrics.record("metadata_parent_recovery_requests"); requestRecovery() }
                         if code != EOVERFLOW { deferredParents.insert(parent) }
                     }
                     // Permission exclusions and disappearance races do not
@@ -399,15 +424,43 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     metrics.record("metadata_subtree_yields"); break subtreeSlice
                 }
                 do {
-                    let entries = try readDirectory(directory,scanCancellation)
+                    let paged = inboxRootRepair && pagedRepairs
+                    let entries:[ScannedEntry]
+                    if paged {
+                        if repairCursor?.path != directory {
+                            repairCursor?.close()
+                            repairCursor = try MetadataDirectoryCursor(path:directory,device:device,excludedRoots:repairExclusions,metrics:metrics)
+                        }
+                        guard let cursor = repairCursor else {throw ScannerError(path:directory,code:EIO)}
+                        // A removed/replaced directory must not continue reading
+                        // its old descriptor under the replacement's pathname.
+                        guard let current = namespace.entry(at:directory),current.kind == .directory,
+                              current.fileID == nil || current.fileID == cursor.fileID else {
+                            cursor.close();repairCursor = nil;continue
+                        }
+                        entries = try cursor.next(cancellation:scanCancellation)
+                    } else {entries = try readDirectory(directory,scanCancellation)}
                     noteBulkAllocation(entries.count)
                     localIOFailures.removeValue(forKey:directory)
-                    metrics.record("metadata_subtree_bulk_enumerations"); subtreeDirectories += 1
+                    subtreeDirectories += 1 // A page is a bounded scheduling unit.
+                    if !paged {metrics.record("metadata_subtree_bulk_enumerations")}
                     for entry in entries {
                         guard !scanCancellation.isCancelled else { return }
                         guard namespace.entry(at:entry.namespace.path) == entry.namespace else { continue }
                         index.update(path:entry.namespace.path,value:entry.metadata)
-                        if BulkScanner.shouldTraverse(entry:entry.namespace,rootDeviceID:device) { directories.append(entry.namespace.path) }
+                        if BulkScanner.shouldTraverse(entry:entry.namespace,rootDeviceID:device) {
+                            if paged {repairCursor?.children.append(entry.namespace.path)}
+                            else {directories.append(entry.namespace.path)}
+                        }
+                    }
+                    if paged,let cursor = repairCursor {
+                        guard cursor.children.count+directories.count+remainingSubtrees.count <= 16_384 else {
+                            throw ScannerError(path:directory,code:EOVERFLOW)
+                        }
+                        if cursor.finished {
+                            directories += cursor.children;repairCursor = nil
+                            metrics.record("metadata_subtree_bulk_enumerations")
+                        } else {directories.append(directory)}
                     }
                 } catch is MaintenanceYield {
                     remainingSubtrees.formUnion([directory]+directories+Array(subtreeRoots.dropFirst(subtreeIndex+1)))
@@ -417,9 +470,12 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     // normal disappearance races do not invalidate the entire
                     // sidecar. Unexpected I/O or the bounded enumeration limit
                     // still requests authoritative metadata recovery.
+                    if scanCancellation.isCancelled {repairCursor?.close();repairCursor = nil;return}
                     let code = (error as? ScannerError)?.code ?? EIO
+                    repairCursor?.close();repairCursor = nil
+                    metrics.record("metadata_subtree_errno_\(code)")
                     if DirectoryReconciler.recovery(for:code,isRoot:directory == root) == .rebuild {
-                        if needsRecovery(directory,code:code) { invalidated() }
+                        if needsRecovery(directory,code:code) { metrics.record("metadata_subtree_recovery_requests");requestRecovery() }
                         if code != EOVERFLOW { deferredParents.insert(directory) }
                     }
                     if !scanCancellation.isCancelled { metrics.record("metadata_subtree_read_failures") }
@@ -434,7 +490,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 repeatInboxRootRepair = false;discoveredSubtrees.insert(root);remainingSubtrees.insert(root)
             } else {inboxRootRepair = false}
         }
-        if remainingSubtrees.count > 16_384 { discoveredSubtrees.removeAll(); invalidated(); return }
+        if remainingSubtrees.count > 16_384 { metrics.record("metadata_subtree_frontier_overflows");discoveredSubtrees.removeAll();repairCursor?.close();repairCursor = nil;requestRecovery();return }
         recordOrigins()
         renameOnly.removeAll(keepingCapacity:true)
         pending.removeAll(keepingCapacity:true); collapsed = deferredParents
@@ -447,7 +503,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             metrics.set("pending_metadata_lookups",to:remainingSubtrees.count)
             schedule(after:0.005); changed(); return
         }
-        metrics.set("pending_metadata_lookups",to:0); index.advance(maximumID,historyDone:historyDone); changed()
+        metrics.set("pending_metadata_lookups",to:0); advanceCompletedCursor(); changed()
     }
     public func resetReplay() { queue.sync { historyDone = false; maximumID = index.processedCursor; index.restartReplay() } }
     public func suspend() { queue.sync { guard !scanCancellation.isCancelled else { return }; work?.cancel(); work = nil; epoch &+= 1; autoreleasepool { drain() }; work?.cancel(); work = nil; epoch &+= 1; suspended = true } }
@@ -459,7 +515,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         // publish the maximum ID retained while publication was suspended.
         if repair {repairOverflowedInbox(maximumID:maximumID,historyDone:historyDone)}
         autoreleasepool { receive(events) }
-        if overflow { invalidated() }
+        if overflow { requestRecovery(newStreamInvalidation:true) }
     } }
     public func flush() { queue.sync { work?.cancel(); work = nil; epoch &+= 1; autoreleasepool { drain() } } }
     /// Cancellation is lock-only and can interrupt a running bulk lookup before its queue barrier.
@@ -473,6 +529,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         // lookups keep the old processed fence; fast exit must not enumerate a
         // large pending tree. Restart replay recovers these unpersisted values.
         pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll()
+        repairCursor?.close();repairCursor = nil
         buffered.removeAll(); renameOrigins.removeAll(); recordOrigins(); localIOFailures.removeAll()
         inboxLock.withLock { inbox.removeAll() }; metrics.set("pending_metadata_lookups",to:0)
     } }

@@ -96,6 +96,8 @@ APFSBulkReader *apfs_bulk_reader_open(const char *path, uint64_t expected_device
 /* Returns 0 on success (count == 0 means EOF), -1 with errno on failure. */
 int apfs_bulk_reader_next(APFSBulkReader *reader,
                           const APFSDirectoryEntry **entries, size_t *count);
+/* Identity of the securely opened directory, without reopening its path. */
+uint64_t apfs_bulk_reader_file_id(const APFSBulkReader *reader);
 int apfs_bulk_reader_close(APFSBulkReader *reader);
 
 /* Metadata only; secure component walk has the same boundaries as enumeration. */

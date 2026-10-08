@@ -15,6 +15,7 @@
 struct APFSBulkReader {
     int fd;
     uint64_t device_id;
+    uint64_t file_id;
     unsigned char *buffer;
     APFSDirectoryEntry *entries;
     size_t entry_capacity;
@@ -358,7 +359,12 @@ APFSBulkReader *apfs_bulk_reader_open(const char *path, uint64_t expected_device
     }
     reader->fd = fd;
     reader->device_id = (uint64_t)(uint32_t)metadata.st_dev;
+    reader->file_id = (uint64_t)metadata.st_ino;
     return reader;
+}
+
+uint64_t apfs_bulk_reader_file_id(const APFSBulkReader *reader) {
+    return reader ? reader->file_id : 0;
 }
 
 /* memcpy keeps every load safe even when the kernel's 4-byte layout is unaligned. */

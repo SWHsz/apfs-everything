@@ -231,11 +231,11 @@ final class MetadataIntegrationTests: XCTestCase {
             for id in 1...20 {
                 updater.enqueue([.init(path:parent,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:UInt64(id))]); updater.flush()
             }
-            XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],code == EOVERFLOW ? 20 : (code == EIO ? 1 : 0),"errno \(code)")
+            XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],[EOVERFLOW,EIO].contains(code) ? 1 : 0,"errno \(code)")
             XCTAssertEqual(metrics.snapshot()["metadata_parent_errno_\(code)"],20)
             XCTAssertEqual(meta.capture().value(path:path).logicalSize,123,"unreadable metadata must survive")
-            if code == EIO {
-                XCTAssertGreaterThan(updater.pendingCount,0)
+            if [EOVERFLOW,EIO].contains(code) {
+                if code == EIO {XCTAssertGreaterThan(updater.pendingCount,0)}
                 XCTAssertEqual(meta.processedCursor,0,"failed local work pins metadata cursor")
             } else { XCTAssertEqual(updater.pendingCount,0) }
             updater.stop()

@@ -110,7 +110,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     let initialIdentity = try identityProvider(canonical)
     metadataUpdater = ephemeral ? nil : MetadataUpdateCoordinator(root:canonical,device:initialIdentity.deviceID,
       index:metadata,namespace:runtime,metrics:core.metrics,policy:metadataUpdatePolicy,
-      invalidated:{ [weak self] in self?.scheduleMetadataBootstrap() },
+      invalidated:{ [weak self] in self?.scheduleMetadataBootstrap(urgency:.required) },
       changed:{ [weak self] in self?.metadataChanged() })
     core.setMetadataHandlers(scan:{ [weak self] entries,initial in
       guard let self, self.persistenceEnabled else { return }
@@ -319,7 +319,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   public func search(_ request: SearchRequest) -> SearchResult { core.search(request) }
   public func search(_ query: String, limit: Int = 50) -> SearchResult { search(.init(query: query, limit: limit)) }
   public func pause() { compactionScheduler.cancelPending(); metadataScheduler.cancelPending(); core.pause(); metadataUpdater?.flush(); metadata.pause(true) }
-  public func resume() throws { metadata.pause(false); metadataUpdater?.resetReplay(); try core.resume(additionalCursor:metadata.capture().available ? metadata.processedCursor : nil); namespaceChanged(); if !metadata.capture().available { scheduleMetadataBootstrap() } }
+  public func resume() throws { metadata.pause(false); metadataUpdater?.resetReplay(); try core.resume(additionalCursor:metadata.capture().available ? metadata.processedCursor : nil); namespaceChanged(); if metadataUpdater?.needsRecovery == true || !metadata.capture().available { scheduleMetadataBootstrap(urgency:.required) } }
 
   private func recordSnapshot(
     _ result: SnapshotWriteResult, cache: SnapshotStore, identity: VolumeIdentity
@@ -646,6 +646,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
         }
         let resources = ProcessResourceSample.capture()
         defer {self.metrics.recordResources("metadata_bootstrap",since:resources)}
+        let recoveryTicket = self.metadataUpdater?.recoveryTicket ?? 0
         self.metadataUpdater?.suspend()
         let fence = identity.currentEventID()
         if self.metadata.capture().namespace?.header.snapshotUUID != base.header.snapshotUUID { self.metadata.bind(namespace:base) }
@@ -680,6 +681,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
           guard (self.index as? HybridIndex)?.mappedBase?.header.snapshotUUID == base.header.snapshotUUID else { throw SnapshotError.generationChanged }
         },fault:self.metadataFault,cancellation:self.metadataCancellation,checkpoint:{ try lease.checkpoint() })
         try self.metadata.install(cache.metadataReader(base:base.header))
+        if self.metadataUpdater?.completeRecovery(ticket:recoveryTicket) == false {yielded = true;return}
         self.metadataUpdater?.flush()
         lease.recordCompletion()
         self.metrics.record("metadata_bootstraps")
