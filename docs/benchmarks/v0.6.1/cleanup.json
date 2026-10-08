@@ -1,0 +1,44 @@
+{
+  "owned_only": true,
+  "all_owned_apps_stopped": true,
+  "logical_bytes_removed": 1444355987,
+  "physical_reclaimed_bytes": "not measured; APFS clone sharing differs from logical size",
+  "items": [
+    {
+      "owned_basename": "apfsfind-real-cache-B7CDA9CC-50EF-4077-9A05-86E671E7DC48",
+      "logical_bytes_removed": 502413967,
+      "files": 10
+    },
+    {
+      "owned_basename": "APFSFindV061Smoke.app",
+      "logical_bytes_removed": 3435640,
+      "files": 3
+    },
+    {
+      "owned_basename": "apfsfind-fixture-B7CDA9CC-50EF-4077-9A05-86E671E7DC48",
+      "logical_bytes_removed": 37,
+      "files": 12
+    },
+    {
+      "owned_basename": "apfsfind-real-cache-79D786C6-E5F1-4FFE-84F2-B841A479D8AC",
+      "logical_bytes_removed": 472307573,
+      "files": 19
+    },
+    {
+      "owned_basename": "APFSFindV061Smoke.app",
+      "logical_bytes_removed": 3441234,
+      "files": 3
+    },
+    {
+      "owned_basename": "apfsfind-fixture-79D786C6-E5F1-4FFE-84F2-B841A479D8AC",
+      "logical_bytes_removed": 37,
+      "files": 12
+    },
+    {
+      "owned_basename": "apfsfind-real-cache-63D595F0-576E-410E-8545-DD6E7A36DD8E",
+      "logical_bytes_removed": 462757499,
+      "files": 6
+    }
+  ],
+  "daily_cache_touched": false
+}

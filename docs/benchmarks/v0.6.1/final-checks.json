@@ -1,0 +1,53 @@
+{
+  "release": {
+    "exit": 0,
+    "seconds": 55.248,
+    "suites": {},
+    "total_tests": 0,
+    "sanitizer_diagnostics": false
+  },
+  "normal": {
+    "exit": 0,
+    "seconds": 102.173,
+    "suites": {
+      "APFSFindDesktopTests.xctest": "20",
+      "APFSFindCoreTests.xctest": "220"
+    },
+    "total_tests": 240,
+    "sanitizer_diagnostics": false
+  },
+  "asan": {
+    "exit": 0,
+    "seconds": 200.338,
+    "suites": {
+      "APFSFindDesktopTests.xctest": "20",
+      "APFSFindCoreTests.xctest": "220"
+    },
+    "total_tests": 240,
+    "sanitizer_diagnostics": false
+  },
+  "tsan": {
+    "exit": 0,
+    "seconds": 305.626,
+    "suites": {
+      "APFSFindDesktopTests.xctest": "20",
+      "APFSFindCoreTests.xctest": "220"
+    },
+    "total_tests": 240,
+    "sanitizer_diagnostics": false
+  },
+  "app": {
+    "exit": 0,
+    "seconds": 48.19,
+    "suites": {},
+    "total_tests": 0,
+    "sanitizer_diagnostics": false
+  },
+  "signature": {
+    "exit": 0,
+    "seconds": 0.009,
+    "suites": {},
+    "total_tests": 0,
+    "sanitizer_diagnostics": false
+  }
+}

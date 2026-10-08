@@ -1,3 +1,20 @@
+# v0.6.1 — Release-Gate Closure（门槛未全部通过）
+
+开始 HEAD `5caf5ce291d16f8b31606268f3d8e9ae13a99433`，最终 runtime 修复 `d962fcc`，测试/捕获工具产物 HEAD `6eb9cec7b0d07193c02d96786b0477fb3ad572fd`。完整提交、数据、复现见 [v0.6.1 validation](docs/v061-validation.md)。
+
+- fast shutdown 在 barrier 前取消 queries/metadata/maintenance；记录十个阶段和每卷耗时，不 detach 后台工作，不发布 partial reconciliation，不推进未持久化 overlay 的 cursor。
+- 子树删除走现有 child links；元数据目录局部 EPERM/消失/yield 不再触发整卷 bootstrap。任务记录 overlapping process resource spans、bounded history 和指数 one-shot backoff。
+- warning/critical 更换 cache storage；16,384→2,048→1，actual capacity 24,576→3,072→1。独立进程 physical 48.31–48.53→31.38–31.45→31.49–31.55 MiB；旧引用释放，RSS 未立即下降。
+- Controlled quiet 60 秒 CPU 0.000156s、disk/logical writes 0；create/delete/rename p95 21.51/21.48/21.66ms。只读 492 万 entries 600 秒 CPU 0.000247s、disk writes 0、logical writes 20,480 bytes、physical 7.50MiB。
+- **最终原生 live 双卷 quiet 20 分钟失败**：generation 稳定窗口 0s，未启动 600 秒 idle。非 quiet 1169.955s 中 CPU 118.621s，disk/logical writes 0，末端 physical 44.86MiB/RSS107.03MiB；不能称真实 quiet gate 通过。
+- 自动全局暂停/恢复状态通过；owned namespace 12/12，metadata-size verify 超时。reconciliation resource yield 仍升级整卷恢复，被高频验证查询重复打断；菜单单卷暂停/恢复未取得最终人工确认。失败数据保留，不用局部 UI 37-byte 文件观测替代完整 verify。
+- 两次受控 restart 的 fixture verify 均通过，仍发生 full scan；第二次两卷 Live/live，query metadata_complete 全 true。两次正常 UI quit 引擎 6.80/109.35ms、exit=0，四个 base 哈希不变。恢复峰值 physical 2045.11MiB，终态88.42MiB；不是 quiet 测量，cold builder 峰值仍未解决。
+- 普通/ASan/TSan 各 240 项（220 Core+20 Desktop），0 failures；默认可选 mount skip 单独 opt-in 后通过。release app 0.6.1/601 和签名通过。代码 [CI 37638402037](https://github.com/SWHsz/apfs-everything/actions/runs/37638402037) 四项全绿；报告提交的最终 HEAD CI 在 Issue #1/#3 记录并复核。
+
+**#1/#3 保持 OPEN，没有创建 v0.6 release tag。** #2 外置索引存储未实现；NSv2/metav1 不变，cold namespace builder 未重写。下一步先解决局部 deferred reconciliation 与恢复最终收敛，再决定 #2。
+
+---
+
 # v0.6.0 — Lightweight Residency and Resource-Aware Maintenance
 
 本轮实现与验收记录见 [v0.6 validation](docs/v06-validation.md)。开始 HEAD `9295470152dbb4dd309d2582611111f01ea2074b`，main、工作区干净；用户授权完成后推送并验证最终 CI。
