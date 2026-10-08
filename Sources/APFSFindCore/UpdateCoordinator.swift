@@ -80,6 +80,22 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private let maintenanceCancellation = CancellationToken()
     private let exitReconciliation = CancellationToken()
     private var exitBatchIncomplete = false // single writer
+    private var reconcileEntriesSinceRelief = 0
+    private var reconcileReliefQueued = false
+    private func noteReconcileAllocation(_ entries: Int) {
+        reconcileEntriesSinceRelief = min(32_768,reconcileEntriesSinceRelief + entries)
+        guard reconcileEntriesSinceRelief >= 32_768, !reconcileReliefQueued else { return }
+        reconcileReliefQueued = true
+        // Run after the chunk's arrays and autorelease pool have gone away.
+        // Release only unused allocator pages; no live index/cache is discarded.
+        writer.async { [weak self] in
+            guard let self else { return }
+            self.reconcileReliefQueued = false; self.reconcileEntriesSinceRelief = 0
+            guard !self.exitFrozen, !self.exitReconciliation.isCancelled else { return }
+            self.metrics.record("reconcile_allocator_relief_runs")
+            self.metrics.record("reconcile_allocator_released_bytes",by:Int(apfs_release_allocator_pages()))
+        }
+    }
     private var activeQueries: [UUID:SearchCancellationToken] = [:]
     public func cancelQueries() {
         let tokens = stateLock.withLock { Array(activeQueries.values) }
@@ -432,7 +448,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
         if schedule {
             writer.asyncAfter(deadline: .now() + configuration.microBatchWindowMilliseconds / 1000) { [weak self] in
-                self?.drain()
+                autoreleasepool { self?.drain() }
             }
         }
     }
@@ -742,6 +758,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             attempted += 1
             let plan = reconciler.prepare(directory, subtree: subtree, force: true,
                 cancellation: exitReconciliation, directoryLimit: mayRebuild ? 32 : nil)
+            noteReconcileAllocation(plan.enumeratedEntries)
             if plan.cancelled { exitBatchIncomplete = true; continue }
             if case .invalidated = plan.result, mayRebuild {
                 requestRebuild(invalidated: true, reason: "reconcile_hard_limit")
@@ -777,6 +794,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             for directory in pending where seen.insert(directory).inserted {
                 let plan = reconciler.prepare(directory, force: true, cancellation: exitReconciliation,
                     directoryLimit: mayRebuild ? 32 : nil)
+                noteReconcileAllocation(plan.enumeratedEntries)
                 if plan.cancelled { exitBatchIncomplete = true; return .deferred([.init(path: directory)]) }
                 switch plan.result {
                 case .invalidated(let reason):
@@ -831,7 +849,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.deferredTimer = nil; self.metrics.set("deferred_reconcile_timer", to: 0)
-            self.drainDeferredReconcile()
+            autoreleasepool { self.drainDeferredReconcile() }
         }
         deferredTimer = item; metrics.set("deferred_reconcile_timer", to: 1)
         writer.asyncAfter(deadline: .now()+delay, execute: item)
@@ -850,6 +868,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
               let work = deferredReconcile.popReady(now: ProcessInfo.processInfo.systemUptime) {
             let plan = reconciler.prepare(work.root, subtree: work.subtree, force: true,
                 cancellation: exitReconciliation, frontier: work.frontier, directoryLimit: max(1,32-directories))
+            noteReconcileAllocation(plan.enumeratedEntries)
             if plan.cancelled {
                 exitBatchIncomplete = true
                 for old in batch.map({$0.0}) + [work] { _ = deferredReconcile.insert(old) }
@@ -1076,7 +1095,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { completed.signal(); return }
             self.watcher.flush()
-            self.writer.async { [weak self] in self?.drain(); completed.signal() }
+            self.writer.async { [weak self] in autoreleasepool { self?.drain() }; completed.signal() }
         }
         return completed.wait(timeout: .now() + timeout) == .success
     }

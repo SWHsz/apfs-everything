@@ -19,6 +19,7 @@ public struct ReconciliationPlan: Sendable {
     public var retryParents: [String] = []
     public var failures: [ReconciliationFailure] = []
     public var completedDirectories: [String] = []
+    public var enumeratedEntries = 0
     public var frontier: [ReconcileFrontier] = []
     public var result: ReconcileResult {
         if requiresRebuild {
@@ -123,6 +124,7 @@ public final class DirectoryReconciler {
                 // A parent replacement tombstones its old subtree during apply.
                 // Reinsert all observed descendants even if their inode survives.
                 let existing = work.reset ? [] : index.children(of: directory)
+                plan.enumeratedEntries += actual.count + existing.count
                 let changes = Self.diff(existing:existing,actual:actual)
                 guard changes.count <= 100_000-plan.mutations.count else {
                     plan.mutations.removeAll(); plan.requiresRebuild = true

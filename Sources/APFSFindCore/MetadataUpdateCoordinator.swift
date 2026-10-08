@@ -44,6 +44,20 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private var renameOrigins: [String:(String,FileMetadataValue,EntryKind,MetadataQuerySnapshot)] = [:]
     private var recent: [String:FileMetadataValue] = [:]
     private var localIOFailures: [String:Int] = [:]
+    private var entriesSinceRelief = 0
+    private var reliefQueued = false
+    private func noteBulkAllocation(_ count: Int) {
+        entriesSinceRelief = min(32_768,entriesSinceRelief + count)
+        guard entriesSinceRelief >= 32_768, !reliefQueued else { return }
+        reliefQueued = true
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.reliefQueued = false; self.entriesSinceRelief = 0
+            guard !self.scanCancellation.isCancelled else { return }
+            self.metrics.record("metadata_reconcile_allocator_relief_runs")
+            self.metrics.record("metadata_reconcile_allocator_released_bytes",by:Int(apfs_release_allocator_pages()))
+        }
+    }
     private func needsRecovery(_ path: String, code: Int32) -> Bool {
         if code == EOVERFLOW { return true }
         let count = min(3, (localIOFailures[path] ?? 0) + 1)
@@ -166,7 +180,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         // forever. New paths coalesce into the existing one-shot batch.
         guard work == nil else { return }
         epoch &+= 1; let current = epoch
-        let item = DispatchWorkItem { [weak self] in guard let self, self.epoch == current, !self.stopped else { return }; self.work = nil; self.drain() }
+        let item = DispatchWorkItem { [weak self] in guard let self, self.epoch == current, !self.stopped else { return }; self.work = nil; autoreleasepool { self.drain() } }
         work = item; queue.asyncAfter(deadline:.now()+delay,execute:item)
     }
     private func drain() {
@@ -255,6 +269,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 metrics.record("metadata_parent_bulk_enumerations")
                 do {
                     let entries = try readDirectory(parent,scanCancellation)
+                    noteBulkAllocation(entries.count)
                     localIOFailures.removeValue(forKey:parent)
                     let requested = Set(groups[parent] ?? [])
                     var found = Set<String>()
@@ -307,6 +322,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 }
                 do {
                     let entries = try readDirectory(directory,scanCancellation)
+                    noteBulkAllocation(entries.count)
                     localIOFailures.removeValue(forKey:directory)
                     metrics.record("metadata_subtree_bulk_enumerations"); subtreeDirectories += 1
                     for entry in entries {
