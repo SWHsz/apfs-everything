@@ -182,13 +182,26 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   }
   public func entry(at path: String) -> NamespaceEntry? {
     guard let canonical = PathCanonicalizer.normalize(path) else { return nil }
+    // Borrow only the immutable mapping. Holding an overlay capture here forces
+    // large COW copies during concurrent updates; walking paths while holding
+    // the writer lock instead can delay replay behind metadata readers.
+    let capturedBase = lock.withLock { base }
+    let candidate = capturedBase.flatMap {
+      PathResolverSnapshot(base:$0,metrics:metrics).resolve(canonical)
+    }
     return lock.withLock {
       if let bootstrap { return bootstrap.entry(at:canonical) }
-      // Point lookups must report authoritative absence. Unrelated mutations
-      // cannot exhaust retries and turn an existing entry into nil. Borrow the
-      // overlay only while locked, avoiding COW copies across writer updates.
-      guard let ref = reference(canonical) else { return nil }
-      return item(ref,path:canonical)
+      guard base === capturedBase else {
+        // Rare publication race: resolve against the newly installed mapping.
+        guard let ref = reference(canonical) else { return nil }
+        return item(ref,path:canonical)
+      }
+      // Every live overlay entry is keyed by its exact canonical path. Directory
+      // removal/replacement clears attached delta descendants and tombstones
+      // its whole immutable subtree, so checking these scalar results is enough.
+      if let id = deltaPaths[canonical],let entry = delta[id] { return entry.entry }
+      guard case .base(let id)? = candidate,!deleted(id) else { return nil }
+      return item(.base(id),path:canonical)
     }
   }
   public func childCount(of path:String) -> Int? {

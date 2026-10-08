@@ -39,6 +39,31 @@ final class HybridIndexTests: XCTestCase {
     token.cancel();XCTAssertEqual(finished.wait(timeout:.now()+2),.success)
     XCTAssertEqual(falseMissing,0,"an unrelated generation change is not authoritative absence")
   }
+  func testPointLookupRemainsCoherentDuringBasePublication() throws {
+    let a = try TemporaryTree(cache:true),b = try TemporaryTree(cache:true),v = snapshotIdentity()
+    let first = FileIndex(root:v.root),second = FileIndex(root:v.root),path = v.root+"/stable/file"
+    first.apply([.upsert(.init(path:path,kind:.file,fileID:40))])
+    second.apply([.upsert(.init(path:path,kind:.file,fileID:50))])
+    let one = try base(a,index:first),two = try base(b,index:second),index = HybridIndex(base:one)
+    let started = DispatchSemaphore(value:0),finished = DispatchSemaphore(value:0)
+    DispatchQueue.global().async {
+      index.install(base:two);started.signal()
+      for i in 0..<1000 {index.install(base:i.isMultiple(of:2) ? one : two)}
+      finished.signal()
+    }
+    XCTAssertEqual(started.wait(timeout:.now()+2),.success)
+    var badResults = 0
+    for _ in 0..<1000 {
+      let id = index.entry(at:path)?.fileID
+      if id != 40 && id != 50 {badResults += 1}
+    }
+    XCTAssertEqual(finished.wait(timeout:.now()+2),.success)
+    XCTAssertEqual(badResults,0)
+    index.apply([.remove(v.root+"/stable"),.upsert(.init(path:v.root+"/stable",kind:.directory,fileID:60)),
+                 .upsert(.init(path:v.root+"/stable/new",kind:.file,fileID:70))])
+    XCTAssertNil(index.entry(at:path));XCTAssertEqual(index.entry(at:v.root+"/stable/new")?.fileID,70)
+    XCTAssertEqual(index.entry(at:v.root+"/stable")?.fileID,60)
+  }
   func testSubtreeDeletionVisitsOnlyAttachedDeltaAndPreservesOldCapture() throws {
     let cache=try TemporaryTree(cache:true),v=snapshotIdentity(),ram=FileIndex(root:v.root)
     ram.apply([.upsert(.init(path:v.root+"/gone",kind:.directory)),.upsert(.init(path:v.root+"/gone/base-child",kind:.directory)),.upsert(.init(path:v.root+"/other",kind:.directory))])
