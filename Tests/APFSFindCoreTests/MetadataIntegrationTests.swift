@@ -13,6 +13,7 @@ final class MetadataIntegrationTests: XCTestCase {
         var policy = MetadataUpdatePolicy(); policy.debounceSeconds = 60
         let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,policy:policy,
             invalidated:{ metrics.record("test_recoveries") },readDirectory:{ path,_ in
+                if path != parent { return [] }
                 metrics.record("test_reads")
                 if metrics.snapshot()["test_reads",default:0] <= 2 { throw ScannerError(path:path,code:EIO) }
                 return [.init(namespace:.init(path:child,kind:.file),metadata:.init(logicalSize:456))]
