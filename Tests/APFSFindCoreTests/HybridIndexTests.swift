@@ -15,6 +15,30 @@ final class HybridIndexTests: XCTestCase {
       cursor: 7, store: s)
     return try XCTUnwrap(s.reader(expectedIdentity: v).mappedBase)
   }
+  func testStablePointLookupNeverReportsMissingDuringUnrelatedMutations() throws {
+    let cache = try TemporaryTree(cache:true),v = snapshotIdentity(),ram = FileIndex(root:v.root)
+    let stable = v.root + (1...12).map { "/stable-long-component-\($0)" }.joined() + "/target"
+    ram.apply([.upsert(.init(path:stable,kind:.file,fileID:17))])
+    let index = HybridIndex(base:try base(cache,index:ram)),token = CancellationToken()
+    let started = DispatchSemaphore(value:0),finished = DispatchSemaphore(value:0),churn = v.root+"/unrelated"
+    DispatchQueue.global().async {
+      var id:UInt64 = 100
+      index.apply([.upsert(.init(path:churn,kind:.file,fileID:id))]);started.signal()
+      // Finite input: a permanently reacquiring writer can starve an NSLock
+      // reader, obscuring the false-absence regression under test.
+      for _ in 0..<10_000 {
+        if token.isCancelled {break}
+        id += 1;index.apply([.upsert(.init(path:churn,kind:.file,fileID:id))])
+      }
+      finished.signal()
+    }
+    defer {token.cancel()}
+    XCTAssertEqual(started.wait(timeout:.now()+2),.success)
+    var falseMissing = 0
+    for _ in 0..<2000 {if index.entry(at:stable)?.fileID != 17 {falseMissing += 1}}
+    token.cancel();XCTAssertEqual(finished.wait(timeout:.now()+2),.success)
+    XCTAssertEqual(falseMissing,0,"an unrelated generation change is not authoritative absence")
+  }
   func testSubtreeDeletionVisitsOnlyAttachedDeltaAndPreservesOldCapture() throws {
     let cache=try TemporaryTree(cache:true),v=snapshotIdentity(),ram=FileIndex(root:v.root)
     ram.apply([.upsert(.init(path:v.root+"/gone",kind:.directory)),.upsert(.init(path:v.root+"/gone/base-child",kind:.directory)),.upsert(.init(path:v.root+"/other",kind:.directory))])

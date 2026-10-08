@@ -83,7 +83,13 @@ public actor MultiVolumeCoordinator {
     let tasks=await maintenance.snapshot()
     let now=ProcessInfo.processInfo.systemUptime
     let taskData=tasks.map { ["kind":$0.kind.rawValue,"volume":$0.volumeID.uuidString,"urgency":String(describing:$0.urgency),"queued_ms":(($0.startedAt ?? now)-$0.queuedAt)*1000,"running_ms":$0.startedAt.map{(now-$0)*1000} as Any? ?? NSNull()] as [String:Any] }
-    return try JSONSerialization.data(withJSONObject:["tasks":taskData,"maintenance_history":maintenance.telemetry.snapshot,"maintenance_metrics":maintenance.metrics.snapshot(),"volumes":values,"process":ProcessResourceSample.capture().dictionary,"cpu_sampler_active":SystemResourceSignals.shared.isSampling,"cpu_sampler":SystemResourceSignals.shared.metrics.snapshot()],options:[.sortedKeys])
+    let environment:Any = maintenance.signals.map { s -> [String:Any] in
+      let v=s.current()
+      return ["memory_pressure":v.memoryPressure.rawValue,"thermal_state":v.thermalState.rawValue,
+              "low_power_mode":v.lowPowerMode,"cpu_idle_ewma":v.cpuIdleEWMA as Any? ?? NSNull(),
+              "active_queries":v.activeQueries,"interactive":v.interactive,"last_interaction_age":v.lastInteractionAge]
+    } ?? NSNull()
+    return try JSONSerialization.data(withJSONObject:["tasks":taskData,"resource_environment":environment,"maintenance_history":maintenance.telemetry.snapshot,"maintenance_metrics":maintenance.metrics.snapshot(),"volumes":values,"process":ProcessResourceSample.capture().dictionary,"cpu_sampler_active":SystemResourceSignals.shared.isSampling,"cpu_sampler":SystemResourceSignals.shared.metrics.snapshot()],options:[.sortedKeys])
   }
   public func sessionsStream() -> AsyncStream<[VolumeSessionSnapshot]> { observations.stream(initial: sessionsSnapshot()) }
   private func publish() { observations.send(sessionsSnapshot()) }

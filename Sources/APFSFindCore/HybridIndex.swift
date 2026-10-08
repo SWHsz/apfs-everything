@@ -181,13 +181,15 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     }
   }
   public func entry(at path: String) -> NamespaceEntry? {
-    if let bootstrap = lock.withLock({bootstrap}) { return bootstrap.entry(at:path) }
-    for _ in 0..<2 {
-      guard let captured = capture() else { return nil }
-      let value = captured.resolver.entry(path)
-      if lock.withLock({base?.header.snapshotUUID == captured.base.header.snapshotUUID && generation == captured.generation}) { return value }
+    guard let canonical = PathCanonicalizer.normalize(path) else { return nil }
+    return lock.withLock {
+      if let bootstrap { return bootstrap.entry(at:canonical) }
+      // Point lookups must report authoritative absence. Unrelated mutations
+      // cannot exhaust retries and turn an existing entry into nil. Borrow the
+      // overlay only while locked, avoiding COW copies across writer updates.
+      guard let ref = reference(canonical) else { return nil }
+      return item(ref,path:canonical)
     }
-    return nil
   }
   public func childCount(of path:String) -> Int? {
     guard let captured = capture(),let ref = captured.resolver.resolveDirectory(path) else { return nil }
