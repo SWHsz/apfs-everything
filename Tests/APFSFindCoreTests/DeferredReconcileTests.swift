@@ -22,6 +22,30 @@ private final class InjectedParents: DirectoryReading, @unchecked Sendable {
 }
 
 final class DeferredReconcileTests: XCTestCase {
+    func testImmediateMetadataHintsOnlyDescribePublishedChangedParents() throws {
+        for changed in [false,true] {
+            let tree = try TemporaryTree(),device = try VolumeIdentity.discover(root:tree.root).deviceID
+            let index = FileIndex(root:tree.root),hints = Metrics(),root = tree.root
+            let old = NamespaceEntry(path:tree.path("old"),kind:.file,deviceID:device,fileID:11)
+            let new = NamespaceEntry(path:tree.path("new"),kind:.file,deviceID:device,fileID:12)
+            index.apply([.upsert(old)])
+            let reader = ScopeBoundaryReader([root:changed ? [old,new] : [old]])
+            let core = try UpdateCoordinator(root:root,index:index,maintenanceScheduler:.init(),reconcileReader:reader,
+                replayStarter:{cursor,deliver in deliver([.init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:cursor)])})
+            defer {core.stop()}
+            core.setMetadataHandlers(scan:{_,_ in},events:{events in
+                for event in events where event.id == 0 && event.path == root {hints.record("parents")}
+            })
+            try core.start(restored:index,cursor:10);XCTAssertTrue(core.waitUntilLive())
+            core.enqueue([.init(path:tree.path("unknown"),flags:UInt32(kFSEventStreamEventFlagItemRenamed),id:11)])
+            XCTAssertTrue(core.flushEvents())
+            XCTAssertEqual(hints.snapshot()["parents",default:0],changed ? 1 : 0)
+            XCTAssertEqual(index.entry(at:new.path) != nil,changed)
+            XCTAssertEqual(core.metrics.snapshot()["deferred_reconcile_yields",default:0],0)
+            XCTAssertEqual(core.metrics.snapshot()["full_scans",default:0],0)
+        }
+    }
+
     func testNestedDirtyInputRepairsOnlyRequestedScopes() throws {
         let tree = try TemporaryTree(), device = try VolumeIdentity.discover(root:tree.root).deviceID
         let index = FileIndex(root:tree.root)

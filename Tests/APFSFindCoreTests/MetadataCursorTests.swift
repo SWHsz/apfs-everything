@@ -4,6 +4,42 @@ import XCTest
 @testable import APFSFindCore
 
 final class MetadataCursorTests: XCTestCase {
+    func testMetadataAheadReplayRepairsNewAndRenamedNamespacePaths() throws {
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache:true)
+        try tree.file("old")
+        let identity = try VolumeIdentity.discover(root:tree.root)
+        let scan = try BulkScanner(root:tree.root).scan(), ram = FileIndex(root:tree.root)
+        ram.apply(scan.entries.map(IndexMutation.upsert))
+        let store = try SnapshotStore(directory:cache.root,identity:identity)
+        _ = try SnapshotV2Writer.write(source:.ram(ram,ram.stats().generation),identity:identity,
+            generation:ram.stats().generation,cursor:100,store:store)
+        let base = try XCTUnwrap(store.reader(expectedIdentity:identity).mappedBase)
+        _ = try MetadataWriter.write(store:store,base:base.header,cursor:200,
+            value:{_ in .init(logicalSize:0,modificationTimeNanoseconds:0)})
+        let born = tree.path("born"), renamed = tree.path("renamed"), old = tree.path("old"), root = tree.root
+        try Data(repeating:1,count:37).write(to:URL(fileURLWithPath:born))
+        try FileManager.default.moveItem(atPath:old,toPath:renamed)
+        let actual = try BulkScanner(root:root).scan().scannedEntries
+        let expected = Dictionary(uniqueKeysWithValues:actual.map {($0.namespace.path,$0.metadata)})
+        let coordinator = try PersistentIndexCoordinator(root:root,cacheDirectory:cache.root,
+            maintenanceScheduler:.init(),replayStarter:{_,deliver in
+                // These IDs need namespace replay, but precede the independent
+                // metadata floor. The old sidecar has neither destination.
+                deliver([.init(path:born,flags:UInt32(kFSEventStreamEventFlagItemCreated|kFSEventStreamEventFlagItemIsFile),id:150),
+                    .init(path:old,flags:UInt32(kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemIsFile),id:151),
+                    .init(path:renamed,flags:UInt32(kFSEventStreamEventFlagItemRenamed|kFSEventStreamEventFlagItemIsFile),id:152),
+                    .init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:201)])
+            })
+        defer {coordinator.stop(policy:.fast)}
+        try coordinator.start();XCTAssertTrue(coordinator.waitUntilLive());coordinator.flushMetadata()
+        XCTAssertNotNil(coordinator.index.entry(at:born));XCTAssertNotNil(coordinator.index.entry(at:renamed))
+        XCTAssertNil(coordinator.index.entry(at:old))
+        XCTAssertEqual(coordinator.metadata.capture().value(path:born),expected[born])
+        XCTAssertEqual(coordinator.metadata.capture().value(path:renamed),expected[renamed])
+        XCTAssertEqual(coordinator.metrics.snapshot()["full_scans",default:0],0)
+        XCTAssertEqual(coordinator.metrics.snapshot()["rebuild_requests_resource_yield",default:0],0)
+    }
+
     func testNamespaceAheadAndMetadataAheadUseIndependentFloors() throws {
         for (namespaceCursor,metadataCursor) in [(UInt64(100),UInt64(80)),(80,100)] {
             let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true); try tree.file("target")

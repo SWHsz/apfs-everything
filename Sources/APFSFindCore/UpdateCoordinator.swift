@@ -780,12 +780,32 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     generation: target.stats().generation, subtree: subtree, frontier: plan.frontier))
             }
         }
-        target.apply(mutations)
+        publishMutations(mutations,into:target)
         if mayRebuild, (target as? HybridIndex)?.requiresRecovery == true { requestRebuild(invalidated:true,reason:"overlay_safety_limit") } // One short write lock for the entire event microbatch.
         // A vanished directory cannot be treated as an empty successful read.
         // Its surviving parent determines removal/type replacement authoritatively.
         repairDirectories(Array(retryParents), into: target, using: reconciler, mayRebuild: mayRebuild)
         if countMetrics { metrics.record("direct_patches", by: patches.count) }
+    }
+
+    /// Namespace and metadata have independent replay floors. A newly published
+    /// path may precede the metadata floor while being absent from its sidecar.
+    /// Repair changed parents after every runtime publication, including the
+    /// immediate and parent-repair paths, rather than relying on the raw event.
+    private func publishMutations(_ mutations:[IndexMutation],into target:any NamespaceIndex) {
+        target.apply(mutations)
+        guard target === index,!mutations.isEmpty else {return}
+        let parents = Set(mutations.map { mutation -> String in
+            switch mutation {
+            case .upsert(let entry):return PathCanonicalizer.parent(of:entry.path)
+            case .remove(let path):return PathCanonicalizer.parent(of:path)
+            }
+        })
+        metrics.record("metadata_changed_parent_hints",by:parents.count)
+        // ID 0 bypasses overlap without inventing a durable event cursor.
+        metadataEventHandler?(parents.map {
+            .init(path:$0,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:0)
+        })
     }
 
     @discardableResult private func repairDirectories(_ paths: [String], into target: any NamespaceIndex,
@@ -812,10 +832,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     }
                     metrics.record("reconcile_local_io_failures", by: failures.count)
                 case .deferred(let frontier):
-                    target.apply(plan.mutations)
+                    publishMutations(plan.mutations,into:target)
                     if mayRebuild { deferReconcile(.init(root: directory, reason: .parentRepair,
                         minimumCursor: lastProcessedEventID, generation: target.stats().generation, frontier: frontier)) }
-                case .completed: target.apply(plan.mutations)
+                case .completed: publishMutations(plan.mutations,into:target)
                 }
                 parents.formUnion(plan.retryParents)
             }
@@ -886,7 +906,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 // Bound aggregate retained mutations in addition to the atomic
                 // per-parent cap. Roots remain disjoint across these flushes.
                 if mutations.count + plan.mutations.count > 4096 {
-                    index.apply(mutations); mutations.removeAll(keepingCapacity:false)
+                    publishMutations(mutations,into:index); mutations.removeAll(keepingCapacity:false)
                     if (index as? HybridIndex)?.requiresRecovery == true {
                         requestRebuild(invalidated:true,reason:"overlay_safety_limit"); return
                     }
@@ -896,7 +916,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             directories += max(1,plan.completedDirectories.count)
             batch.append((work,plan))
         }
-        index.apply(mutations)
+        publishMutations(mutations,into:index)
         if (index as? HybridIndex)?.requiresRecovery == true {
             requestRebuild(invalidated:true,reason:"overlay_safety_limit"); return
         }
@@ -923,22 +943,6 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     generation:index.stats().generation))
                 if rebuildScheduled || building { return }
             }
-            // Only published changes require a second metadata pass. Repeating
-            // every unchanged directory in a replayed tree can flood its inbox.
-            // ID 0 hints bypass overlap without inventing a cursor.
-            let published: [IndexMutation]
-            if case .locallyFailed = plan.result { published = [] }
-            else { published = plan.mutations }
-            let changedParents = Set(published.map { mutation -> String in
-                switch mutation {
-                case .upsert(let entry): return PathCanonicalizer.parent(of:entry.path)
-                case .remove(let path): return PathCanonicalizer.parent(of:path)
-                }
-            })
-            metrics.record("metadata_changed_parent_hints",by:changedParents.count)
-            metadataEventHandler?(changedParents.map {
-                .init(path:$0,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:0)
-            })
         }
         updateDeferredMetrics()
         if before != index.stats().generation { mutationHandler?() }

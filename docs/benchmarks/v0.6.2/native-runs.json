@@ -2939,6 +2939,350 @@
       "exit": -15,
       "stop_method": "SIGTERM of verified owned failed candidate while Mac locked; not normal UI Quit",
       "stop_base_hashes_unchanged": true
+    },
+    {
+      "label": "watcher-final",
+      "capture_sha256": "31cb6ca173674c3d700c59be711afcb1a977f4dc0a90772fb43774350c17f586",
+      "stages": [
+        "active_live_start",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_progress",
+        "active_live_gate",
+        "active_live_end",
+        "queries",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "global_pause_resume",
+        "fixture_verify",
+        "convergence_rounds",
+        "actions_diagnostics",
+        "native_actions_complete"
+      ],
+      "active_live_gate": {
+        "blockers": [],
+        "passed": true,
+        "resource_delta": {
+          "compressed_before_bytes": 17154048,
+          "compressed_bytes": 31457280,
+          "disk_bytes_read": 211365888,
+          "disk_bytes_written": 53444608,
+          "idle_wakeups": 1128,
+          "interrupt_wakeups": 4325,
+          "logical_bytes_read": null,
+          "logical_bytes_written": 54018304,
+          "major_faults": 5806,
+          "minor_faults": 74161,
+          "pageins": 5806,
+          "peak_compressed_bytes": 1466761216,
+          "peak_rss_bytes": 1916878848,
+          "rss_after_bytes": 282951680,
+          "rss_before_bytes": 1156317184,
+          "system_cpu_seconds": 69.5573139999999,
+          "user_cpu_seconds": 263.64339099999995,
+          "wall_ms": 1200712.7298749983
+        },
+        "samples": 235,
+        "seconds": 1200.7126724167028
+      },
+      "convergence_rounds": {
+        "passed": false,
+        "rounds": 10
+      },
+      "rounds": [
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 1,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 2.7338369166245684
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 2,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 2.0081650416832417
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 3,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 2.52981787500903
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 4,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 1.7050524583319202
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": false,
+          "mismatches": [
+            {
+              "actual_mtime_ns": null,
+              "actual_size": null,
+              "expected_mtime_ns": 1791483167789510279,
+              "expected_size": 42,
+              "slot": "born-5"
+            },
+            {
+              "actual_mtime_ns": null,
+              "actual_size": null,
+              "expected_mtime_ns": 1791480895780236307,
+              "expected_size": 0,
+              "slot": "renamed-5"
+            }
+          ],
+          "passed": false,
+          "resource_yield_rebuild_delta": 0,
+          "round": 5,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 30.176726083271205
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 6,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 1.1250978333409876
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 7,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 2.290857291663997
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 8,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 2.8566165417432785
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 9,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 0.9260919167427346
+        },
+        {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_size_mtime_correct": true,
+          "mismatches": [],
+          "passed": true,
+          "resource_yield_rebuild_delta": 0,
+          "round": 10,
+          "scope": "owned fixture; not a full filesystem consistency assertion",
+          "seconds": 2.233358833240345
+        }
+      ],
+      "summary_physical_max_MiB": 116.98661804199219,
+      "summary_physical_end_MiB": 116.89286804199219,
+      "startup_lifetime_peak_MiB": 2116.487350463867,
+      "volumes": [
+        {
+          "ordinal": 1,
+          "entries": 3287138,
+          "state": "Live",
+          "delta": {
+            "fsevents_received": 2934,
+            "fsevents_processed": 2934,
+            "directory_reconciles": 375,
+            "metadata_subtree_bulk_enumerations": 113,
+            "metadata_parent_bulk_enumerations": 4707,
+            "full_scans": 0,
+            "rebuild_requests_resource_yield": 0,
+            "reconcile_allocator_relief_runs": 62,
+            "reconcile_allocator_released_bytes": 0,
+            "metadata_reconcile_allocator_relief_runs": 62,
+            "metadata_reconcile_allocator_released_bytes": 0
+          },
+          "max_summary_gauges": {
+            "deferred_reconcile_roots": 1,
+            "deferred_reconcile_frontier": 2,
+            "deferred_reconcile_bytes": 466,
+            "pending_metadata_lookups": 921,
+            "inbox_estimated_bytes": 1439
+          },
+          "end_gauges": {
+            "deferred_reconcile_roots": 0,
+            "deferred_reconcile_frontier": 0,
+            "deferred_reconcile_bytes": 0,
+            "pending_metadata_lookups": 0,
+            "inbox_estimated_bytes": 0
+          },
+          "maps": {
+            "directory_map_entries": 0,
+            "materialized_file_entries": 0,
+            "metadata_directory_map_entries": 0
+          }
+        },
+        {
+          "ordinal": 2,
+          "entries": 1566452,
+          "state": "Live",
+          "delta": {
+            "fsevents_received": 105,
+            "fsevents_processed": 105,
+            "directory_reconciles": 3,
+            "metadata_subtree_bulk_enumerations": 0,
+            "metadata_parent_bulk_enumerations": 0,
+            "full_scans": 0,
+            "rebuild_requests_resource_yield": 0,
+            "reconcile_allocator_relief_runs": 0,
+            "reconcile_allocator_released_bytes": 0,
+            "metadata_reconcile_allocator_relief_runs": 0,
+            "metadata_reconcile_allocator_released_bytes": 0
+          },
+          "max_summary_gauges": {
+            "deferred_reconcile_roots": 0,
+            "deferred_reconcile_frontier": 0,
+            "deferred_reconcile_bytes": 0,
+            "pending_metadata_lookups": 1,
+            "inbox_estimated_bytes": 0
+          },
+          "end_gauges": {
+            "deferred_reconcile_roots": 0,
+            "deferred_reconcile_frontier": 0,
+            "deferred_reconcile_bytes": 0,
+            "pending_metadata_lookups": 0,
+            "inbox_estimated_bytes": 0
+          },
+          "maps": {
+            "directory_map_entries": 0,
+            "materialized_file_entries": 0,
+            "metadata_directory_map_entries": 0
+          }
+        }
+      ],
+      "head": "e11b233ff450ce7b99cdc21b4c99eec357f95072",
+      "desktop_sha256": "08673992370f87997787cc1abb8235fa2ef12c2d9119093fad23737738ddf297",
+      "capture_bytes": 919464,
+      "capture_status": "immutable prefix through native_actions_complete; failed B candidate remains running pending verified replacement",
+      "menu_verification": "pending locked Mac; no UI acceptance",
+      "restart": "not performed",
+      "overall_gate": "failed B: round 5 metadata unknown after 30 seconds; E passed",
+      "startup_recovery": {
+        "each_volume_full_scans": 1,
+        "each_volume_queue_overflows": 1,
+        "cause": "bounded namespace inbox overflow during replay; not resource yield",
+        "cold_builder_unchanged": true
+      },
+      "physical_measurement": "summary max is 30-second diagnostics; all 235 five-second gate observations remained <=150 MiB. Lifetime startup peak is separate.",
+      "active_maintenance": [
+        {
+          "kind": "metadataCheckpoint",
+          "urgency": "opportunistic",
+          "running_ms": 2384.862416773103,
+          "queued_ms": 14197.749041602947,
+          "restart_count": 0,
+          "termination_reason": "completed",
+          "peak_physical_bytes": 76990768,
+          "disk_bytes_written": 53444608
+        }
+      ]
     }
   ]
 }
