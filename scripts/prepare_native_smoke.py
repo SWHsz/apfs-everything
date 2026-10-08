@@ -30,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed-cache", type=Path, default=Path.home()/"Library/Application Support/apfsfind/indexes")
     parser.add_argument("--restart", type=Path, help="existing owned manifest, after the first app has quit")
+    parser.add_argument("--active-live", action="store_true", help="v0.6.2 real-volume convergence window")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     if args.restart:
@@ -54,7 +55,7 @@ def main():
     fixture = repo/".build"/("apfsfind-fixture-"+token)
     fixture.mkdir(mode=0o700)
     for i in range(1, 13):
-        (fixture/("apfsfindv061fixture-base-"+str(i))).write_bytes(b"")
+        (fixture/("apfsfindv062fixture-base-"+str(i))).write_bytes(b"")
     for source in sorted(args.seed_cache.glob("*.apfsidx")):
         assert source.is_file() and not source.is_symlink(), "invalid seed snapshot"
         destination = cache/source.name
@@ -64,13 +65,13 @@ def main():
     cli = repo/".build/release/apfsfind"
     with (report/"prepare.stdout").open("w") as out, (report/"prepare.stderr").open("w") as err:
         checked_run([str(cli), "_prepare-resource-smoke", str(cache)], stdout=out, stderr=err, cwd=repo)
-    app = report/"APFSFindV061Smoke.app"
+    app = report/"APFSFindV062Smoke.app"
     shutil.copytree(repo/"dist/APFSFind.app", app, symlinks=True)
     plist = app/"Contents/Info.plist"
     info = plistlib.loads(plist.read_bytes())
-    bundle_id = "local.apfsfind.desktop.smoke.v061."+token.lower()
-    info.update(CFBundleIdentifier=bundle_id, CFBundleName="APFSFindV061Smoke", CFBundleDisplayName="APFSFindV061Smoke",
-                APFSFindResourceSmoke=True, APFSFindTestRoots=["/", "/Volumes/Data 1"],
+    bundle_id = "local.apfsfind.desktop.smoke.v062."+token.lower()
+    info.update(CFBundleIdentifier=bundle_id, CFBundleName="APFSFindV062Smoke", CFBundleDisplayName="APFSFindV062Smoke",
+                APFSFindResourceSmoke=True, APFSFindActiveLiveSmoke=args.active_live, APFSFindTestRoots=["/", "/Volumes/Data 1"],
                 APFSFindTestCache=str(cache), APFSFindOwnedFixture=str(fixture))
     plist.write_bytes(plistlib.dumps(info))
     checked_run(["codesign", "--force", "--deep", "--sign", "-", str(app)])

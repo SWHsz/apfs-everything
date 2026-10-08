@@ -6,6 +6,27 @@ import XCTest
 @testable import APFSFindCore
 
 final class MetadataIntegrationTests: XCTestCase {
+    func testTransientAuthoritativeIORecoversLocallyBeforeBootstrapThreshold() {
+        let root = "/metadata-io-retry", parent = root + "/parent", child = parent + "/child"
+        let ns = FileIndex(root:root), meta = MetadataIndexCoordinator(), metrics = Metrics()
+        ns.apply([.upsert(.init(path:parent,kind:.directory)), .upsert(.init(path:child,kind:.file))])
+        var policy = MetadataUpdatePolicy(); policy.debounceSeconds = 60
+        let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,policy:policy,
+            invalidated:{ metrics.record("test_recoveries") },readDirectory:{ path,_ in
+                metrics.record("test_reads")
+                if metrics.snapshot()["test_reads",default:0] <= 2 { throw ScannerError(path:path,code:EIO) }
+                return [.init(namespace:.init(path:child,kind:.file),metadata:.init(logicalSize:456))]
+            })
+        defer { updater.stop() }
+        updater.enqueue([.init(path:parent,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:101)])
+        for _ in 0..<2 {
+            updater.flush(); XCTAssertGreaterThan(updater.pendingCount,0); XCTAssertEqual(meta.processedCursor,0)
+        }
+        updater.flush()
+        XCTAssertEqual(updater.pendingCount,0); XCTAssertEqual(meta.processedCursor,101)
+        XCTAssertEqual(meta.capture().value(path:child).logicalSize,456)
+        XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],0)
+    }
     func testParentPermissionAndDisappearanceDoNotRestartWholeMetadataBuild() throws {
         let root = "/metadata-error-test", parent = root+"/protected", path = parent+"/child"
         for code in [EPERM,EACCES,ENODATA,ENOENT,ENOTDIR,ELOOP,EXDEV,EIO,EOVERFLOW] {
@@ -20,19 +41,21 @@ final class MetadataIntegrationTests: XCTestCase {
             for id in 1...20 {
                 updater.enqueue([.init(path:parent,flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:UInt64(id))]); updater.flush()
             }
-            let fatal = code == EIO || code == EOVERFLOW
-            XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],fatal ? 20 : 0,"errno \(code)")
+            XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],code == EOVERFLOW ? 20 : (code == EIO ? 1 : 0),"errno \(code)")
             XCTAssertEqual(metrics.snapshot()["metadata_parent_errno_\(code)"],20)
             XCTAssertEqual(meta.capture().value(path:path).logicalSize,123,"unreadable metadata must survive")
-            XCTAssertEqual(updater.pendingCount,0)
+            if code == EIO {
+                XCTAssertGreaterThan(updater.pendingCount,0)
+                XCTAssertEqual(meta.processedCursor,0,"failed local work pins metadata cursor")
+            } else { XCTAssertEqual(updater.pendingCount,0) }
             updater.stop()
         }
-        // A root failure still requires authoritative recovery.
+        // Root permission exclusions are local too; stream identity invalidation is separate.
         let ns = FileIndex(root:root), meta = MetadataIndexCoordinator(), metrics = Metrics()
         let updater = MetadataUpdateCoordinator(root:root,device:0,index:meta,namespace:ns,metrics:metrics,
             invalidated:{ metrics.record("test_recoveries") },readDirectory:{ directory,_ in throw ScannerError(path:directory,code:EPERM) })
         updater.enqueue([.init(path:root+"/missing",flags:UInt32(kFSEventStreamEventFlagItemXattrMod),id:1)]); updater.flush()
-        XCTAssertEqual(metrics.snapshot()["test_recoveries"],1); updater.stop()
+        XCTAssertEqual(metrics.snapshot()["test_recoveries",default:0],0); updater.stop()
     }
 
     func testParentQueryYieldRetriesWithoutMetadataBootstrapOrCursorAdvance() {
@@ -233,4 +256,29 @@ final class MetadataIntegrationTests: XCTestCase {
 private final class MetadataFaultSwitch: @unchecked Sendable {
     private let lock = NSLock(); private var value = false
     var enabled:Bool { get { lock.withLock { value } } set { lock.withLock { value = newValue } } }
+}
+
+extension MetadataIntegrationTests {
+    func testContinuousInputCannotPostponeMetadataBatchForever() throws {
+        let tree = try TemporaryTree(); try tree.file("mutable")
+        let ns = FileIndex(root: tree.root), meta = MetadataIndexCoordinator(), metrics = Metrics()
+        var policy = MetadataUpdatePolicy(); policy.debounceSeconds = 0.05
+        let updater = MetadataUpdateCoordinator(root: tree.root, device: try BulkScanner(root: tree.root).rootDeviceID(),
+            index: meta, namespace: ns, metrics: metrics, policy: policy, invalidated: { metrics.record("unexpected_invalidation") })
+        defer { updater.stop() }
+        let token = CancellationToken(), finished = DispatchSemaphore(value: 0), path = tree.path("mutable")
+        DispatchQueue.global().async {
+            var id: UInt64 = 1
+            while !token.isCancelled {
+                updater.enqueue([.init(path: path, flags: UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemIsFile), id: id)])
+                id += 1; Thread.sleep(forTimeInterval: 0.005)
+            }
+            finished.signal()
+        }
+        defer { token.cancel(); XCTAssertEqual(finished.wait(timeout: .now()+2), .success) }
+        waitFor("metadata runs before continuous input stops", timeout: 2) {
+            metrics.snapshot()["metadata_lookups", default: 0] >= 3
+        }
+        XCTAssertEqual(metrics.snapshot()["unexpected_invalidation", default: 0], 0)
+    }
 }

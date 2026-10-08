@@ -60,9 +60,11 @@ final class EngineUsabilityTests: XCTestCase, @unchecked Sendable {
                   .init(path: tree.root, flags: UInt32(kFSEventStreamEventFlagMustScanSubDirs), id: 1),
                   .init(path: tree.root, flags: history, id: 102)])
     XCTAssertTrue(core.flushEvents())
-    // A root-wide special event invalidates the whole batch. The old base
-    // remains searchable until the replacement scan closes its replay gap.
-    waitFor("root recovery installs fresh namespace") { core.metrics.snapshot()["full_rebuilds"] == 1 }
+    // A scoped scan request repairs the root even when its event ID overlaps
+    // the replay floor; it does not mean the stream history was lost.
+    waitFor("root repair converges") { core.index.entry(at: tree.path("new")) != nil && core.currentState == .live }
+    XCTAssertEqual(core.metrics.snapshot()["full_rebuilds", default: 0], 0)
+    XCTAssertEqual(core.metrics.snapshot()["full_scans", default: 0], 0)
     XCTAssertNotNil(core.index.entry(at: tree.path("new")))
     XCTAssertTrue(try core.verify().isConsistent)
     XCTAssertGreaterThan(core.metrics.snapshot()["replay_special_events_applied", default: 0], 0)

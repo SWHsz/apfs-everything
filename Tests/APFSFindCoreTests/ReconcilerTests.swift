@@ -18,7 +18,7 @@ final class ReconcilerTests: XCTestCase {
         XCTAssertEqual(metrics.snapshot()["reconcile_old_children_limit"],1)
     }
     func testInvalidatedAndRootDirtyBatchesSkipObsoleteScopes() throws {
-        for invalidatingFlag in [kFSEventStreamEventFlagUserDropped,kFSEventStreamEventFlagMustScanSubDirs] {
+        for invalidatingFlag in [kFSEventStreamEventFlagUserDropped,kFSEventStreamEventFlagKernelDropped] {
             let tree = try TemporaryTree(); try tree.directory("scope"); try tree.file("scope/old")
             let scanner = BulkScanner(root:tree.root), scan = try scanner.scan(), index = FileIndex(root:tree.root)
             index.apply(scan.entries.map { .upsert($0) }); let before = index.snapshotPaths()
@@ -88,10 +88,11 @@ final class ReconcilerTests: XCTestCase {
         defer { core.stop() }
         let flags = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile)
         core.process([.init(path:tree.path("a/new"),flags:flags),.init(path:tree.path("b/new"),flags:flags)],into:index,using:reconciler,countMetrics:true,mayRebuild:true)
-        XCTAssertEqual(reader.reads,1)
+        XCTAssertEqual(reader.reads,2)
         XCTAssertEqual(index.snapshotPaths(),before)
-        XCTAssertEqual(core.currentState,.dirty)
-        XCTAssertEqual(core.metrics.snapshot()["reconcile_deferred_to_rebuild"],1)
+        XCTAssertEqual(core.metrics.snapshot()["deferred_reconcile_roots"],2)
+        XCTAssertEqual(core.metrics.snapshot()["rebuild_requests_reconcile_error",default:0],0)
+        XCTAssertEqual(core.metrics.snapshot()["full_scans",default:0],0)
     }
     func testDirectoryDiffAndTypeChange() {
         let old = [NamespaceEntry(path: "/test/remove", kind: .directory), .init(path: "/test/type", kind: .file)]
@@ -230,7 +231,7 @@ final class ReconcilerTests: XCTestCase {
     func testFailureRecoveryDistinguishesExclusionsRacesAndUnexpectedIO() {
         for code in [EACCES, EPERM, ENODATA] {
             XCTAssertEqual(DirectoryReconciler.recovery(for: code, isRoot: false), .preserveUnreadable)
-            XCTAssertEqual(DirectoryReconciler.recovery(for: code, isRoot: true), .rebuild)
+            XCTAssertEqual(DirectoryReconciler.recovery(for: code, isRoot: true), .preserveUnreadable)
         }
         for code in [ENOENT, ENOTDIR, ELOOP, EXDEV] {
             XCTAssertEqual(DirectoryReconciler.recovery(for: code, isRoot: false), .retryParent)

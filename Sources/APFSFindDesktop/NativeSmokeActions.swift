@@ -36,28 +36,55 @@ enum NativeSmokeActions {
       let attributes=try? FileManager.default.attributesOfItem(atPath:path),
       (attributes[.ownerAccountID] as? NSNumber)?.uint32Value==getuid(),
       attributes[.type] as? FileAttributeType == .typeDirectory else {emit("fixture_error",["reason":"missing owned fixture"]);return}
-    let prefix="apfsfindv061fixture-"
+    let prefix="apfsfindv062fixture-"
     do {
-      if !restart {
-        await coordinator.setAllPaused(.userGlobal,enabled:true)
-        let paused=await coordinator.sessionsSnapshot().allSatisfy{$0.state == .paused}
-        try Data(repeating:0,count:37).write(to:URL(fileURLWithPath:path+"/"+prefix+"born"))
-        try FileManager.default.removeItem(atPath:path+"/"+prefix+"base-1")
-        try FileManager.default.moveItem(atPath:path+"/"+prefix+"base-2",toPath:path+"/"+prefix+"renamed")
-        await coordinator.setAllPaused(.userGlobal,enabled:false)
-        emit("global_pause_resume",["paused":paused,"owned_changes":3])
+      let before = try await ActiveLiveSmoke.sample(coordinator)
+      let pressure = restart ? nil : Task {
+        while !Task.isCancelled {
+          _ = await coordinator.search(.init(query:"f",limit:51))
+          await Task.yield()
+        }
       }
-      let expected=Set((3...12).map{path+"/"+prefix+"base-\($0)"}+[path+"/"+prefix+"born",path+"/"+prefix+"renamed"])
-      let end=ProcessInfo.processInfo.systemUptime+120
-      var actual=Set<String>(),metadataCorrect=false
-      while ProcessInfo.processInfo.systemUptime<end {
-        let result=await coordinator.search(.init(query:prefix,limit:100,sort:.init(key:.size)))
-        actual=Set(result.hits.map(\.path).filter{$0.hasPrefix(path+"/")})
-        metadataCorrect=result.hits.first{$0.path==path+"/"+prefix+"born"}?.logicalSize==37
-        if actual==expected && metadataCorrect {break}
-        do {try await Task.sleep(for:.milliseconds(100))} catch{return}
+      defer { pressure?.cancel() }
+      var allPassed = true
+      for round in restart ? [10] : Array(1...10) {
+        if !restart {
+          await coordinator.setAllPaused(.userGlobal,enabled:true)
+          let paused=await coordinator.sessionsSnapshot().allSatisfy{$0.state == .paused}
+          try Data(repeating:0,count:37+round).write(to:URL(fileURLWithPath:path+"/"+prefix+"born-\(round)"))
+          try FileManager.default.removeItem(atPath:path+"/"+prefix+(round == 1 ? "base-1" : "born-\(round-1)"))
+          try FileManager.default.moveItem(atPath:path+"/"+prefix+(round == 1 ? "base-2" : "renamed-\(round-1)"),toPath:path+"/"+prefix+"renamed-\(round)")
+          try Data(repeating:1,count:100+round).write(to:URL(fileURLWithPath:path+"/"+prefix+"base-3"))
+          await coordinator.setAllPaused(.userGlobal,enabled:false)
+          emit("global_pause_resume",["round":round,"paused":paused,"owned_changes":4])
+        }
+        let expected=Set((3...12).map{path+"/"+prefix+"base-\($0)"}+[path+"/"+prefix+"born-\(round)",path+"/"+prefix+"renamed-\(round)"])
+        var values:[String:(UInt64,Int64)]=[:]
+        for file in expected {
+          var st=stat()
+          guard lstat(file,&st)==0 else {throw POSIXError(.ENOENT)}
+          values[file]=(UInt64(st.st_size),Int64(st.st_mtimespec.tv_sec)*1_000_000_000+Int64(st.st_mtimespec.tv_nsec))
+        }
+        let start=ProcessInfo.processInfo.systemUptime, end=start+30
+        var actual=Set<String>(),metadataCorrect=false
+        while ProcessInfo.processInfo.systemUptime<end {
+          let result=await coordinator.search(.init(query:prefix,limit:100,sort:.init(key:.size)))
+          let hits=result.hits.filter{$0.path.hasPrefix(path+"/")}
+          actual=Set(hits.map(\.path))
+          metadataCorrect=hits.count==expected.count && hits.allSatisfy { hit in
+            guard let value=values[hit.path] else{return false}
+            return hit.logicalSize==value.0 && hit.modificationTimeNanoseconds==value.1
+          }
+          if actual==expected && metadataCorrect {break}
+          do {try await Task.sleep(for:.milliseconds(100))} catch{return}
+        }
+        let after=try await ActiveLiveSmoke.sample(coordinator)
+        let passed=actual==expected && metadataCorrect && after.fullScans==before.fullScans && after.resourceYieldRebuilds==before.resourceYieldRebuilds
+        allPassed = allPassed && passed
+        emit(restart ? "restart_fixture_verify":"fixture_verify",["round":round,"passed":passed,"expected":expected.count,"actual":actual.count,"metadata_size_mtime_correct":metadataCorrect,"seconds":ProcessInfo.processInfo.systemUptime-start,"full_scans_delta":after.fullScans-before.fullScans,"resource_yield_rebuild_delta":after.resourceYieldRebuilds-before.resourceYieldRebuilds,"scope":"owned fixture; not a full filesystem consistency assertion"])
       }
-      emit(restart ? "restart_fixture_verify":"fixture_verify",["passed":actual==expected && metadataCorrect,"expected":expected.count,"actual":actual.count,"metadata_size_correct":metadataCorrect,"scope":"all owned fixture paths; not a full filesystem consistency assertion"])
+      pressure?.cancel()
+      emit("convergence_rounds",["passed":allPassed,"rounds":restart ? 1 : 10])
       if let data=try? await coordinator.resourceDiagnosticsJSON(){FileHandle.standardOutput.write(Data(("[resource-smoke] "+(restart ? "restart_diagnostics":"actions_diagnostics")+" "+String(decoding:data,as:UTF8.self)+"\n").utf8))}
     } catch {emit("fixture_error",["reason":String(describing:error)])}
     emit(restart ? "restart_complete":"native_actions_complete",[:])

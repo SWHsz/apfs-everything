@@ -83,6 +83,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       try VolumeIdentity.discover(root: $0)
     },
     maintenanceScheduler: MaintenanceScheduler = .shared,
+    reconcileReader: (any DirectoryReading)? = nil,
     replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)? = nil,
     fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() }
   ) throws {
@@ -102,7 +103,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     core = try UpdateCoordinator(
       root: canonical, configuration: configuration,
       excludedRoots: ephemeral ? [] : [self.cacheDirectory], index: runtime,
-      identityProvider: identityProvider, fenceProvider:fenceProvider, maintenanceScheduler: maintenanceScheduler, replayStarter: replayStarter)
+      identityProvider: identityProvider, fenceProvider:fenceProvider, maintenanceScheduler: maintenanceScheduler, reconcileReader: reconcileReader, replayStarter: replayStarter)
     compactionScheduler = CompactionScheduler(metrics: core.metrics)
     metadataScheduler = CompactionScheduler(metrics: Metrics())
     (runtime as? HybridIndex)?.setMetadataSource(metadata)
@@ -776,7 +777,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       namespaceGeneration:index.stats().generation,metadataGeneration:meta.overlay.generation)
     result.namespaceEvents=core.queuedEventCount+counts["active_batch_size",default:0]
     result.metadataPending=metadataUpdater?.pendingCount ?? 0
-    result.dirtyDirectories=counts["active_dirty_directories",default:0]
+    result.dirtyDirectories=counts["active_dirty_directories",default:0]+counts["deferred_reconcile_roots",default:0]
     result.compactionScheduled = ![.idle,.stopped].contains(compactionScheduler.currentState) || lock.withLock {active || compacting}
     result.metadataMaintenanceScheduled = ![.idle,.stopped].contains(metadataScheduler.currentState) || lock.withLock {metadataBootstrapActive || metadataCheckpointActive}
     return result

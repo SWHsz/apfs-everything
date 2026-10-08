@@ -113,7 +113,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     public func readDirectory(_ path: String, rootDeviceID: UInt64,
                               cancellation: CancellationToken) throws -> [NamespaceEntry] {
         let entries = try readScannedDirectory(path, rootDeviceID: rootDeviceID,
-                                        cancellation: Optional(cancellation),maximumEntries:100_000, yieldToQueries:true).map(\.namespace)
+                                        cancellation: Optional(cancellation),maximumEntries:100_000, yieldToQueries:false).map(\.namespace)
         guard !cancellation.isCancelled else { throw ScannerError(path: path, code: ECANCELED) }
         return entries
     }

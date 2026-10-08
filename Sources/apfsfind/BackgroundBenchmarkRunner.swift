@@ -28,6 +28,7 @@ struct BackgroundBenchmarkRunner {
     let samplerStart = SystemResourceSignals.shared.metrics.snapshot()
     let samplerInactiveBefore = !SystemResourceSignals.shared.isSampling
     let idleStart = ProcessResourceSample.capture(), idleCounts = p.metrics.snapshot()
+    let idleNamespace = p.index.stats().generation, idleMetadata = p.metadata.capture().overlay.generation
     let idleWall = ProcessInfo.processInfo.systemUptime
     Thread.sleep(forTimeInterval: idleSeconds)
     let idle = ProcessResourceSample.capture().delta(since: idleStart)
@@ -35,6 +36,15 @@ struct BackgroundBenchmarkRunner {
     let idleEndCounts = p.metrics.snapshot()
     let samplerInactiveAfter = !SystemResourceSignals.shared.isSampling
     let samplerEnd = SystemResourceSignals.shared.metrics.snapshot()
+    let quietPassed = (idle["user_cpu_seconds"] as? Double ?? .infinity) + (idle["system_cpu_seconds"] as? Double ?? .infinity) <= 0.05 &&
+      (idle["disk_bytes_written"] as? UInt64) == 0 && (idle["logical_bytes_written"] as? UInt64) == 0 &&
+      samplerInactiveBefore && samplerInactiveAfter &&
+      samplerEnd["cpu_sampler_wakeups",default:0] == samplerStart["cpu_sampler_wakeups",default:0] &&
+      idleEndCounts["compaction_scheduler_wakeups",default:0] == idleCounts["compaction_scheduler_wakeups",default:0] &&
+      idleEndCounts["metadata_scheduler_wakeups",default:0] == idleCounts["metadata_scheduler_wakeups",default:0] &&
+      idleEndCounts["deferred_reconcile_timer",default:0] == 0 && idleCounts["deferred_reconcile_timer",default:0] == 0 &&
+      p.index.stats().generation == idleNamespace && p.metadata.capture().overlay.generation == idleMetadata &&
+      idleEndCounts["fsevents_received",default:0] == idleCounts["fsevents_received",default:0]
     var timings: [String: [Double]] = ["create": [], "rename": [], "delete": []]
     for i in 0..<100 {
       var start = ProcessInfo.processInfo.systemUptime
@@ -61,6 +71,9 @@ struct BackgroundBenchmarkRunner {
     let report: [String: Any] = [
       "benchmark": "background", "scope": "window-independent engine; native window lifecycle is validated separately",
       "idle_seconds": idleDuration, "idle_resources": idle,
+      "controlled_quiet_passed":quietPassed,
+      "idle_deferred_reconcile_timer_before":idleCounts["deferred_reconcile_timer",default:0],
+      "idle_deferred_reconcile_timer_after":idleEndCounts["deferred_reconcile_timer",default:0],
       "idle_compaction_scheduler_wakeups": idleEndCounts["compaction_scheduler_wakeups", default: 0] - idleCounts["compaction_scheduler_wakeups", default: 0],
       "idle_metadata_scheduler_wakeups":idleEndCounts["metadata_scheduler_wakeups",default:0]-idleCounts["metadata_scheduler_wakeups",default:0],
       "cpu_sampler_inactive_before":samplerInactiveBefore,"cpu_sampler_inactive_after":samplerInactiveAfter,
@@ -71,6 +84,6 @@ struct BackgroundBenchmarkRunner {
       "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction"
     ]
     print(String(decoding: try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
-    return retained && verified ? 0 : 1
+    return retained && verified && quietPassed ? 0 : 1
   }
 }

@@ -216,12 +216,12 @@ final class LiveUpdateIntegrationTests: XCTestCase {
         XCTAssertTrue(coordinator.waitUntilLive())
         coordinator.index.apply([.upsert(.init(path: tree.path("ghost"), kind: .file))])
         coordinator.enqueue([
-            .init(path: tree.root, flags: UInt32(kFSEventStreamEventFlagMustScanSubDirs)),
+            .init(path: tree.root, flags: UInt32(kFSEventStreamEventFlagUserDropped)),
             .init(path: tree.root, flags: UInt32(kFSEventStreamEventFlagHistoryDone))
         ])
         waitFor("history complete while waiting for recovery") {
             let status = coordinator.startupStatus()
-            return status.historyDone && status.state == .dirty && status.recoveryReason == "root_subtree_event"
+            return status.historyDone && status.state == .dirty && status.recoveryReason == "stream_invalidated"
         }
         XCTAssertFalse(coordinator.waitUntilLive(timeout: 0.01))
         XCTAssertFalse(coordinator.startupStatus().automaticRebuildSuspended)

@@ -80,12 +80,18 @@ final class StatusBarController: NSObject, NSMenuDelegate {
   @objc private func toggleLogin() { try? login.setEnabled(!login.enabled) }
   @objc private func toggleGlobal() {
     let enabled = !globalPaused
-    Task { await coordinator.setAllPaused(.userGlobal, enabled: enabled) }
+    Task {
+      await coordinator.setAllPaused(.userGlobal, enabled: enabled)
+      if Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.")==true { NativeSmokeActions.emit("menu_global",["paused":enabled]) }
+    }
   }
   @objc private func toggleVolume(_ sender: NSMenuItem) {
     guard let id = sender.representedObject as? UUID else { return }
     let paused = sessions.first { $0.id == id }?.pauseReasons.contains(.userVolume) ?? false
-    Task { await coordinator.setVolumePaused(id, enabled: !paused) }
+    Task {
+      await coordinator.setVolumePaused(id, enabled: !paused)
+      if Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.")==true { NativeSmokeActions.emit("menu_volume",["volume":id.uuidString,"paused":!paused]) }
+    }
   }
   func stop() {
     enabled = false; observation?.cancel(); observation = nil

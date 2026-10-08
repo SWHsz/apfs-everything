@@ -20,6 +20,7 @@ public final class CancellationToken: @unchecked Sendable {
 }
 
 public struct APFSFindConfiguration: Sendable {
+    public var deferredReconcileLimit: Int
     public var latencyMilliseconds: Double
     public var workerCount: Int
     public var directPatchBatchLimit: Int
@@ -34,7 +35,8 @@ public struct APFSFindConfiguration: Sendable {
                 microBatchWindowMilliseconds: Double = 5,
                 fullRebuildMinInterval: TimeInterval = 30,
                 rebuildDebounceMilliseconds: Double = 100, maxPendingEvents: Int = 100_000,
-                maxConsecutiveRebuildFailures: Int = 8) {
+                maxConsecutiveRebuildFailures: Int = 8, deferredReconcileLimit: Int = 4096) {
+        self.deferredReconcileLimit = max(1, min(16_384, deferredReconcileLimit))
         self.latencyMilliseconds = min(1000, max(1, latencyMilliseconds))
         self.workerCount = min(16, max(1, workerCount))
         self.directPatchBatchLimit = max(1, directPatchBatchLimit)

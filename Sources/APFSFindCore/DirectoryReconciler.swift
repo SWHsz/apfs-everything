@@ -18,6 +18,15 @@ public struct ReconciliationPlan: Sendable {
     public var requiresRebuild = false
     public var retryParents: [String] = []
     public var failures: [ReconciliationFailure] = []
+    public var completedDirectories: [String] = []
+    public var frontier: [ReconcileFrontier] = []
+    public var result: ReconcileResult {
+        if requiresRebuild {
+            let fatal = failures.filter { DirectoryReconciler.recovery(for: $0.code, isRoot: false) == .rebuild }
+            return fatal.isEmpty ? .invalidated(.hardLimit) : .locallyFailed(fatal)
+        }
+        return frontier.isEmpty ? .completed : .deferred(frontier)
+    }
     public init() {}
 }
 
@@ -28,11 +37,12 @@ public final class DirectoryReconciler {
         case cancelled, preserveUnreadable, retryParent, rebuild
     }
 
-    /// Permission/dataless exclusions apply to individual descendants, just as
-    /// in the initial scan. A vanished/replaced directory is repaired by reading
-    /// its parent; only root failures and unexpected I/O invalidate the scan.
+    /// Permission/dataless exclusions preserve unreadable scopes, including the
+    /// root. A vanished descendant is repaired through its parent; a vanished
+    /// root or repeated authoritative I/O failure requires recovery.
     static func recovery(for code: Int32, isRoot: Bool) -> FailureRecovery {
         if code == ECANCELED { return .cancelled }
+        if [EACCES, EPERM, ENODATA].contains(code) { return .preserveUnreadable }
         if isRoot { return .rebuild }
         switch code {
         case EACCES, EPERM, ENODATA: return .preserveUnreadable
@@ -60,25 +70,33 @@ public final class DirectoryReconciler {
     }
 
     public func prepare(_ path: String, subtree: Bool = false, force: Bool = false,
-                        cancellation: CancellationToken = CancellationToken()) -> ReconciliationPlan {
+                        cancellation: CancellationToken = CancellationToken(),
+                        frontier: [ReconcileFrontier]? = nil, directoryLimit: Int? = nil,
+                        timeLimit: TimeInterval = 0.02) -> ReconciliationPlan {
         var plan = ReconciliationPlan()
         defer { if cancellation.isCancelled { metrics.record("reconcile_cancellations") } }
         if cancellation.isCancelled { plan.cancelled = true; return plan }
         guard PathCanonicalizer.isWithin(path, root: index.root), !cancellation.isCancelled else { return plan }
         let before = BulkScanner.directoryStamp(path)
-        if !force && !subtree, let before, stamps[path] == before {
+        if frontier == nil && !force && !subtree, let before, stamps[path] == before {
             metrics.record("mtime_gate_skips")
             plan.gateSkipped = true
             return plan
         }
-        var pending: [(path: String, reset: Bool)] = [(path, false)]
+        var pending = frontier ?? [ReconcileFrontier(path: path)]
+        var completed = 0
         var seen = Set<String>()
         var retryParents = Set<String>()
         let start = ProcessInfo.processInfo.systemUptime
         while let work = pending.popLast(), !cancellation.isCancelled {
-            if ProcessInfo.processInfo.systemUptime-start >= 0.05 {
+            // Complete at least one bounded, atomic parent diff even during
+            // continuous queries; yield between directories, never mid-listing.
+            if completed > 0, let directoryLimit {
                 let resources = SystemResourceSignals.shared.current()
-                if resources.activeQueries > 0 || resources.memoryPressure == .critical { plan.mutations.removeAll(); plan.requiresRebuild = true; metrics.record("reconcile_resource_yields"); break }
+                if completed >= directoryLimit || ProcessInfo.processInfo.systemUptime-start >= timeLimit ||
+                    resources.activeQueries > 0 || resources.memoryPressure == .critical {
+                    pending.append(work); metrics.record("reconcile_chunk_yields"); break
+                }
             }
             if plan.mutations.count >= 100_000 || pending.count > 100_000 {
                 // Atomic diffs cannot grow without bound; recovery keeps the old
@@ -111,21 +129,21 @@ public final class DirectoryReconciler {
                     metrics.record("reconcile_mutation_limit"); break
                 }
                 plan.mutations += changes
-                metrics.record("directory_reconciles")
+                metrics.record("directory_reconciles"); completed += 1; plan.completedDirectories.append(directory)
                 let old = Dictionary(existing.map { ($0.path, $0) }, uniquingKeysWith: { _, b in b })
                 for child in actual where BulkScanner.shouldTraverse(entry: child, rootDeviceID: rootDeviceID) {
                     guard PathCanonicalizer.parent(of:child.path) == directory else { continue }
                     // New/type-replaced directories can already contain a complete tree.
                     let replaced = old[child.path]?.hasSameDirectoryIdentity(as: child) != true
                     if subtree || work.reset || replaced {
-                        pending.append((child.path, work.reset || replaced))
+                        pending.append(.init(path: child.path, reset: work.reset || replaced))
                     }
                 }
                 let endStamp = BulkScanner.directoryStamp(directory)
                 if let startStamp, startStamp == endStamp { if stamps.count >= 8192 { stamps.removeAll(keepingCapacity:false) }; stamps[directory] = startStamp }
                 else { stamps.removeValue(forKey: directory) }
             } catch is MaintenanceYield {
-                plan.mutations.removeAll(); plan.requiresRebuild = true; metrics.record("reconcile_resource_yields"); break
+                pending.append(work); metrics.record("reconcile_resource_yields"); break
             } catch {
                 if cancellation.isCancelled { break }
                 let code = (error as? ScannerError)?.code ?? EIO
@@ -157,6 +175,7 @@ public final class DirectoryReconciler {
             }
         }
         if cancellation.isCancelled { plan.mutations.removeAll(); plan.cancelled = true }
+        if !plan.cancelled && !plan.requiresRebuild { plan.frontier = pending }
         plan.retryParents = PathCanonicalizer.minimalRoots(Array(retryParents))
         if subtree { metrics.record("subtree_reconciles") }
         return plan

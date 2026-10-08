@@ -98,10 +98,9 @@ final class PersistentRecoveryTests: XCTestCase {
         XCTAssertNotNil(next.index.entry(at: tree.path("uncheckpointed")))
     }
 
-    func testWrappedDroppedAndRootMustScanPublishRebuiltSnapshot() throws {
+    func testWrappedAndDroppedPublishRebuiltSnapshot() throws {
         try requireFSEvents()
-        for flag in [kFSEventStreamEventFlagEventIdsWrapped, kFSEventStreamEventFlagKernelDropped,
-                     kFSEventStreamEventFlagMustScanSubDirs] {
+        for flag in [kFSEventStreamEventFlagEventIdsWrapped, kFSEventStreamEventFlagKernelDropped] {
             let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
             try tree.file("seed"); try cold(tree, cache)
             let c = try make(tree, cache)
@@ -117,6 +116,25 @@ final class PersistentRecoveryTests: XCTestCase {
             XCTAssertEqual(c.stats().dictionary["startup_mode"] as? String, "rebuild_fallback")
             XCTAssertTrue(try c.verify().isConsistent)
         }
+    }
+
+    func testRootMustScanRepairsWithoutReplacingSnapshot() throws {
+        try requireFSEvents()
+        let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
+        try tree.file("seed"); try cold(tree, cache)
+        let c = try make(tree, cache)
+        defer { c.stop(policy: .fast) }
+        try c.start(); XCTAssertTrue(c.waitUntilLive()); assertWarm(c)
+        let store = try SnapshotStore(directory: cache.root, identity: VolumeIdentity.discover(root: tree.root))
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: store.path))
+        c.index.apply([.upsert(.init(path: tree.path("ghost"), kind: .file))])
+        c.core.enqueue([.init(path: tree.root, flags: UInt32(kFSEventStreamEventFlagMustScanSubDirs))])
+        waitFor("scoped repair removes ghost") { c.index.entry(at: tree.path("ghost")) == nil && c.currentState == .live }
+        XCTAssertTrue(try c.verify().isConsistent)
+        assertWarm(c)
+        XCTAssertEqual(c.metrics.snapshot()["full_rebuilds", default: 0], 0)
+        XCTAssertEqual(c.metrics.snapshot()["snapshot_checkpoints", default: 0], 0)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: store.path)), bytes)
     }
 
     func testHistoryIdentityChangeAndCorruptionFallback() throws {

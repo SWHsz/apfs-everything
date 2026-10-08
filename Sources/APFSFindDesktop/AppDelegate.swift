@@ -61,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       if Bundle.main.object(forInfoDictionaryKey:"APFSFindSmokeRestart") as? Bool == true {
         await NativeSmokeActions.run(coordinator,restart:true);return
       }
+      if Bundle.main.object(forInfoDictionaryKey:"APFSFindActiveLiveSmoke") as? Bool == true {
+        await ActiveLiveSmoke.run(coordinator); return
+      }
       let deadline = ProcessInfo.processInfo.systemUptime+1200
       var gate=QuietStateGate(), result=QuietGateResult(quiet:false,stableSeconds:0,blockers:["startup"])
       var nextReport=ProcessInfo.processInfo.systemUptime+30

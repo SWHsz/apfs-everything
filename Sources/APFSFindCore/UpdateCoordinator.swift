@@ -118,6 +118,12 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var inboxHistoryDone = false
     private var drainScheduled = false
     private var rootDevice: UInt64 = 0
+    private var deferredReconcile: DeferredReconcileQueue
+    private var deferredTimer: DispatchWorkItem?
+    private var deliveredCursorHighWatermark: UInt64 = 0
+    private var recoveryRetryCount = 0
+    private var recoveryTimer: DispatchWorkItem?
+    private let reconcileReader: (any DirectoryReading)?
     private var reconciler: DirectoryReconciler?
     private var rebuildScheduled = false
     private var building = false
@@ -144,6 +150,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 identityProvider: @escaping @Sendable (String) throws -> VolumeIdentity = { try VolumeIdentity.discover(root: $0) },
                 fenceProvider: @escaping @Sendable (VolumeIdentity) -> UInt64 = { $0.currentEventID() },
                 maintenanceScheduler: MaintenanceScheduler = .shared,
+                reconcileReader: (any DirectoryReading)? = nil,
                 replayStarter: (@Sendable (UInt64, @escaping @Sendable ([FileSystemEvent]) -> Void) throws -> Void)? = nil) throws {
         self.root = try PathCanonicalizer.canonicalRoot(root)
         self.index = index ?? FileIndex(root: self.root)
@@ -153,6 +160,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
         self.fenceProvider = fenceProvider
         self.maintenanceScheduler = maintenanceScheduler
         self.replayStarter = replayStarter
+        self.reconcileReader = reconcileReader
+        self.deferredReconcile = .init(capacity: configuration.deferredReconcileLimit)
     }
     public var queuedEventCount:Int { inboxLock.withLock { inbox.count } }
     public var currentState: IndexState { stateLock.withLock { state } }
@@ -251,7 +260,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         guard !cancellation.isCancelled else { throw CocoaError(.userCancelled) }
         let identity = try supplied ?? identityProvider(root)
         let e0 = cursor ?? fenceProvider(identity)
-        writer.sync { volumeIdentity = identity; lastProcessedEventID = e0; replayFloor = e0; rootDevice = identity.deviceID }
+        writer.sync { volumeIdentity = identity; deliveredCursorHighWatermark = e0; lastProcessedEventID = e0; replayFloor = e0; rootDevice = identity.deviceID }
         metrics.set("replay_floor_event_id", to: Int(clamping: e0))
         if let restored {
             index.installSnapshot(restored)
@@ -260,7 +269,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             // Upgrade exclusion policy without changing v2 or scanning files.
             // Removing an existing excluded subtree is an ordinary RAM delta.
             index.apply(excludedRoots.map { .remove($0) })
-            reconciler = DirectoryReconciler(scanner: makeScanner(), index: index,
+            reconciler = DirectoryReconciler(scanner: reconcileReader ?? makeScanner(), index: index,
                 rootDeviceID: rootDevice, metrics: metrics)
             baseAvailable = true; setReadiness(.baseReady)
             setState(.replaying)
@@ -313,7 +322,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             scanObserver?(result.scannedEntries,initial)
             try baseInstaller?(initial, e0, identity)
             rootDevice = result.rootDeviceID
-            reconciler = DirectoryReconciler(scanner: scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
+            reconciler = DirectoryReconciler(scanner: reconcileReader ?? scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
             let s = index.stats()
             timer.cancel()
             progressQueue.sync {}
@@ -375,7 +384,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             pauseRequested = true
             watcher.flush(); watcher.stop()
         }
-        writer.sync { drain(); setState(.paused) }
+        writer.sync { drain(); deferredTimer?.cancel(); deferredTimer = nil; metrics.set("deferred_reconcile_timer", to: 0); setState(.paused) }
         metrics.record("pause_requests")
     }
     public func resume(additionalCursor: UInt64? = nil) throws {
@@ -396,7 +405,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             setState(.replaying)
             return additionalCursor.map { min(lastProcessedEventID,$0) } ?? lastProcessedEventID
         }
-        if let cursor { try startWatcher(since: cursor); metrics.record("resume_replays") }
+        if let cursor { try startWatcher(since: cursor); metrics.record("resume_replays"); writer.async { [weak self] in self?.scheduleDeferredReconcile() } }
     }
     /// The callback copies only event information and queues it. No filesystem I/O.
     public func enqueue(_ events: [FileSystemEvent]) {
@@ -452,6 +461,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
             observation.send(readinessSnapshot())
         }
         if finished { stateLock.withLock { historyDone = true } }
+        if let id = events.map(\.id).filter({ $0 != UInt64.max }).max() {
+            deliveredCursorHighWatermark = max(deliveredCursorHighWatermark, id)
+        }
         if building {
             let room = max(0, configuration.maxPendingEvents - rebuildEvents.count)
             rebuildEvents.append(contentsOf: events.prefix(room))
@@ -507,10 +519,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if before != index.stats().generation { mutationHandler?() }
         // Include content-only IDs, but never advance a durable cursor ahead of
         // the namespace mutations corresponding to this batch.
-        if !exitBatchIncomplete, currentState != .dirty && currentState != .rebuilding, let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
+        if deferredReconcile.count == 0, !exitBatchIncomplete, currentState != .dirty && currentState != .rebuilding, let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
             lastProcessedEventID = max(lastProcessedEventID, completedID)
         }
-        if stateLock.withLock({ historyDone }), currentState == .replaying,
+        if deferredReconcile.count == 0, stateLock.withLock({ historyDone }), currentState == .replaying,
            inboxLock.withLock({ !inboxOverflow }) {
             // HistoryDone is ordered after historical callbacks. Events queued
             // after this completed batch are live traffic; requiring an empty
@@ -612,8 +624,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         for (event, classification) in namespace {
             guard let path = PathCanonicalizer.normalize(event.path) else { mark(root, subtree: true); continue }
             if classification == .subtreeDirty && (path == root || PathCanonicalizer.isWithin(root, root: path)) {
-                if mayRebuild { requestRebuild(invalidated: false, reason: "root_subtree_event"); return }
-                else { mark(root, subtree: true) }
+                mark(root, subtree: true)
                 continue
             }
             guard PathCanonicalizer.isWithin(path, root: root) else { continue }
@@ -682,15 +693,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 return false
             }) { mark(nearestIndexedParent(path, in: target), subtree: true) }
         }
-        var roots = PathCanonicalizer.minimalRoots(Array(dirty.keys))
-        // Historical overlap can dirty many existing parents at once. Replay
-        // reconciles those scopes directly instead of repeatedly rebuilding and
-        // replaying the same historical chunk. Live storms retain the limit.
-        if roots.count > configuration.dirtyParentLimit && mayRebuild && currentState != .replaying {
-            requestRebuild(invalidated: false, reason: "dirty_parent_limit")
-            dirty.removeAll()
-            roots.removeAll()
-        }
+        let roots = PathCanonicalizer.minimalRoots(Array(dirty.keys))
+        // Soft dirty-parent pressure changes scheduling, not index validity.
+        // Only the bounded deferred queue's hard overflow requests recovery.
         if countMetrics { metrics.record("dirty_directories", by: roots.count); metrics.set("active_dirty_directories",to:roots.count) }
         defer { if countMetrics { metrics.set("active_dirty_directories",to:0) } }
         func mutationPath(_ mutation: IndexMutation) -> String {
@@ -703,35 +708,56 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
         var mutations = patches
         var retryParents = Set<String>()
-        for directory in roots {
-            let absorbed = dirty.keys.contains { $0 != directory && PathCanonicalizer.isWithin($0, root: directory) }
-            let nestedPatch = direct.contains {
-                let path = mutationPath($0)
-                return PathCanonicalizer.isWithin(path, root: directory) && PathCanonicalizer.parent(of: path) != directory
+        let rootSet = Set(roots)
+        var absorbedRoots = Set<String>(), nestedPatchRoots = Set<String>()
+        func coveringRoot(_ path: String) -> String? {
+            var parent = PathCanonicalizer.parent(of: path)
+            while PathCanonicalizer.isWithin(parent, root: root) {
+                if rootSet.contains(parent) { return parent }
+                if parent == root || parent == "/" { break }
+                parent = PathCanonicalizer.parent(of: parent)
             }
+            return nil
+        }
+        for path in dirty.keys where !rootSet.contains(path) {
+            if let ancestor = coveringRoot(path) { absorbedRoots.insert(ancestor) }
+        }
+        for patch in direct {
+            let path = mutationPath(patch)
+            if let ancestor = coveringRoot(path), PathCanonicalizer.parent(of: path) != ancestor {
+                nestedPatchRoots.insert(ancestor)
+            }
+        }
+        let sliceStart = ProcessInfo.processInfo.systemUptime
+        var attempted = 0
+        for directory in roots {
+            let absorbed = absorbedRoots.contains(directory)
+            let nestedPatch = nestedPatchRoots.contains(directory)
             let options = dirty[directory] ?? (true, true)
-            let plan = reconciler.prepare(directory, subtree: options.subtree || absorbed || nestedPatch,
-                                          force: true, cancellation: exitReconciliation)
+            let subtree = options.subtree || absorbed || nestedPatch
+            if mayRebuild && (attempted >= 32 || ProcessInfo.processInfo.systemUptime-sliceStart >= 0.02) {
+                deferReconcile(.init(root: directory, reason: .event, minimumCursor: lastProcessedEventID,
+                    generation: target.stats().generation, subtree: subtree)); continue
+            }
+            attempted += 1
+            let plan = reconciler.prepare(directory, subtree: subtree, force: true,
+                cancellation: exitReconciliation, directoryLimit: mayRebuild ? 32 : nil)
             if plan.cancelled { exitBatchIncomplete = true; continue }
+            if case .invalidated = plan.result, mayRebuild {
+                requestRebuild(invalidated: true, reason: "reconcile_hard_limit")
+                metrics.record("reconcile_deferred_to_rebuild"); return
+            }
+            if case .locallyFailed = plan.result, mayRebuild {
+                var work = DeferredReconcileWork(root: directory, reason: .retry, minimumCursor: lastProcessedEventID,
+                    generation: target.stats().generation, subtree: subtree)
+                work.retryCount = 1; work.nextAttempt = ProcessInfo.processInfo.systemUptime + 0.05
+                deferReconcile(work); continue
+            }
             mutations += plan.mutations
             retryParents.formUnion(plan.retryParents)
-            if plan.requiresRebuild && mayRebuild {
-                // Recovery covers this whole batch from a new pre-scan fence.
-                // Continuing other large scopes would keep the writer busy and
-                // prevent the completed recovery from being installed.
-                requestRebuild(invalidated: false, reason: "reconcile_error")
-                metrics.record("reconcile_deferred_to_rebuild")
-                return
-            }
-            if plan.gateSkipped && mayRebuild {
-                // A matching mtime is never the sole correctness evidence. Recheck
-                // once without the gate; explicit namespace events bypass it already.
-                writer.asyncAfter(deadline: .now() + configuration.rebuildDebounceMilliseconds / 1000) { [weak self] in
-                    guard let self, !self.cancellation.isCancelled else { return }
-                    if let current = self.reconciler {
-                        self.repairDirectories([directory], into: self.index, using: current, mayRebuild: true)
-                    }
-                }
+            if !plan.frontier.isEmpty, mayRebuild {
+                deferReconcile(.init(root: directory, reason: .event, minimumCursor: lastProcessedEventID,
+                    generation: target.stats().generation, subtree: subtree, frontier: plan.frontier))
             }
         }
         target.apply(mutations)
@@ -742,26 +768,113 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if countMetrics { metrics.record("direct_patches", by: patches.count) }
     }
 
-    private func repairDirectories(_ paths: [String], into target: any NamespaceIndex,
-                                   using reconciler: DirectoryReconciler, mayRebuild: Bool) {
+    @discardableResult private func repairDirectories(_ paths: [String], into target: any NamespaceIndex,
+                                   using reconciler: DirectoryReconciler, mayRebuild: Bool) -> ReconcileResult {
         var pending = PathCanonicalizer.minimalRoots(paths)
         var seen = Set<String>()
         while !pending.isEmpty, !cancellation.isCancelled {
             var parents = Set<String>()
             for directory in pending where seen.insert(directory).inserted {
-                let plan = reconciler.prepare(directory, force: true, cancellation: exitReconciliation)
-                if plan.cancelled { exitBatchIncomplete = true; return }
-                target.apply(plan.mutations)
-                parents.formUnion(plan.retryParents)
-                if plan.requiresRebuild && mayRebuild {
-                    requestRebuild(invalidated: false, reason: "reconcile_error")
-                    metrics.record("reconcile_deferred_to_rebuild")
-                    return
+                let plan = reconciler.prepare(directory, force: true, cancellation: exitReconciliation,
+                    directoryLimit: mayRebuild ? 32 : nil)
+                if plan.cancelled { exitBatchIncomplete = true; return .deferred([.init(path: directory)]) }
+                switch plan.result {
+                case .invalidated(let reason):
+                    if mayRebuild { requestRebuild(invalidated: true, reason: "reconcile_hard_limit") }
+                    return .invalidated(reason)
+                case .locallyFailed(let failures):
+                    if mayRebuild {
+                        var work = DeferredReconcileWork(root: directory, reason: .parentRepair,
+                            minimumCursor: lastProcessedEventID, generation: target.stats().generation)
+                        work.retryCount = 1; work.nextAttempt = ProcessInfo.processInfo.systemUptime + 0.05
+                        deferReconcile(work)
+                    }
+                    metrics.record("reconcile_local_io_failures", by: failures.count)
+                case .deferred(let frontier):
+                    target.apply(plan.mutations)
+                    if mayRebuild { deferReconcile(.init(root: directory, reason: .parentRepair,
+                        minimumCursor: lastProcessedEventID, generation: target.stats().generation, frontier: frontier)) }
+                case .completed: target.apply(plan.mutations)
                 }
+                parents.formUnion(plan.retryParents)
             }
-            // Each race climbs toward the root, with a visited set as a guard.
             pending = PathCanonicalizer.minimalRoots(Array(parents)).filter { !seen.contains($0) }
         }
+        return deferredReconcile.count == 0 ? .completed : .deferred([])
+    }
+
+    private func updateDeferredMetrics() {
+        metrics.set("deferred_reconcile_roots", to: deferredReconcile.count)
+        metrics.set("deferred_reconcile_frontier", to: deferredReconcile.frontierCount)
+        metrics.set("deferred_reconcile_bytes", to: deferredReconcile.estimatedBytes)
+        metrics.maximum("deferred_reconcile_high_watermark", deferredReconcile.count)
+    }
+    private func deferReconcile(_ work: DeferredReconcileWork) {
+        guard !exitReconciliation.isCancelled else { exitBatchIncomplete = true; return }
+        guard deferredReconcile.insert(work) else {
+            metrics.record("deferred_reconcile_overflows")
+            requestRebuild(invalidated: true, reason: "reconcile_queue_overflow"); return
+        }
+        updateDeferredMetrics()
+        if currentState == .live { setState(.replaying) }
+        scheduleDeferredReconcile()
+    }
+    private func scheduleDeferredReconcile() {
+        guard deferredTimer == nil, reconciler != nil, deferredReconcile.count > 0,
+            !exitFrozen, !exitReconciliation.isCancelled, !building, !rebuildScheduled,
+            currentState != .paused else { return }
+        let delay = max(0.005, (deferredReconcile.nextAttempt ?? 0)-ProcessInfo.processInfo.systemUptime)
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.deferredTimer = nil; self.metrics.set("deferred_reconcile_timer", to: 0)
+            self.drainDeferredReconcile()
+        }
+        deferredTimer = item; metrics.set("deferred_reconcile_timer", to: 1)
+        writer.asyncAfter(deadline: .now()+delay, execute: item)
+    }
+    private func drainDeferredReconcile() {
+        guard !exitFrozen, !exitReconciliation.isCancelled, !building, !rebuildScheduled,
+            currentState != .paused, let reconciler else { return }
+        guard var work = deferredReconcile.popReady(now: ProcessInfo.processInfo.systemUptime) else {
+            scheduleDeferredReconcile(); return
+        }
+        let before = index.stats().generation
+        let plan = reconciler.prepare(work.root, subtree: work.subtree, force: true,
+            cancellation: exitReconciliation, frontier: work.frontier, directoryLimit: 32)
+        if plan.cancelled { exitBatchIncomplete = true; _ = deferredReconcile.insert(work); updateDeferredMetrics(); return }
+        switch plan.result {
+        case .invalidated:
+            requestRebuild(invalidated: true, reason: "reconcile_hard_limit"); return
+        case .locallyFailed:
+            work.retryCount += 1
+            if work.retryCount >= 3 {
+                requestRebuild(invalidated: true, reason: "reconcile_repeated_io"); return
+            }
+            work.nextAttempt = ProcessInfo.processInfo.systemUptime + min(1, 0.05 * pow(2, Double(work.retryCount)))
+            deferReconcile(work)
+        case .deferred(let frontier):
+            index.apply(plan.mutations); work.frontier = frontier
+            work.nextAttempt = ProcessInfo.processInfo.systemUptime + 0.005
+            metrics.record("deferred_reconcile_yields"); deferReconcile(work)
+        case .completed:
+            index.apply(plan.mutations); metrics.record("deferred_reconcile_completed")
+        }
+        for parent in plan.retryParents {
+            deferReconcile(.init(root: parent, reason: .parentRepair, minimumCursor: work.minimumCursor,
+                generation: index.stats().generation))
+        }
+        // Metadata may have handled the original event before namespace discovery.
+        // These bounded parent refresh hints use ID 0 to bypass historical overlap,
+        // and do not invent a newer durable metadata cursor.
+        metadataEventHandler?(plan.completedDirectories.map {
+            .init(path: $0, flags: UInt32(kFSEventStreamEventFlagItemXattrMod), id: 0)
+        })
+        updateDeferredMetrics()
+        if before != index.stats().generation { mutationHandler?() }
+        if deferredReconcile.count == 0 {
+            if !exitBatchIncomplete { lastProcessedEventID = max(lastProcessedEventID, deliveredCursorHighWatermark) }
+            if stateLock.withLock({ historyDone }) { setState(.live) }
+        } else { scheduleDeferredReconcile() }
     }
 
     public func waitUntilLive(timeout: TimeInterval = 10) -> Bool {
@@ -785,6 +898,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     private func requestRebuild(invalidated: Bool, reason: String) {
         guard !maintenanceCancellation.isCancelled, !cancellation.isCancelled else { return }
+        guard !building, !rebuildScheduled else { metrics.record("rebuild_requests_coalesced"); return }
+        deferredTimer?.cancel(); deferredTimer = nil; deferredReconcile.removeAll()
+        metrics.set("deferred_reconcile_timer", to: 0); updateDeferredMetrics()
         metrics.record("rebuild_requests_" + reason)
         stateLock.withLock { recoveryReason = reason }
         persistenceEpoch &+= 1
@@ -798,7 +914,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let backoff = failureCount == 0 ? 0 : min(300, pow(2, Double(min(failureCount, 8))))
         let remaining = max(0, configuration.fullRebuildMinInterval - (Date.timeIntervalSinceReferenceDate - lastRebuildStart))
         let delay = max(configuration.rebuildDebounceMilliseconds / 1000, remaining, backoff)
-        writer.asyncAfter(deadline: .now() + delay) { [weak self] in self?.beginRebuild() }
+        let item = DispatchWorkItem { [weak self] in self?.recoveryTimer = nil; self?.beginRebuild() }
+        recoveryTimer = item; writer.asyncAfter(deadline: .now() + delay, execute: item)
     }
     private func beginRebuild() {
         rebuildScheduled = false
@@ -869,7 +986,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 // the searchable warm runtime while HistoryDone is pending.
                 try baseInstaller(fresh,scan.fence,scan.identity)
             } else { index.replace(with: fresh) }
-            reconciler = DirectoryReconciler(scanner: scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
+            reconciler = DirectoryReconciler(scanner: reconcileReader ?? scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
             rebuildEvents = []
             metrics.set("rebuild_buffer_estimated_bytes",to:0)
             metrics.record("full_rebuilds")
@@ -883,16 +1000,23 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 stateLock.withLock { historyDone = false }
                 volumeIdentity = scan.identity
                 lastProcessedEventID = scan.fence
+                deliveredCursorHighWatermark = scan.fence
                 replayFloor = scan.fence
                 setState(.replaying)
                 try startWatcher(since: scan.fence)
             } else { setState(stateLock.withLock { historyDone } ? .live : .replaying) }
-            failureCount = 0
+            failureCount = 0; recoveryRetryCount = 0
             stateLock.withLock { errorDescription = nil; recoveryReason = nil }
             if rebuildOverflow && !restart { requestRebuild(invalidated: true, reason: "rebuild_buffer_overflow") }
             writer.async { [weak self] in self?.metrics.record("rebuild_allocator_released_bytes",by:Int(apfs_release_allocator_pages())) }
         } catch is MaintenanceYield {
-            metrics.record("maintenance_yields"); setState(.dirty); requestRebuild(invalidated:true,reason:"resource_yield")
+            metrics.record("maintenance_yields"); metrics.record("recovery_epoch_yields")
+            setState(.dirty)
+            // Keep this recovery epoch/fence invalidation, not a new request.
+            recoveryRetryCount += 1; rebuildScheduled = true
+            let delay = min(30, 0.1 * pow(2, Double(min(recoveryRetryCount, 8))))
+            let item = DispatchWorkItem { [weak self] in self?.recoveryTimer = nil; self?.beginRebuild() }
+            recoveryTimer = item; writer.asyncAfter(deadline: .now()+delay, execute: item)
         } catch {
             failureCount += 1
             metrics.record("rebuild_failures")
@@ -994,7 +1118,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
 
     public func captureCheckpoint() throws -> CheckpointCapture {
         try writer.sync {
-            guard currentState == .live, !building, !rebuildScheduled, let volumeIdentity else {
+            guard currentState == .live, deferredReconcile.count == 0, !building, !rebuildScheduled, let volumeIdentity else {
                 throw SnapshotError.invalid("checkpoint requires a live, recovered index")
             }
             return .init(metadata: index.captureSnapshotMetadata(), cursor: lastProcessedEventID,
@@ -1020,7 +1144,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     public func beginCompaction() throws -> CompactionTicket {
         try writer.sync {
-            guard currentState == .live, !building, !rebuildScheduled, compactionID == nil,
+            guard currentState == .live, deferredReconcile.count == 0, !building, !rebuildScheduled, compactionID == nil,
                   let volumeIdentity, let hybrid = index as? HybridIndex, let snapshot = hybrid.capture() else {
                 throw SnapshotError.busy
             }
@@ -1058,14 +1182,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
     /// Filesystem changes after this fence are recovered from the saved cursor.
     public func quiesceForExit(timings: ShutdownMetrics = .init()) {
         timings.measure("shutdown_stop_watcher_ms") { streamControl.sync { pauseRequested = true; watcher.stop() } }
-        timings.measure("shutdown_namespace_drain_ms") { writer.sync { drain(); exitFrozen = true } }
+        timings.measure("shutdown_namespace_drain_ms") { writer.sync { drain(); exitFrozen = true; deferredTimer?.cancel(); deferredTimer = nil; recoveryTimer?.cancel(); recoveryTimer = nil; metrics.set("deferred_reconcile_timer", to: 0) } }
     }
 
     public func stop() {
         requestFastExit(); cancelQueries(); cancellation.cancel()
         streamControl.sync { pauseRequested = true; watcher.stop() }
         // Establish that no writer can enter the rebuild group after wait begins.
-        writer.sync {}
+        writer.sync { deferredTimer?.cancel(); deferredTimer = nil; recoveryTimer?.cancel(); recoveryTimer = nil; metrics.set("deferred_reconcile_timer", to: 0) }
         buildGroup.wait()
         writer.sync { inboxLock.withLock { inbox.removeAll(); metrics.set("inbox_estimated_bytes",to:0) }; setState(.stopped) }
     }

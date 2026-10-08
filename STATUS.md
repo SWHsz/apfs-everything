@@ -1,3 +1,13 @@
+# v0.6.2 — Reconciliation Convergence（验收进行中）
+
+从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已按已有内存证据关闭，roadmap #12 已勾选。Issue #2 不开始，NSv2/metav1 和 cold namespace builder 不变。
+
+局部修复用有界、合并祖先路径的 `DeferredReconcileQueue` 保存 frontier 与 minimum cursor。每片最多 32 个目录 / 20 ms，查询中至少完成一个原子父目录；one-shot 重试，队列清空后才推进 namespace cursor。权限错误局部保留，反复权威 I/O 失败或 hard overflow 才恢复；真正 stream invalidation 合并为一次 active recovery。Full rebuild 的 yield 重试同一个 recovery epoch，保留旧 base、释放临时 graph，不产生 resource_yield rebuild。
+
+Metadata 连续输入保持既有批次截止时间，subtree continuation 不进入每秒 lookup 限流。退出保守保存 cursor，下一次 replay 继续修复。真实卷使用 active-live gate，受控 quiet gate 未放宽。测试与真实 binary 验收见 [v0.6.2 validation](docs/v062-validation.md)，当前 #3 OPEN、无 release tag。
+
+---
+
 # v0.6.1 — Release-Gate Closure（门槛未全部通过）
 
 开始 HEAD `5caf5ce291d16f8b31606268f3d8e9ae13a99433`，最终 runtime 修复 `d962fcc`，测试/捕获工具产物 HEAD `6eb9cec7b0d07193c02d96786b0477fb3ad572fd`。完整提交、数据、复现见 [v0.6.1 validation](docs/v061-validation.md)。

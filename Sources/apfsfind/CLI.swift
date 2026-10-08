@@ -80,7 +80,7 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.6.1 — macOS filename search with snapshot recovery
+    apfsfind v0.6.2 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
