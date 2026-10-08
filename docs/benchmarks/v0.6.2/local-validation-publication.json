@@ -1,0 +1,177 @@
+{
+  "code_head": "87448d916670de8efeac7eb62bae36766c00f929",
+  "desktop_sha256": "481cfe30c587be5802566c72b45c356b6ed025ca4aa43228056bbf0b468f418d",
+  "cli_sha256": "d9542edd5419ec43c7d51021fd42faca9f44afd9901e1c9ccf695b5dd7badf56",
+  "test_counts": {
+    "core": 259,
+    "desktop": 20,
+    "optional_mount_skipped": 1
+  },
+  "stage_provenance": "All full local suites and release products run on 87448d9. Same signed native executable starts the new acceptance window; older E/B results are not substituted.",
+  "stages": [
+    {
+      "stage": "publication-final-v2-asan",
+      "exit": 0,
+      "seconds": 203.27389520802535
+    },
+    {
+      "stage": "publication-final-v2-tsan",
+      "exit": 0,
+      "seconds": 331.9585623339517
+    },
+    {
+      "stage": "publication-final-v2-normal",
+      "exit": 0,
+      "seconds": 94.71497045794968
+    },
+    {
+      "stage": "publication-final-v2-release-cli",
+      "exit": 0,
+      "seconds": 47.04317554098088
+    },
+    {
+      "stage": "publication-final-v2-release-app",
+      "exit": 0,
+      "seconds": 5.250224250019528
+    },
+    {
+      "stage": "publication-final-v2-quiet-60",
+      "exit": 0,
+      "seconds": 70.08902787498664
+    }
+  ],
+  "quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 0,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 0,
+      "interrupt_wakeups": 2,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 0,
+      "pageins": 0,
+      "peak_compressed_bytes": 0,
+      "peak_rss_bytes": 10371072,
+      "rss_after_bytes": 10240000,
+      "rss_before_bytes": 10371072,
+      "system_cpu_seconds": 0.0002659999999999989,
+      "user_cpu_seconds": 8.199999999999874e-05,
+      "wall_ms": 60009.89854161162
+    },
+    "idle_seconds": 60.00993816670962,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 88.91666668932885,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 52.09579167421907,
+        "p50": 20.42087505105883,
+        "p90": 22.50733331311494,
+        "p95": 22.994874976575375,
+        "p99": 23.51279160939157
+      },
+      "delete": {
+        "max": 23.098874953575432,
+        "p50": 20.021958276629448,
+        "p90": 21.741916658356786,
+        "p95": 21.79966657422483,
+        "p99": 22.26987504400313
+      },
+      "rename": {
+        "max": 25.01795836724341,
+        "p50": 21.885291673243046,
+        "p90": 23.555750027298927,
+        "p95": 24.264791747555137,
+        "p99": 24.91899998858571
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "ci": {
+    "run_id": 37824973291,
+    "required_jobs": {
+      "integration": "success",
+      "deterministic": "success",
+      "desktop-build": "success",
+      "address-sanitizer": "success"
+    }
+  },
+  "raw_receipts": [
+    {
+      "name": "publication-final-v2-asan.stdout",
+      "bytes": 81807,
+      "sha256": "bbd17a58f730fd44a3f538e02178784527543a0c6d74a3ee4042350776bb6318"
+    },
+    {
+      "name": "publication-final-v2-asan.stderr",
+      "bytes": 531,
+      "sha256": "7a0dcc6d82f63ad48793124ca6ea58052d4844f34e1771465e472c88cd9a7054"
+    },
+    {
+      "name": "publication-final-v2-tsan.stdout",
+      "bytes": 81817,
+      "sha256": "a57114fe148d09ab3af6548aecd36f760a49036b00f2821ca82534e55bb605f9"
+    },
+    {
+      "name": "publication-final-v2-tsan.stderr",
+      "bytes": 3738,
+      "sha256": "fa70f076b17ccff159ee0bfc2ac197def719d932bbf68fb265c2e00e67e28232"
+    },
+    {
+      "name": "publication-final-v2-normal.stdout",
+      "bytes": 81793,
+      "sha256": "1789ffa7336c4a5c708ffae2d78314a3a556c8144e7749cafa20e2d872b6afef"
+    },
+    {
+      "name": "publication-final-v2-normal.stderr",
+      "bytes": 421,
+      "sha256": "a480a6bd90b49df16594c2a1bb12aa58b0e7efc6122e8afddb448c0c410a8a77"
+    },
+    {
+      "name": "publication-final-v2-release-cli.stdout",
+      "bytes": 268,
+      "sha256": "94f6d93ae037f24e4a09f2ba9ca22c00a76efe43b7a453bf7e4e73059e4910e1"
+    },
+    {
+      "name": "publication-final-v2-release-cli.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "publication-final-v2-release-app.stdout",
+      "bytes": 355,
+      "sha256": "e2469d6b10299db15734c23c32739a72280e4a30d3c5fc72878c6ead7f2d6611"
+    },
+    {
+      "name": "publication-final-v2-release-app.stderr",
+      "bytes": 93,
+      "sha256": "da07c64ff6f27d0cb80cab32de35ee8ca655dab2453f8812e663dac398560037"
+    },
+    {
+      "name": "publication-final-v2-quiet-60.stdout",
+      "bytes": 1994,
+      "sha256": "f9ac495e359269bb4b96f62e4f21d588932ba22fa87edebf01e03e359ccd9112"
+    },
+    {
+      "name": "publication-final-v2-quiet-60.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

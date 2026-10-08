@@ -1,6 +1,6 @@
 # v0.6.2 — Reconciliation Convergence（验收进行中）
 
-从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已关闭，Issue #2 不开始，snapshot格式和cold builder不变。e11b233及报告提交83585ae四项CI全绿；最终e11 binary的20分钟双卷active gate通过（30秒诊断physical最高116.99MiB、无新增full scan/yield rebuild、维护按时完成），但10轮B的round5 metadata unknown超过30秒，整体仍失败，UI因锁屏未验证。已用独立namespace/metadata replay floors确定性复现同类问题并修复所有runtime namespace publication的changed-parent metadata通知；23项专项通过，新候选完整279项sanitizer/release/实盘待验收，不用旧binary结果替代。
+从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已关闭，Issue #2 不开始，NSv2/metav1及cold builder不变。最终代码候选 `87448d9` 已推送：本机完整279项普通/ASan/TSan、release及受控quiet通过，四项required CI全绿。最终同一signed binary的双卷窗口1203.216s、236次gate观察通过；30秒诊断physical最高84.28MiB、结束55.94MiB，全程full scans0/yield rebuild0、无维护loop、backlog清空、disk/logical writes0。十轮owned pause/mutate/resume+并发查询全部12路径/size/精确mtime正确，最长2.957s。Mac仍锁屏，真实菜单、UI查询、正常Quit/restart待验证；测试实例保持打开，当前#3 OPEN、无release tag，不能将B/E/G通过称完整验收。
 
 局部修复用有界、合并祖先路径的 `DeferredReconcileQueue` 保存 frontier 与 minimum cursor。每片最多 32 个目录 / 20 ms，查询中至少完成一个原子父目录；one-shot 重试，队列清空后才推进 namespace cursor。权限错误局部保留，反复权威 I/O 失败或 hard overflow 才恢复；真正 stream invalidation 合并为一次 active recovery。Full rebuild 的 yield 重试同一个 recovery epoch，保留旧 base、释放临时 graph，不产生 resource_yield rebuild。
 
