@@ -10,11 +10,12 @@ final class MetadataDirectoryCursor {
     private var reader: OpaquePointer?
     private let excludedRoots: [String]
     private let metrics: Metrics
+    private let pageMetric: String
     private(set) var finished = false
     var children: [String] = []
 
-    init(path:String,device:UInt64,excludedRoots:[String],metrics:Metrics) throws {
-        self.path = path;self.excludedRoots = excludedRoots;self.metrics = metrics
+    init(path:String,device:UInt64,excludedRoots:[String],metrics:Metrics,pageMetric:String = "metadata_subtree_bulk_pages") throws {
+        self.path = path;self.excludedRoots = excludedRoots;self.metrics = metrics;self.pageMetric = pageMetric
         _ = apfs_deny_dataless_materialization()
         var error:Int32 = 0
         guard let reader = apfs_bulk_reader_open(path,device,1,&error) else {throw ScannerError(path:path,code:error)}
@@ -65,7 +66,7 @@ final class MetadataDirectoryCursor {
                 fileID:record.has_file_id != 0 ? record.file_id : nil,isMountPoint:record.is_mount_point != 0),metadata:FileMetadataValue(record)))
         }
         metrics.record("scanner_entries",by:page.count)
-        metrics.record("metadata_subtree_bulk_pages")
+        metrics.record(pageMetric)
         return page
     }
 }

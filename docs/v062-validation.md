@@ -224,3 +224,13 @@ Root metadata bootstrap先yield busy，重试等待lease时捕获旧base；更�
 `loss-final` 固定窗口完成1202.405659s /235 samples，**FAIL**：physical footprint limit、maintenance unfinished at deadline。摘要physical最大177.252220MiB、末端112.127197MiB，窗口CPU229.334996s、disk/logical writes0；两卷full scan/resource-yield rebuild delta0，没有restart loop。Root metadata checkpoint在真实系统memory warning时排队，deadline未执行；不取消或隐藏该任务来改写gate。只读vmmap显示allocated约27MiB、dirty+swap碎片约57MiB，不能据此断言所有超限已被归因或可立即回收。
 
 随后10轮真实pause/create/delete/rename/content/resume加持续查询全部通过，最长5.635304s，每轮12条namespace与全部size/精确mtime正确，full scan/resource-yield rebuild delta0。Mac再次锁屏，UI搜索、菜单、正常退出和restart尚待实际操作；本次保持独立实例运行等待解锁，不使用户的回复再次落到已经关闭的旧实例。公开聚合明确该capture为native_actions_complete之前的不可变prefix；完整退出receipt后续追加。
+
+
+## 下一候选：普通 parent bulk 分页与覆盖范围过滤
+
+在失败窗口之后的只读heap统计中仍看到约3MiB的ScannedEntry数组。普通metadata parent refresh现在复用安全bulk cursor，只保留一页、最多32个page/parent scheduling units或20ms后续读；已读page收到新事件时完成当前pass，再补一pass，不重置进度、不提前推进cursor。暂停或namespace publication关闭FD并重新保留原请求，停止取消并关闭FD。父目录100k-entry上限、事件上限及snapshot格式不变。
+
+另一个正确性问题有直接旧代码回归证据：普通父目录listing包含namespace未索引的兄弟条目，旧实现仍将这些metadata加入RAM overlay。4-entry测试上限下，即使namespace只有一个文件，旧实现四项断言失败：多余metadata、overflow、错误值可查询及游标未推进。修复只接收仍与当前namespace类型/device/fileID匹配的条目；RAM namespace未记录identity的缺省语义保留。旧失败日志完整保留。新增实际2048文件分页及已读文件中途再写用例，通过writer回调确定性插入新事件，要求补偿pass、size恢复、全目录metadata正确、cursor锁定和无bootstrap。34项metadata专项通过；完整277项/ASan/TSan以及最终新binary实盘还须重新完成，不能把 `loss-final` 的10轮结果套用到该候选。
+
+
+报告提交 `01471da77b4aefabdd7953c758a7fb5428352191` 已推送，[四项required CI](https://github.com/SWHsz/apfs-everything/actions/runs/37811795130)全绿。后续分页候选完整ASan218.679s、277项（257 Core+20 Desktop）、0 failures、1可选mount skip；TSan及普通/release/quiet仍在进行。首轮专项暴露RAM fixture没有device/fileID但新guard要求完整identity的兼容问题，已改为仅校验已知identity，并保留类型/mount校验，34项专项重新通过；不把该首轮测试失败隐藏。
