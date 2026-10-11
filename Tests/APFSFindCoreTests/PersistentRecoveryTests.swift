@@ -201,21 +201,35 @@ final class PersistentRecoveryTests: XCTestCase {
         try c.start(); XCTAssertTrue(c.waitUntilLive())
         let store = try SnapshotStore(directory: cache.root, identity: VolumeIdentity.discover(root: tree.root))
         let before = try stamp(store.path)
+        // This is a correctness/no-write gate, not a delivery latency benchmark.
+        // Drain the real FSEvents service after each batch; hosted CI can delay
+        // coalesced delivery beyond five seconds. Keep a bounded 30-second gate
+        // and verify every child, rather than only two rename endpoints.
+        func assertStorm(_ prefix: String?, _ message: String) {
+            XCTAssertTrue(c.core.flushEvents(timeout: 30), message + " service drain")
+            let expected = Set(prefix.map { value in
+                (0..<1000).map { tree.path("storm/\(value)\($0)") }
+            } ?? [])
+            waitFor(message, timeout: 30) {
+                Set(c.index.children(of: tree.path("storm")).map(\.path)) == expected
+            }
+        }
         for i in 0..<1000 { try tree.file("storm/f\(i)") }
-        waitFor("1000 created", timeout: 5) { c.index.stats().liveEntries == 1003 }
+        assertStorm("f", "1000 created")
+        XCTAssertEqual(c.index.stats().liveEntries, 1003)
         for i in 0..<1000 {
             try FileManager.default.moveItem(atPath: tree.path("storm/f\(i)"), toPath: tree.path("storm/r\(i)"))
         }
-        waitFor("rename storm converges", timeout: 5) {
-            c.index.entry(at: tree.path("storm/r999")) != nil && c.index.entry(at: tree.path("storm/f0")) == nil
-        }
+        assertStorm("r", "all 1000 renames converge")
         for i in 0..<1000 { try FileManager.default.removeItem(atPath: tree.path("storm/r\(i)")) }
-        waitFor("1000 deleted", timeout: 5) { c.index.stats().liveEntries == 3 }
+        assertStorm(nil, "1000 deleted")
+        XCTAssertEqual(c.index.stats().liveEntries, 3)
         XCTAssertTrue(c.core.flushEvents())
         let generation = c.index.stats().generation, metrics = c.metrics.snapshot()
         let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: tree.path("content")))
         for _ in 0..<10_000 { try handle.seek(toOffset: 0); try handle.write(contentsOf: Data([1])) }
         try handle.close()
+        XCTAssertTrue(c.core.flushEvents(timeout: 30))
         waitFor("content event processed", timeout: 5) {
             c.metrics.snapshot()["ignored_content_events", default: 0] > metrics["ignored_content_events", default: 0]
         }
