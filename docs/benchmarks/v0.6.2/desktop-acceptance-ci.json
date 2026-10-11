@@ -1,0 +1,33 @@
+{
+  "head": "16472f9598f4d59d7e9277d4ddf06ca0c1abeef6",
+  "run": 38140923147,
+  "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38140923147",
+  "status": "completed",
+  "conclusion": "success",
+  "jobs": [
+    {
+      "name": "desktop-build",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38140923147/job/114474454709"
+    },
+    {
+      "name": "integration",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38140923147/job/114474454750"
+    },
+    {
+      "name": "deterministic",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38140923147/job/114474454790"
+    },
+    {
+      "name": "address-sanitizer",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38140923147/job/114474454819"
+    }
+  ]
+}

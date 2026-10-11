@@ -326,3 +326,6 @@ compact-scratch 84cf 的资源实验仍 early FAIL：第 128.248394s 的 5 秒�
 
 
 同一 9de app/Info/cache 暖重启通过：Test Volume 2 / System search-ready 2.015 / 3.120s，namespace Live 9.898 / 115.965s（仍有历史元数据修复，不把 namespace Live 当作全局 metadata fresh）；两卷 metadata available。owned fixture 12/12、size/纳秒 mtime 正确、metadataComplete=true，校验查询 38.911ms；GUI 12 条、50.0ms，warm broad-query 七种排序每种 5 次，p95 94.960–192.259ms，均 metadataComplete=true。两卷 full scan/yield rebuild 0，源/cache/cursor 未重置。第二次正常 Command+Q exit 0、multi-volume shutdown 2.043917ms，四份 base 哈希和 state 清单仍不变。最终 B/E/G/F 均在同一 executable SHA 上完成，本机完整普通/ASan/TSan 297 项通过；现在只剩已授权发布后当前 HEAD 的四项 required CI，再关闭 #3。
+
+
+Phase A source/runtime 提交 `16472f9598f4d59d7e9277d4ddf06ca0c1abeef6` 已推送。[CI 38140923147](https://github.com/SWHsz/apfs-everything/actions/runs/38140923147) 的 deterministic、integration、address-sanitizer、desktop-build 全部成功。2026-10-11 [最终关闭评论](https://github.com/SWHsz/apfs-everything/issues/3#issuecomment-6109301917) 已发布，#3 已关闭，roadmap #12 仅将 #3 勾选；#2 保持 open，无 tag。该 commit 的 source hashes 与验收时源码逐项一致；桌面 executable SHA 为 9de，不将 Git commit ID 当作 executable hash。

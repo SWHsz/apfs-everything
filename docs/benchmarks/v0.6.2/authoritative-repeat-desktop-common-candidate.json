@@ -1,5 +1,5 @@
 {
-  "status": "Same binary 297 full ordinary/ASan/TSan checks and B/E/G/F passed; published HEAD CI pending",
+  "status": "Same binary full ordinary/ASan/TSan and B/E/G/F passed; source/runtime 16472f9 required CI all green; #3 closed",
   "baseline_head": "d3a7ffe051b6694c4edfa66371109dde7636600c",
   "scope": "authoritative full parent repeat at bounded late-content overflow or ambiguity; same pages/caps/cursor fence; no namespace state machine/cold builder/snapshot change",
   "tests": 297,
@@ -789,5 +789,8 @@
       "path": "/private/tmp/apfsfind-real-cache-E523DA25-5775-4468-9254-A013ADCF12D5/v063-authoritative-repeat-restart-20261011.native.stderr",
       "sha256": "8851355221739bdf236e76c616f59ef4914fee728f3cd4beeb63bb76102cbec8"
     }
-  }
+  },
+  "runtime_source_commit": "16472f9598f4d59d7e9277d4ddf06ca0c1abeef6",
+  "ci_run": 38140923147,
+  "issue3_closed": true
 }

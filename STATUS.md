@@ -1,6 +1,6 @@
 # v0.6.2 — Reconciliation Convergence（验收进行中）
 
-本轮从 `d3a7ffe051b6694c4edfa66371109dde7636600c` 继续 Phase A（#3 最终同 binary 桌面/资源验收），通过后进入 Phase B（#2 分层存储）。当前 9de 签名候选 297 项普通/ASan/TSan、G/E/B、真实热键/全局与单卷菜单、正常 Quit 已通过；暖重启也通过，发布后的 required CI 待验证。#1 已关闭，#2/#3 保持 OPEN，无 release tag。历史 binary 的结果按 SHA 分开保留。
+本轮从 `d3a7ffe051b6694c4edfa66371109dde7636600c` 继续 Phase A（#3 最终同 binary 桌面/资源验收），通过后进入 Phase B（#2 分层存储）。当前 9de 签名候选 297 项普通/ASan/TSan、G/E/B、真实热键/全局与单卷菜单、正常 Quit 已通过；暖重启也通过，`16472f9` 的四项 required CI（38140923147）全部成功，#3 已关闭、roadmap #12 已勾选。#1 已关闭，#2 保持 OPEN，无 release tag。历史 binary 的结果按 SHA 分开保留。
 
 状态栏闪动修复后的 e35 候选已完成真实全局/单卷暂停恢复、键盘显示/焦点/隐藏、正常 Quit 和暖重启；但该候选 E 内存门槛失败。普通 metadata subtree 改用既有分页游标后，c677 候选 284 项普通/ASan/TSan、B/G/Quit/restart 通过，冷恢复和独立暖启动 E 仍失败。进一步移除 namespace 枚举全目录的 ScannedEntry 副本后，85f 候选 286 项普通/ASan/TSan、release/签名/G 通过；真实双卷窗口第 31 秒捕获 189.02 MiB，已提前终止，不能计为完整 E/B/F 通过。完整原始失败记录和同 binary 边界见 [validation](docs/v062-validation.md)。
 
@@ -1011,7 +1011,7 @@ base 216,137,950 bytes（216.14 MB、89.88 bytes/entry），运行 210.44 s；�
 
 ## v0.6.3 进行中的验收与存储基础
 
-连续验收/分层存储任务仍在进行，详见 [v0.6.2 追加验收](docs/v062-validation.md) 和 [v0.6.3 工作记录](docs/v063-validation.md)。#3 仍 OPEN，各候选 E/UI 按 executable SHA 区分。匿名 validation scratch 实验已因 E 超限及 TSan VM 地址报告撤回；row-offset 中间 source 292 项普通/ASan/TSan及发布/签名通过，未移用为最终 native 验收。真实 metadata 的重复父目录 pass 已用旧代码 3 项失败复现；当前仅对已知文件内容写入使用有界补查，保留歧义事件整目录重读、原 cap 和 cursor fence，51 项定向通过。前一 a852 候选完整 295 项及 G 通过，但窗口中复查发现部分 parent pass 回退会遗漏 late content，两项负对照 7 项断言失败。已将回退改为当前父目录的完整分页补偿，新 297 项候选普通/ASan/TSan、release/app/strict signature 已通过，当前 9de binary 的 G/E/B、真实 UI/菜单/热键及正常 Quit 已通过，暖重启也通过，待发布后 CI。cold builder、snapshot 格式和 namespace reconciliation 状态机未重写。
+连续验收/分层存储任务仍在进行，详见 [v0.6.2 追加验收](docs/v062-validation.md) 和 [v0.6.3 工作记录](docs/v063-validation.md)。#3 已于同 binary B/E/G/F 和 `16472f9` 四项 CI 全绿后关闭，各候选 E/UI 按 executable SHA 区分。匿名 validation scratch 实验已因 E 超限及 TSan VM 地址报告撤回；row-offset 中间 source 292 项普通/ASan/TSan及发布/签名通过，未移用为最终 native 验收。真实 metadata 的重复父目录 pass 已用旧代码 3 项失败复现；当前仅对已知文件内容写入使用有界补查，保留歧义事件整目录重读、原 cap 和 cursor fence，51 项定向通过。前一 a852 候选完整 295 项及 G 通过，但窗口中复查发现部分 parent pass 回退会遗漏 late content，两项负对照 7 项断言失败。已将回退改为当前父目录的完整分页补偿，新 297 项候选普通/ASan/TSan、release/app/strict signature 已通过，当前 9de binary 的 G/E/B、真实 UI/菜单/热键及正常 Quit 已通过，暖重启也通过，四项 CI 全绿，#3 已关闭。cold builder、snapshot 格式和 namespace reconciliation 状态机未重写。
 
 新增 storage policy、原子 locator、UUID resolver、空间公式和有界 pread 基础类，13 项专项普通/ASan/TSan 通过，但尚未接入实际 namespace/metadata reader、迁移、离线重连、Settings/CLI。owned APFS child probe 已确认旧 mmap 强制 detach 会 SIGBUS；pread 基础读取同类 detach 返回 EIO 并正常退出。这不是生产外置存储验收，#2 仍 OPEN，无 tag，日用 index 未移动。
 
