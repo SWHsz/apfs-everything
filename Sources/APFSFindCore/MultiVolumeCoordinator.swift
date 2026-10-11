@@ -100,7 +100,12 @@ public actor MultiVolumeCoordinator {
       try IndexStorageMigrationCoordinator(provider:provider,locator:locator,resolver:resolver,scheduler:scheduler).migrate(
         source:source,identity:identity,oldPolicy:old.coordinator.storagePolicy,to:policy,cancellation:token,retainValidatedReaders:true,
         checkpoint:{ try old.coordinator.validateStorage(); try old.coordinator.validateSourceIdentity(identity) },
-        progress:{ value in Task { await self?.recordStorageProgress(id,value:value) } },
+        progress:{ value in
+          // Snapshot the weak capture before sending it into another task.
+          // Swift 6.0 otherwise treats the shared weak box as mutable state.
+          let coordinator = self
+          Task { await coordinator?.recordStorageProgress(id,value:value) }
+        },
         withSwitchBarrier:{ operation in
           old.coordinator.pause()
           do { try operation() } catch { try? old.coordinator.resume(); throw error }
