@@ -2,7 +2,7 @@
   "scope": "production readers/writers and post-migration actor lifecycle in isolated owned APFS sparse images",
   "passed": true,
   "namespace_records": 65537,
-  "cli_sha256": "3621517a8989c1d6ca942904a4e565a580edb8a5da4055a6a51335990ba89aea",
+  "cli_sha256": "b3151a739777a47b4e4a483aae7101fabebda15e7317fcc6661f5214c68a43bb",
   "experiments": [
     {
       "mode": "safe",
@@ -11,6 +11,11 @@
       "safe_drain": true,
       "queries_before_detach": 2,
       "base_hashes_unchanged": null,
+      "startup": {
+        "full_scans": 0,
+        "production_backing": "pread",
+        "ready": true
+      },
       "result": {
         "state": "offline",
         "storage_drained": true
@@ -23,6 +28,11 @@
       "safe_drain": null,
       "queries_before_detach": 2,
       "base_hashes_unchanged": null,
+      "startup": {
+        "full_scans": 0,
+        "production_backing": "pread",
+        "ready": true
+      },
       "result": {
         "full_scans": 0,
         "query_hits": 0,
@@ -37,6 +47,11 @@
       "safe_drain": true,
       "queries_before_detach": 2,
       "base_hashes_unchanged": null,
+      "startup": {
+        "full_scans": 0,
+        "production_backing": "pread",
+        "ready": true
+      },
       "result": {
         "state": "offline",
         "storage_drained": true
@@ -49,6 +64,10 @@
       "safe_drain": null,
       "queries_before_detach": 1,
       "base_hashes_unchanged": true,
+      "startup": {
+        "ready": true,
+        "writer_mode": "metadata"
+      },
       "result": {
         "full_scans": 0,
         "structured_io_error": "Index storage: offline",
@@ -62,6 +81,10 @@
       "safe_drain": null,
       "queries_before_detach": 1,
       "base_hashes_unchanged": true,
+      "startup": {
+        "ready": true,
+        "writer_mode": "compaction"
+      },
       "result": {
         "full_scans": 0,
         "structured_io_error": "Index storage: offline",
@@ -75,6 +98,10 @@
       "safe_drain": null,
       "queries_before_detach": 1,
       "base_hashes_unchanged": true,
+      "startup": {
+        "ready": true,
+        "writer_mode": "bootstrap"
+      },
       "result": {
         "full_scans": 0,
         "structured_io_error": "Index storage: offline",
@@ -88,6 +115,7 @@
       "safe_drain": null,
       "queries_before_detach": 1,
       "base_hashes_unchanged": null,
+      "startup": null,
       "result": {
         "locator_unchanged": true,
         "old_index_usable": true,
@@ -101,6 +129,11 @@
       "safe_drain": true,
       "queries_before_detach": 2,
       "base_hashes_unchanged": null,
+      "startup": {
+        "migration_bytes": 6024165,
+        "production_backing": "actor-migration-pread",
+        "ready": true
+      },
       "result": {
         "receipt_retained": true,
         "storage_drained": true
@@ -113,6 +146,11 @@
       "safe_drain": null,
       "queries_before_detach": 2,
       "base_hashes_unchanged": null,
+      "startup": {
+        "migration_bytes": 6024165,
+        "production_backing": "actor-migration-pread",
+        "ready": true
+      },
       "result": {
         "query_hits": 0,
         "structured_io_error": "index storage offline"

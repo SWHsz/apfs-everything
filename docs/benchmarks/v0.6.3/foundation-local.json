@@ -57,5 +57,7 @@
       "sha256": "76007bcad8abb70a182790a9769c0907cd170c57d7c363b2bb073e7b74646ffb",
       "bytes": 2007
     }
-  }
+  },
+  "historical": true,
+  "final_evidence": "checks.json, production-storage-detach.json, real-storage-migration.json"
 }

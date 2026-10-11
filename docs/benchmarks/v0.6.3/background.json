@@ -14,51 +14,51 @@
     "compressed_bytes": 0,
     "disk_bytes_read": 0,
     "disk_bytes_written": 0,
-    "idle_wakeups": 0,
-    "interrupt_wakeups": 2,
+    "idle_wakeups": 1,
+    "interrupt_wakeups": 3,
     "logical_bytes_read": null,
     "logical_bytes_written": 0,
     "major_faults": 0,
     "minor_faults": 0,
     "pageins": 0,
     "peak_compressed_bytes": 0,
-    "peak_rss_bytes": 11927552,
-    "rss_after_bytes": 11829248,
-    "rss_before_bytes": 11927552,
-    "system_cpu_seconds": 0.0001250000000000001,
-    "user_cpu_seconds": 4.80000000000003e-05,
-    "wall_ms": 60008.201583405025
+    "peak_rss_bytes": 11878400,
+    "rss_after_bytes": 11747328,
+    "rss_before_bytes": 11878400,
+    "system_cpu_seconds": 0.00012199999999999885,
+    "user_cpu_seconds": 4.5999999999999167e-05,
+    "wall_ms": 60010.10629162192
   },
-  "idle_seconds": 60.00821558339521,
+  "idle_seconds": 60.010161666665226,
   "pause_mutations": 1000,
   "paused_retained_stale": true,
   "periodic_polling": 0,
-  "resume_converge_ms": 113.9543333556503,
+  "resume_converge_ms": 277.0707500167191,
   "scope": "window-independent engine; native window lifecycle is validated separately",
   "verify_consistent": true,
   "visibility_ms": {
     "create": {
-      "max": 1522.3130832891911,
-      "p50": 20.399791654199362,
-      "p90": 21.890291711315513,
-      "p95": 22.02358329668641,
-      "p99": 23.152000037953258
+      "max": 164.50962505768985,
+      "p50": 20.440166699700058,
+      "p90": 21.994750015437603,
+      "p95": 22.77508331462741,
+      "p99": 23.30141665879637
     },
     "delete": {
-      "max": 22.06412493251264,
-      "p50": 20.07958327885717,
-      "p90": 21.5045417426154,
-      "p95": 21.78337494842708,
-      "p99": 21.912749973125756
+      "max": 21.764874923974276,
+      "p50": 19.81970830820501,
+      "p90": 21.403125021606684,
+      "p95": 21.640583407133818,
+      "p99": 21.760958363302052
     },
     "rename": {
-      "max": 26.856166659854352,
-      "p50": 22.3290832946077,
-      "p90": 24.00391665287316,
-      "p95": 24.66979157179594,
-      "p99": 25.226416648365557
+      "max": 26.47329168394208,
+      "p50": 22.045291727408767,
+      "p90": 23.607666604220867,
+      "p95": 24.215583340264857,
+      "p99": 25.25025000795722
     }
   },
   "visibility_samples_per_operation": 100,
-  "cli_sha256": "3621517a8989c1d6ca942904a4e565a580edb8a5da4055a6a51335990ba89aea"
+  "cli_sha256": "b3151a739777a47b4e4a483aae7101fabebda15e7317fcc6661f5214c68a43bb"
 }
