@@ -182,7 +182,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                 let name = String(decoding: UnsafeBufferPointer(start: bytes, count: record.name_length), as: UTF8.self)
                 guard name != ".", name != ".." else { continue }
                 let childPath = (path == "/" ? "/" : path + "/") + name
-                if excludedRoots.contains(where: { PathCanonicalizer.isWithin(childPath, root: $0) }) { continue }
+                if ManagedIndexExclusions.shared.contains(childPath) || excludedRoots.contains(where: { PathCanonicalizer.isWithin(childPath, root: $0) }) { continue }
                 let kind: EntryKind
                 switch record.object_type {
                 case UInt32(APFS_OBJECT_FILE.rawValue): kind = .file

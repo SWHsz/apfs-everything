@@ -86,13 +86,15 @@ public struct SearchHit: Sendable, Equatable {
 }
 
 public struct SearchResult: Sendable {
+  public let storageError: IndexStorageError?
   public let hits: [SearchHit]
   public let latencyMilliseconds: Double
   public let generation: UInt64
   public let freshness: SearchFreshness
   public let cancelled: Bool
   public init(hits: [SearchHit], latencyMilliseconds: Double, generation: UInt64,
-              freshness: SearchFreshness = .live, cancelled: Bool = false) {
+              freshness: SearchFreshness = .live, cancelled: Bool = false, storageError: IndexStorageError? = nil) {
+    self.storageError = storageError
     self.hits = hits; self.latencyMilliseconds = latencyMilliseconds; self.generation = generation
     self.freshness = freshness; self.cancelled = cancelled
   }

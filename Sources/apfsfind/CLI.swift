@@ -80,7 +80,7 @@ enum CLI {
     }
 
     static let usage = """
-    apfsfind v0.6.2 — macOS filename search with snapshot recovery
+    apfsfind v0.6.3 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
@@ -90,6 +90,13 @@ enum CLI {
       apfsfind hybrid-bench [--entries 100000] [--delta 10000] [--cache-dir PATH]
       apfsfind real-disk-bench --root PATH [--cache-dir /private/tmp/apfsfind-real-cache-UUID]
                              [--idle-seconds 60]
+
+    Storage management:
+      apfsfind storage list
+      apfsfind storage status [--source-volume UUID] [--root PATH]
+      apfsfind storage move --source-volume UUID --to-volume UUID
+                           [--relative-directory APFSFindIndexes] [--root PATH]
+      apfsfind storage use-default --source-volume UUID [--root PATH]
 
     Additional benchmarks:
       apfsfind residency-bench --root PATH [--second-root PATH] [--idle-seconds 600]
@@ -192,6 +199,11 @@ enum CLI {
     }
 
     static func run(arguments: [String]) throws -> Int32 {
+        if arguments.first == "_storage-refresh" {return try StorageMigrationProbe.refresh(Array(arguments.dropFirst()))}
+        if ["_storage-migration","storage-migration-bench"].contains(arguments.first ?? "") { return try StorageMigrationProbe.run(Array(arguments.dropFirst())) }
+        if arguments.first == "_storage-performance" { return try StoragePerformanceProbe.run(Array(arguments.dropFirst())) }
+        if ["_storage-probe","storage-probe","storage-disconnect-bench"].contains(arguments.first ?? "") { return try StorageRemovalProbe.run(Array(arguments.dropFirst())) }
+        if arguments.first == "storage" { return try StorageCLI.run(Array(arguments.dropFirst())) }
         // Internal read-only subprocess probe for allocator-independent benchmark
         // RSS. It does not start a watcher or change the base/state files.
         if arguments.first == "_mmap-probe" {

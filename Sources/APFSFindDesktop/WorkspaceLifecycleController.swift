@@ -1,7 +1,7 @@
 import APFSFindCore
 import AppKit
 
-enum WorkspaceLifecycleEvent: Sendable { case sleep, wake, volumesChanged }
+enum WorkspaceLifecycleEvent: Sendable { case sleep, wake, volumesChanged, storageWillUnmount(String) }
 @MainActor
 protocol WorkspaceLifecycleProviding {
   func start(_ handler: @escaping @MainActor @Sendable (WorkspaceLifecycleEvent) -> Void)
@@ -12,6 +12,10 @@ final class WorkspaceLifecycleProvider: WorkspaceLifecycleProviding {
   private var observers: [NSObjectProtocol] = []
   func start(_ handler: @escaping @MainActor @Sendable (WorkspaceLifecycleEvent) -> Void) {
     stop()
+    observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willUnmountNotification,object:nil,queue:.main) { notification in
+      guard let url = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+      MainActor.assumeIsolated { handler(.storageWillUnmount(url.path)) }
+    })
     for (name, event) in [(NSWorkspace.willSleepNotification, WorkspaceLifecycleEvent.sleep),
                            (NSWorkspace.didWakeNotification, .wake),
                            (NSWorkspace.didMountNotification, .volumesChanged),
@@ -51,6 +55,7 @@ final class WorkspaceLifecycleController {
       case .wake:
         await coordinator.refreshMountedVolumes()
         await coordinator.setAllPaused(.systemSleep, enabled: false)
+      case .storageWillUnmount(let path): await coordinator.storageWillUnmount(path:path)
       case .volumesChanged: await coordinator.refreshMountedVolumes()
       }
     }

@@ -41,7 +41,14 @@ struct AppPreferences {
   func coordinator() throws -> MultiVolumeCoordinator {
     guard !testRoots.isEmpty else { return MultiVolumeCoordinator() }
     let provider = DesktopTestVolumeProvider(roots: testRoots), values = try provider.mountedVolumes(), cache = testCache!
+    let locator = try IndexStorageLocatorStore(directory:cache+"/locator")
+    let storage = LocalIndexStorageVolumeProvider(),resolver = IndexStorageResolver(provider:storage,internalDirectory:cache)
     return MultiVolumeCoordinator(provider: provider, selectionStore: DesktopTestSelection(Set(values.map(\.volumeUUID))),
-                                  factory: { try VolumeIndexSession(volume: $0, cacheDirectory: cache, maintenanceScheduler: $1) })
+      storageProvider:storage,storageResolver:resolver,storageLocator:locator,factory: { volume,scheduler in
+        let identity = try VolumeIdentity.discover(root:volume.mountPath)
+        let index = try PersistentIndexCoordinator(root:volume.mountPath,cacheDirectory:cache,maintenanceScheduler:scheduler,
+          storagePolicy:locator.policy(for:identity),locatorStore:locator)
+        return VolumeIndexSession(volume:volume,coordinator:index)
+      })
   }
 }

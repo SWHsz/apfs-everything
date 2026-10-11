@@ -20,6 +20,7 @@ struct BoundedTopK<Element> {
     let less: (Element, Element) -> Bool
     private var heap: [Element] = []
     init(limit: Int, less: @escaping (Element,Element)->Bool) { self.limit = max(0,limit); self.less = less }
+    var worstIfFull:Element? {heap.count == limit && limit > 0 ? heap.first : nil}
     mutating func insert(_ item: Element) {
         guard limit > 0 else { return }
         if heap.count < limit {

@@ -105,7 +105,7 @@ public protocol NamespacePathResolving: Sendable {
 /// Immutable COW view, pinned base and changed children only. Component lookups
 /// use the mapped child table without building sibling arrays or full paths.
 public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
-    public let base: MMapBaseIndex
+    public let base: any ImmutableNamespaceBase
     public let tombstones: [UInt64]
     public let delta: [UInt32:DeltaEntry]
     public let overlayChildren: [EntryRef:[String:UInt32]]
@@ -113,7 +113,7 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
     public let version: PathResolutionVersion
     public let cache: HotDirectoryCache?
     public let metrics: Metrics
-    public init(base:MMapBaseIndex,tombstones:[UInt64] = [],delta:[UInt32:DeltaEntry] = [:],
+    public init(base:any ImmutableNamespaceBase,tombstones:[UInt64] = [],delta:[UInt32:DeltaEntry] = [:],
                 overlayChildren:[EntryRef:[String:UInt32]] = [:],rootRef:EntryRef = .base(0),
                 generation:UInt64 = 0,cache:HotDirectoryCache? = nil,metrics:Metrics = Metrics()) {
         self.base = base; self.tombstones = tombstones; self.delta = delta; self.overlayChildren = overlayChildren
@@ -124,12 +124,12 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
         Int(id) >= base.count || (!tombstones.isEmpty && (Int(id)/64 >= tombstones.count || tombstones[Int(id)/64] & (1 << (Int(id)%64)) != 0))
     }
     public func kind(_ ref:EntryRef) -> EntryKind? {
-        switch ref { case .base(let id): return deleted(id) ? nil : base.record(at:id).kind
+        switch ref { case .base(let id): return deleted(id) ? nil : (try? base.record(at:id))?.kind
         case .delta(let id): return delta[id]?.entry.kind }
     }
     private func traversable(_ ref:EntryRef) -> Bool {
         guard kind(ref) == .directory else { return false }
-        switch ref { case .base(let id): return base.record(at:id).flags == 0
+        switch ref { case .base(let id): return (try? base.record(at:id))?.flags == 0
         case .delta(let id): return delta[id]?.entry.isMountPoint == false && (delta[id]?.entry.deviceID == 0 || delta[id]?.entry.deviceID == base.header.rootDeviceID) }
     }
     public func child(parent:EntryRef,name:String) -> EntryRef? {
@@ -137,7 +137,7 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
         if let id = overlayChildren[parent]?[name],delta[id] != nil { metrics.record("path_resolver_overlay_hits"); return .delta(id) }
         guard case .base(let p) = parent else { return nil }
         metrics.record("path_resolver_base_child_lookups")
-        guard let id = base.lookupChild(parent:p,name:name),!deleted(id) else { return nil }
+        guard let id = try? base.lookupChild(parent:p,name:name),!deleted(id) else { return nil }
         return .base(id)
     }
     private func validCached(_ ref:EntryRef,path:String)->Bool {
@@ -180,12 +180,12 @@ public struct PathResolverSnapshot: NamespacePathResolving, Sendable {
     public func entry(_ path:String) -> NamespaceEntry? {
         guard let ref = resolve(path) else { return nil }
         switch ref { case .delta(let id): return delta[id]?.entry
-        case .base(let id): let r = base.record(at:id); return .init(path:path,kind:r.kind,deviceID:base.header.rootDeviceID,fileID:r.fileID == 0 ? nil : r.fileID,isMountPoint:r.flags != 0) }
+        case .base(let id): guard let r = try? base.record(at:id) else { return nil }; return .init(path:path,kind:r.kind,deviceID:base.header.rootDeviceID,fileID:r.fileID == 0 ? nil : r.fileID,isMountPoint:r.flags != 0) }
     }
     public func children(of ref:EntryRef) -> [EntryRef] {
         guard traversable(ref) else { return [] }
         var children: [EntryRef] = []
-        if case .base(let id) = ref { children = base.directChildren(of:id).filter { !deleted($0) }.map { .base($0) } }
+        if case .base(let id) = ref { children = ((try? base.directChildren(of:id)) ?? []).filter { !deleted($0) }.map { .base($0) } }
         children += (overlayChildren[ref] ?? [:]).values.compactMap { delta[$0] == nil ? nil : .delta($0) }
         return children
     }

@@ -96,6 +96,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             self.metrics.record("reconcile_allocator_released_bytes",by:Int(apfs_release_allocator_pages()))
         }
     }
+    private let queryGroup = DispatchGroup()
+    public func waitForQueries() { queryGroup.wait() }
     private var activeQueries: [UUID:SearchCancellationToken] = [:]
     public func cancelQueries() {
         let tokens = stateLock.withLock { Array(activeQueries.values) }
@@ -118,6 +120,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     private var startupBegan = ProcessInfo.processInfo.systemUptime
     private var replayFloor: UInt64 = 0
+    private var callbackReplayFloor: UInt64 = 0 // stateLock; read only during replay
     private let observation = SnapshotObservation<IndexReadinessSnapshot>()
     private var mutationHandler: (@Sendable () -> Void)?
     public let maintenanceScheduler: MaintenanceScheduler
@@ -130,6 +133,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var contentProbePath: String?
     private let inboxLock = NSLock()
     private var inbox: [FileSystemEvent] = []
+    private var metadataReplayInbox:[FileSystemEvent] = []
+    private var metadataReplayOverflow = false
     private var inboxOverflow = false
     private var inboxHistoryDone = false
     private var drainScheduled = false
@@ -151,7 +156,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var automaticRebuildSuspended = false
     private var volumeIdentity: VolumeIdentity?
     private var activeMaintenance: MaintenanceLease?
-    public func maintenanceCheckpoint() throws { try stateLock.withLock { activeMaintenance }?.checkpoint() }
+    public func maintenanceCheckpoint() throws { try index.checkStorage(); try stateLock.withLock { activeMaintenance }?.checkpoint() }
     private var lastProcessedEventID: UInt64 = 0 // Writer-confined, advanced only after mutations.
     private var persistenceEpoch: UInt64 = 0
     private var exitFrozen = false
@@ -179,12 +184,12 @@ public final class UpdateCoordinator: @unchecked Sendable {
         self.reconcileReader = reconcileReader
         self.deferredReconcile = .init(capacity: configuration.deferredReconcileLimit)
     }
-    public var queuedEventCount:Int { inboxLock.withLock { inbox.count } }
+    public var queuedEventCount:Int { inboxLock.withLock { inbox.count+metadataReplayInbox.count } }
     public var currentState: IndexState { stateLock.withLock { state } }
     public var installedSnapshotGeneration: UInt64? { stateLock.withLock { restoredGeneration } }
     public func startupStatus() -> StartupStatus {
         let lifecycle = stateLock.withLock { (state, historyDone, errorDescription, recoveryReason) }
-        let queued = inboxLock.withLock { inbox.count }
+        let queued = inboxLock.withLock { inbox.count+metadataReplayInbox.count }
         let counts = metrics.snapshot()
         return StartupStatus(state: lifecycle.0, historyDone: lifecycle.1,
             receivedEvents: counts["fsevents_received", default: 0],
@@ -199,6 +204,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private func setState(_ value: IndexState, error: String? = nil) {
         let transitioned = stateLock.withLock {
             let changed = state != value; state = value
+            if value == .replaying {callbackReplayFloor = replayFloor}
             if let error { errorDescription = error }
             return changed
         }
@@ -225,7 +231,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public func readinessSnapshot(startupMode: StartupMode? = nil) -> IndexReadinessSnapshot {
         let status = startupStatus()
         let current = stateLock.withLock { readiness }
-        let available = [.baseReady, .catchingUp, .live, .rebuildingUsingOldBase, .paused].contains(current) && baseAvailable
+        let available = (try? index.checkStorage()) != nil && [.baseReady, .catchingUp, .live, .rebuildingUsingOldBase, .paused].contains(current) && baseAvailable
         return .init(state: current, searchAvailable: available, resultsMayBeStale: current != .live,
                      startupMode: startupMode, indexedEntries: available ? index.stats().liveEntries : status.scannerEntries,
                      replayReceived: status.receivedEvents, replayProcessed: status.processedEvents,
@@ -239,6 +245,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     public func setMutationHandler(_ handler: @escaping @Sendable () -> Void) { writer.sync { mutationHandler = handler } }
     public func search(_ request: SearchRequest) -> SearchResult {
+        queryGroup.enter()
+        defer { queryGroup.leave() }
         let queryID = UUID()
         stateLock.withLock { activeQueries[queryID] = request.cancellation }
         defer { _ = stateLock.withLock { activeQueries.removeValue(forKey:queryID) } }
@@ -247,7 +255,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         guard status.searchAvailable else { return .init(hits: [], latencyMilliseconds: 0, generation: index.stats().generation, freshness: status.freshness, cancelled: request.cancellation.isCancelled) }
         let result = index.search(request)
         return .init(hits: result.hits, latencyMilliseconds: result.latencyMilliseconds, generation: result.generation,
-                     freshness: status.freshness, cancelled: result.cancelled)
+                     freshness: status.freshness, cancelled: result.cancelled, storageError:result.storageError)
     }
     public func reconcileParent(of path: String) {
         guard PathCanonicalizer.isWithin(path, root: root) else { return }
@@ -264,6 +272,17 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public func notifyMetadataChanged() { observation.send(readinessSnapshot()) }
     public func setBaseInstaller(_ handler: @escaping @Sendable (FileIndex, UInt64, VolumeIdentity) throws -> Void) {
         writer.sync { baseInstaller = handler }
+    }
+    private var storageFailureHandler:(@Sendable () -> Void)?
+    public func setStorageFailureHandler(_ handler:@escaping @Sendable () -> Void) {writer.sync {storageFailureHandler = handler}}
+    private func storageHealthy() -> Bool {
+      do {try index.checkStorage();return true}
+      catch {
+        let first = currentState != .failed
+        setState(.failed);metrics.record("storage_failed_transactions")
+        if first {storageFailureHandler?()}
+        return false
+      }
     }
     public func setLifecycleHandlers(live: @escaping @Sendable () -> Void,
                                      recovery: @escaping @Sendable (String) -> Void) {
@@ -284,7 +303,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             stateLock.withLock { restoredGeneration = generation }
             // Upgrade exclusion policy without changing v2 or scanning files.
             // Removing an existing excluded subtree is an ordinary RAM delta.
-            index.apply(excludedRoots.map { .remove($0) })
+            index.apply((excludedRoots+ManagedIndexExclusions.shared.paths).map { .remove($0) })
             reconciler = DirectoryReconciler(scanner: reconcileReader ?? makeScanner(), index: index,
                 rootDeviceID: rootDevice, metrics: metrics)
             baseAvailable = true; setReadiness(.baseReady)
@@ -429,15 +448,30 @@ public final class UpdateCoordinator: @unchecked Sendable {
         let events = events.filter { event in
             event.flags & UInt32(kFSEventStreamEventFlagHistoryDone | kFSEventStreamEventFlagKernelDropped |
                 kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagEventIdsWrapped | kFSEventStreamEventFlagRootChanged) != 0 ||
-            !excludedRoots.contains { PathCanonicalizer.isWithin(event.path, root: $0) }
+            !ManagedIndexExclusions.shared.contains(event.path) && !excludedRoots.contains { PathCanonicalizer.isWithin(event.path, root: $0) }
         }
         metrics.record("fsevents_received", by: events.count)
+        let floor = stateLock.withLock {state == .replaying ? callbackReplayFloor : 0}
         let schedule = inboxLock.withLock {
-            let room = max(0, configuration.maxPendingEvents - inbox.count)
-            if events.count > room { inboxOverflow = true }
-            let retained = events.prefix(room)
-            inbox.append(contentsOf: retained)
-            metrics.record("inbox_estimated_bytes",by:Self.estimatedEventBytes(retained))
+            var bytes = 0,overlap = 0
+            for event in events {
+                if floor > 0,EventClassifier.ordinaryReplayOverlap(event,floor:floor) {
+                    overlap += 1
+                    // Metadata has its own earlier fence. Keep bounded work,
+                    // and request its existing repair on overflow; namespace
+                    // must not rebuild for history it already represents.
+                    if metadataReplayInbox.count < min(4096,configuration.maxPendingEvents) {
+                        metadataReplayInbox.append(event);bytes += 64+event.path.utf8.count
+                    } else {metadataReplayOverflow = true}
+                } else if inbox.count < configuration.maxPendingEvents {
+                    inbox.append(event);bytes += 64+event.path.utf8.count
+                } else {inboxOverflow = true}
+            }
+            metrics.record("replay_overlap_events_skipped_before_queue",by:overlap)
+            metrics.record("replay_overlap_events_skipped",by:overlap)
+            metrics.record("replay_events_received",by:overlap)
+            metrics.record("fsevents_processed",by:overlap)
+            metrics.record("inbox_estimated_bytes",by:bytes)
             if events.contains(where: { $0.flags & UInt32(kFSEventStreamEventFlagHistoryDone) != 0 }) {
                 inboxHistoryDone = true
             }
@@ -455,13 +489,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
 
     private func drain() {
         guard !exitFrozen else { return }
-        let (events, overflow, finished) = inboxLock.withLock {
-            let result = (inbox, inboxOverflow, inboxHistoryDone)
+        let (events, overflow, finished,metadataReplay,metadataOverflow) = inboxLock.withLock {
+            let result = (inbox, inboxOverflow, inboxHistoryDone,metadataReplayInbox,metadataReplayOverflow)
             inbox = []; inboxOverflow = false; inboxHistoryDone = false; drainScheduled = false
+            metadataReplayInbox = [];metadataReplayOverflow = false
             metrics.set("inbox_estimated_bytes",to:0)
             return result
         }
-        guard !cancellation.isCancelled else { return }
+        guard !cancellation.isCancelled,storageHealthy() else { return }
+        if !metadataReplay.isEmpty || metadataOverflow {
+            metadataEventHandler?(metadataReplay+(metadataOverflow ? [.init(path:root,flags:UInt32(kFSEventStreamEventFlagUserDropped))] : []))
+            metrics.record("metadata_replay_overlap_processed",by:metadataReplay.count)
+            if metadataOverflow {metrics.record("metadata_replay_overlap_repairs")}
+        }
         if compactionID != nil {
             let room = max(0, configuration.maxPendingEvents - compactionEvents.count)
             compactionEvents.append(contentsOf: events.prefix(room))
@@ -493,7 +533,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             // a replay from the new fence closes the scheduled/scan interval.
             metrics.record("namespace_events_deferred_during_recovery", by: events.count)
             if overflow { metrics.record("queue_overflows") }
-            metadataEventHandler?(events + (overflow ? [.init(path:root,flags:UInt32(kFSEventStreamEventFlagUserDropped))] : []))
+            guard storageHealthy() else {return}
+        metadataEventHandler?(events + (overflow ? [.init(path:root,flags:UInt32(kFSEventStreamEventFlagUserDropped))] : []))
             return
         }
         if overflow {
@@ -531,12 +572,13 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 metrics.record(target, by: after[source, default: 0] - counters[source, default: 0])
             }
         }
+        guard storageHealthy() else {return}
         metadataEventHandler?(events + (overflow ? [.init(path:root,flags:UInt32(kFSEventStreamEventFlagUserDropped))] : []))
         if before != index.stats().generation { mutationHandler?() }
         // Include content-only IDs, but never advance a durable cursor ahead of
         // the namespace mutations corresponding to this batch.
         if deferredReconcile.count == 0, !exitBatchIncomplete, currentState != .dirty && currentState != .rebuilding, let completedID = events.lazy.map(\.id).filter({ $0 != UInt64.max }).max() {
-            lastProcessedEventID = max(lastProcessedEventID, completedID)
+            if (try? index.checkStorage()) != nil { lastProcessedEventID = max(lastProcessedEventID, completedID) }
         }
         if deferredReconcile.count == 0, stateLock.withLock({ historyDone }), currentState == .replaying,
            inboxLock.withLock({ !inboxOverflow }) {
@@ -890,6 +932,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private func drainDeferredReconcile() {
         guard !exitFrozen, !exitReconciliation.isCancelled, !building, !rebuildScheduled,
             currentState != .paused, let reconciler else { return }
+        guard storageHealthy() else {return}
         let before = index.stats().generation, started = ProcessInfo.processInfo.systemUptime
         var batch: [(DeferredReconcileWork, ReconciliationPlan)] = []
         var mutations: [IndexMutation] = [], directories = 0
@@ -927,6 +970,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             batch.append((work,plan))
         }
         publishMutations(mutations,into:index)
+        guard storageHealthy() else {return}
         if (index as? HybridIndex)?.requiresRecovery == true {
             requestRebuild(invalidated:true,reason:"overlay_safety_limit"); return
         }
@@ -957,7 +1001,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
         updateDeferredMetrics()
         if before != index.stats().generation { mutationHandler?() }
         if deferredReconcile.count == 0 {
-            if !exitBatchIncomplete { lastProcessedEventID = max(lastProcessedEventID,deliveredCursorHighWatermark) }
+            if !exitBatchIncomplete, (try? index.checkStorage()) != nil { lastProcessedEventID = max(lastProcessedEventID,deliveredCursorHighWatermark) }
             if stateLock.withLock({historyDone}) { setState(.live) }
         } else { scheduleDeferredReconcile() }
     }
@@ -1080,6 +1124,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 watcher.stop()
                 inboxLock.withLock {
                     inbox = []; inboxHistoryDone = false; inboxOverflow = false; drainScheduled = false
+                    metadataReplayInbox = [];metadataReplayOverflow = false
                     metrics.set("inbox_estimated_bytes",to:0)
                 }
                 stateLock.withLock { historyDone = false }
@@ -1203,6 +1248,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
 
     public func captureCheckpoint() throws -> CheckpointCapture {
         try writer.sync {
+            try index.checkStorage()
             guard currentState == .live, deferredReconcile.count == 0, !building, !rebuildScheduled, let volumeIdentity else {
                 throw SnapshotError.invalid("checkpoint requires a live, recovered index")
             }
@@ -1212,6 +1258,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     public func validateCheckpoint(_ capture: CheckpointCapture) throws {
         try writer.sync {
+            try index.checkStorage()
             guard currentState == .live, persistenceEpoch == capture.epoch,
                   volumeIdentity == capture.identity,
                   index.captureSnapshotMetadata().generation == capture.metadata.generation else {
@@ -1219,7 +1266,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
         }
     }
-    public func installRecoveredBase(_ capture:CheckpointCapture,base:MMapBaseIndex,map:[String:EntryRef],publish:()throws->Void) throws {
+    public func installRecoveredBase(_ capture:CheckpointCapture,base:any ImmutableNamespaceBase,map:[String:EntryRef],publish:()throws->Void) throws {
         try writer.sync {
             guard currentState == .live,persistenceEpoch==capture.epoch,volumeIdentity==capture.identity,
                   try identityProvider(root)==capture.identity,
@@ -1229,6 +1276,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     }
     public func beginCompaction() throws -> CompactionTicket {
         try writer.sync {
+            try index.checkStorage()
             guard currentState == .live, deferredReconcile.count == 0, !building, !rebuildScheduled, compactionID == nil,
                   let volumeIdentity, let hybrid = index as? HybridIndex, let snapshot = hybrid.capture() else {
                 throw SnapshotError.busy
@@ -1244,7 +1292,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public func abortCompaction(_ ticket:CompactionTicket) {
         writer.sync { if compactionID == ticket.id { compactionID=nil; compactionEvents=[]; compactionOverflow=false; metrics.set("compaction_buffer_estimated_bytes",to:0) } }
     }
-    public func finishCompaction(_ ticket:CompactionTicket, base:MMapBaseIndex, directories:[String:EntryRef],
+    public func finishCompaction(_ ticket:CompactionTicket, base:any ImmutableNamespaceBase, directories:[String:EntryRef],
                                  publish:()throws->Void) throws {
         try writer.sync {
             guard compactionID == ticket.id, !compactionOverflow, !cancellation.isCancelled,
@@ -1252,6 +1300,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                   volumeIdentity == ticket.checkpoint.identity,
                   try identityProvider(root) == ticket.checkpoint.identity,
                   let hybrid=index as? HybridIndex, let reconciler else { throw SnapshotError.generationChanged }
+            try index.checkStorage(); try base.checkStorage()
             let visibleGeneration=index.stats().generation
             try publish()
             hybrid.install(base:base,directoryMap:directories,generation:ticket.snapshot.generation)
@@ -1276,6 +1325,6 @@ public final class UpdateCoordinator: @unchecked Sendable {
         // Establish that no writer can enter the rebuild group after wait begins.
         writer.sync { deferredTimer?.cancel(); deferredTimer = nil; recoveryTimer?.cancel(); recoveryTimer = nil; metrics.set("deferred_reconcile_timer", to: 0) }
         buildGroup.wait()
-        writer.sync { inboxLock.withLock { inbox.removeAll(); metrics.set("inbox_estimated_bytes",to:0) }; setState(.stopped) }
+        writer.sync { inboxLock.withLock { inbox.removeAll();metadataReplayInbox.removeAll();metadataReplayOverflow = false;metrics.set("inbox_estimated_bytes",to:0) }; setState(.stopped) }
     }
 }

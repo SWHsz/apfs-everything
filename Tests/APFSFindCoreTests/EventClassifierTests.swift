@@ -3,6 +3,18 @@ import CoreServices
 @testable import APFSFindCore
 
 final class EventClassifierTests: XCTestCase {
+    func testReplayOverlapNeverSuppressesSpecialFlagsOrNewEvents() {
+        let create = UInt32(kFSEventStreamEventFlagItemCreated|kFSEventStreamEventFlagItemIsFile)
+        XCTAssertTrue(EventClassifier.ordinaryReplayOverlap(.init(path:"/old",flags:create,id:90),floor:100))
+        for flag in [kFSEventStreamEventFlagMustScanSubDirs,kFSEventStreamEventFlagHistoryDone,
+                     kFSEventStreamEventFlagUserDropped,kFSEventStreamEventFlagKernelDropped,
+                     kFSEventStreamEventFlagRootChanged,kFSEventStreamEventFlagEventIdsWrapped] {
+            XCTAssertFalse(EventClassifier.ordinaryReplayOverlap(.init(path:"/old",flags:create|UInt32(flag),id:90),floor:100))
+        }
+        for id in [UInt64(0),101,UInt64.max] {
+            XCTAssertFalse(EventClassifier.ordinaryReplayOverlap(.init(path:"/new",flags:create,id:id),floor:100))
+        }
+    }
     private func classify(_ flags: Int) -> EventClassification {
         EventClassifier.classify(.init(path: "/tmp/example", flags: UInt32(flags)))
     }

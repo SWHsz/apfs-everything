@@ -188,7 +188,15 @@ final class PersistentRecoveryTests: XCTestCase {
         try requireFSEvents()
         let tree = try TemporaryTree(), cache = try TemporaryTree(cache: true)
         try tree.directory("storm"); try tree.file("content"); try cold(tree, cache)
-        let c = try make(tree, cache)
+        // This gate isolates event application from explicit persistence.
+        // A three-entry base otherwise crosses the automatic compaction ratio
+        // immediately; under TSan the storm can outlast its quiet interval.
+        // Automatic threshold/quiet compaction has separate integration gates.
+        var policy = CompactionPolicy()
+        policy.liveLimit = 1_000_000;policy.byteLimit = 1024*1024*1024
+        policy.overlayRatio = 10_000;policy.tombstoneRatio = 10_000
+        let c = try PersistentIndexCoordinator(root:tree.root,configuration:.init(fullRebuildMinInterval:0),
+          cacheDirectory:cache.root,compactionPolicy:policy,maintenanceScheduler:.init())
         defer { c.stop(saveCheckpoint: false) }
         try c.start(); XCTAssertTrue(c.waitUntilLive())
         let store = try SnapshotStore(directory: cache.root, identity: VolumeIdentity.discover(root: tree.root))

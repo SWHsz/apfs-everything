@@ -15,6 +15,18 @@ public enum EventClassification: Equatable, Sendable {
 }
 
 public enum EventClassifier {
+    /// Same replay overlap rule used before queue admission and during drain.
+    /// Gap/scan-required flags always remain namespace work.
+    static func ordinaryReplayOverlap(_ event:FileSystemEvent,floor:UInt64) -> Bool {
+        guard event.id > 0,event.id != UInt64.max,event.id <= floor else {return false}
+        switch classify(event) {
+        case .simpleCreate,.simpleRemove,.contentOnly:return true
+        case .ambiguous:
+            let renameOnly = UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsFile | kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemIsSymlink)
+            return event.flags & UInt32(kFSEventStreamEventFlagItemRenamed) != 0 && event.flags & ~renameOnly == 0
+        default:return false
+        }
+    }
     public static func classify(_ event: FileSystemEvent) -> EventClassification {
         let f = event.flags
         let invalid = UInt32(kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped |

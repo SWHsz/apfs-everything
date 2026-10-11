@@ -13,7 +13,8 @@ public final class SnapshotReader: @unchecked Sendable {
     public internal(set) var openMilliseconds: Double = 0
     private let mapping: UnsafeMutableRawPointer?
     public private(set) var mappedBase: MMapBaseIndex?
-    public var formatVersion: UInt32 { mappedBase == nil ? 1 : 2 }
+    public private(set) var immutableBase: (any ImmutableNamespaceBase)?
+    public var formatVersion: UInt32 { immutableBase == nil ? 1 : 2 }
     private let length: Int
 
     public convenience init(path: String, expectedIdentity: VolumeIdentity) throws {
@@ -23,16 +24,22 @@ public final class SnapshotReader: @unchecked Sendable {
     }
 
     /// Takes ownership of the descriptor, including on validation failure.
-    public init(fileDescriptor fd: Int32, expectedIdentity identity: VolumeIdentity) throws {
+    public init(fileDescriptor fd: Int32, expectedIdentity identity: VolumeIdentity,
+                usePRead: Bool = false, allowRootRebinding:Bool = false, validateStorage: @escaping @Sendable () throws -> Void = {}) throws {
         var version: UInt32 = 0
-        _ = pread(fd, &version, 4, 8)
+        var versionBytes:Int
+        repeat { versionBytes = pread(fd,&version,4,8) } while versionBytes < 0 && errno == EINTR
+        guard versionBytes == 4 else {let code = versionBytes < 0 ? errno : EIO; close(fd); throw SnapshotError.io("read snapshot version",code)}
         if UInt32(littleEndian: version) == 2 {
-            let base = try MMapBaseIndex(fileDescriptor: fd, identity: identity)
-            mappedBase = base; mapping = nil; length = 0; header = base.header; root = base.root
+            let base: any ImmutableNamespaceBase
+            if usePRead { base = try PReadNamespaceIndex(fileDescriptor:fd,identity:identity,allowRootRebinding:allowRootRebinding,validateStorage:validateStorage) }
+            else { base = try MMapBaseIndex(fileDescriptor:fd,identity:identity) }
+            immutableBase = base; mappedBase = base as? MMapBaseIndex; mapping = nil; length = 0; header = base.header; root = base.root
             mmapMilliseconds = base.mmapMilliseconds; residentAfterMmap = base.residentAfterMmap
             loadMilliseconds = base.validationMilliseconds + base.mmapMilliseconds
             return
         }
+        if usePRead { close(fd); throw SnapshotError.formatMigration }
         defer { Darwin.close(fd) }
         let start = ProcessInfo.processInfo.systemUptime
         var metadata = stat()
@@ -107,17 +114,17 @@ public final class SnapshotReader: @unchecked Sendable {
     }
     deinit { if let mapping { munmap(mapping, length) } }
 
-    public func record(at ordinal: Int) -> SnapshotRecord {
-        if let base = mappedBase {
-            let r = base.record(at: UInt32(ordinal))
+    public func record(at ordinal: Int) throws -> SnapshotRecord {
+        if let base = immutableBase {
+            let r = try base.record(at: UInt32(ordinal))
             return .init(parentID:r.parent,nameOffset:r.nameOffset,nameLength:r.nameLength,kind:r.kind,flags:r.flags,fileID:r.fileID)
         }
         precondition(ordinal >= 0 && ordinal < Int(header.recordCount))
-        return try! Self.decodeRecord(UnsafeRawBufferPointer(start: mapping!, count: length), header: header, ordinal: ordinal)
+        return try Self.decodeRecord(UnsafeRawBufferPointer(start: mapping!, count: length), header: header, ordinal: ordinal)
     }
-    public func name(at ordinal: Int) -> String {
-        if let base = mappedBase { return base.name(at: UInt32(ordinal)) }
-        let record = record(at: ordinal)
+    public func name(at ordinal: Int) throws -> String {
+        if let base = immutableBase { return try base.name(at: UInt32(ordinal)) }
+        let record = try record(at: ordinal)
         let first = Int(header.nameBlobOffset) + Int(record.nameOffset)
         let bytes = UnsafeRawBufferPointer(start: mapping!.advanced(by: first), count: Int(record.nameLength))
         return String(decoding: bytes, as: UTF8.self)

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum MaintenanceKind: String, Sendable { case coldScan, rebuild, compaction, metadataBootstrap, metadataCheckpoint }
+public enum MaintenanceKind: String, Sendable { case storageMigration, coldScan, rebuild, compaction, metadataBootstrap, metadataCheckpoint }
 public enum MaintenanceUrgency: Int, Sendable { case opportunistic, required, emergency }
 public enum MaintenanceOperatingState: String, Sendable { case interactive, busy, opportunistic, maintaining, emergency, suspended }
 public struct MaintenancePolicy: Sendable {

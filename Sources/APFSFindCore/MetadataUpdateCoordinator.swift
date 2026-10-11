@@ -355,7 +355,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     metrics.record("metadata_parent_collapses")
                 }
                 let snapshot = index.capture()
-                let oldRecord = snapshot.ordinal(path).map { snapshot.namespace!.record(at:$0) }
+                let oldRecord = snapshot.ordinal(path).flatMap { try? snapshot.namespace!.record(at:$0) }
                 if let item, item.kind == .directory,
                    e.flags & UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRenamed) != 0,
                    (!index.baseDirectoryMatches(path:path,fileID:item.fileID) || e.flags & UInt32(kFSEventStreamEventFlagItemRemoved) != 0) {

@@ -4,6 +4,32 @@ import XCTest
 @testable import APFSFindCore
 
 final class MetadataCursorTests: XCTestCase {
+    func testLargeOverlappingMetadataReplayCannotOverflowNamespaceQueue() throws {
+        let tree = try TemporaryTree(),cache = try TemporaryTree(cache:true);try tree.file("target")
+        let root = tree.root,path = tree.path("target"),born = tree.path("born"),identity = try VolumeIdentity.discover(root:root)
+        let scan = try BulkScanner(root:root).scan(),ram = FileIndex(root:root);ram.apply(scan.entries.map(IndexMutation.upsert))
+        let store = try SnapshotStore(directory:cache.root,identity:identity)
+        _ = try SnapshotV2Writer.write(source:.ram(ram,ram.stats().generation),identity:identity,generation:1,cursor:100,store:store)
+        let header = try store.reader(expectedIdentity:identity).header
+        _ = try MetadataWriter.write(store:store,base:header,cursor:80,value:{_ in .init(logicalSize:1)})
+        try Data(repeating:1,count:5).write(to:URL(fileURLWithPath:path));try Data(repeating:1,count:9).write(to:URL(fileURLWithPath:born))
+        let c = try PersistentIndexCoordinator(root:root,configuration:.init(maxPendingEvents:8),cacheDirectory:cache.root,
+            maintenanceScheduler:.init(),replayStarter:{_,deliver in
+                let duplicates = Array(repeating:FileSystemEvent(path:path,flags:UInt32(kFSEventStreamEventFlagItemModified|kFSEventStreamEventFlagItemIsFile),id:90),count:4000)
+                deliver(duplicates+[.init(path:born,flags:UInt32(kFSEventStreamEventFlagItemCreated|kFSEventStreamEventFlagItemIsFile),id:101),
+                    .init(path:root,flags:UInt32(kFSEventStreamEventFlagHistoryDone),id:102)])
+            })
+        defer {c.stop(policy:.fast)}
+        try c.start();XCTAssertTrue(c.waitUntilLive());c.flushMetadata()
+        waitFor("overlap metadata compensation",timeout:10) {
+            c.metadata.capture().value(path:path).logicalSize == 5 && c.metadata.capture().value(path:born).logicalSize == 9
+        }
+        XCTAssertNotNil(c.index.entry(at:born))
+        XCTAssertEqual(c.metrics.snapshot()["replay_overlap_events_skipped_before_queue"],4000)
+        XCTAssertEqual(c.metrics.snapshot()["queue_overflows",default:0],0)
+        XCTAssertEqual(c.metrics.snapshot()["full_scans",default:0],0)
+        XCTAssertEqual(c.metrics.snapshot()["metadata_replay_overlap_repairs"],1)
+    }
     func testMetadataAheadReplayRepairsNewAndRenamedNamespacePaths() throws {
         let tree = try TemporaryTree(), cache = try TemporaryTree(cache:true)
         try tree.file("old")

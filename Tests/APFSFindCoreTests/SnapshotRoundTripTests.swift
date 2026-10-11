@@ -39,11 +39,11 @@ final class SnapshotRoundTripTests: XCTestCase {
         XCTAssertEqual(restored.entry(at: identity.root + "/link")?.fileID, 42)
         XCTAssertNil(restored.entry(at: identity.root + "/dir/deep/Cafe\u{301}-b")?.fileID)
         for ordinal in 1..<Int(reader.header.recordCount) {
-            XCTAssertLessThan(reader.record(at: ordinal).parentID, UInt32(ordinal))
-            XCTAssertFalse(reader.name(at: ordinal).contains("/"))
+            XCTAssertLessThan(try reader.record(at: ordinal).parentID, UInt32(ordinal))
+            XCTAssertFalse(try reader.name(at: ordinal).contains("/"))
         }
         XCTAssertEqual(restored.search("CAFÉ").hits.map(\.path), index.search("CAFÉ").hits.map(\.path))
-        let names = (1..<Int(reader.header.recordCount)).map { Array(reader.name(at: $0).utf8) }
+        let names = try (1..<Int(reader.header.recordCount)).map { Array(try reader.name(at: $0).utf8) }
         XCTAssertTrue(names.contains(Array("Cafe\u{301}-b".utf8)))
     }
 

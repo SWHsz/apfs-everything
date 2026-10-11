@@ -20,8 +20,8 @@ public final class MetadataRenameSource: @unchecked Sendable {
     init(originalPrefix:String,snapshot:MetadataQuerySnapshot) { self.originalPrefix = originalPrefix; self.snapshot = snapshot; depth = snapshot.maximumAliasDepth+1 }
 }
 public struct MetadataQuerySnapshot: Sendable {
-    public let namespace: MMapBaseIndex?
-    public let base: MMapMetadataIndex?
+    public let namespace: (any ImmutableNamespaceBase)?
+    public let base: (any ImmutableMetadataBase)?
     public let overlay: MetadataOverlay
     public let freshness: MetadataFreshness
     let resolver: PathResolverSnapshot?
@@ -32,12 +32,18 @@ public struct MetadataQuerySnapshot: Sendable {
         guard case .base(let id)? = resolver?.resolve(path) else { return nil }
         return id
     }
-    public func value(at id: UInt32) -> FileMetadataValue { overlay.baseOverrides[id] ?? base?.value(at:id) ?? .unknown }
-    public func value(path: String) -> FileMetadataValue {
+    public func checkStorage() throws { try namespace?.checkStorage(); try base?.checkStorage() }
+    public func checkedValue(at id: UInt32) throws -> FileMetadataValue {
+        return try overlay.baseOverrides[id] ?? base?.value(at:id) ?? .unknown
+    }
+    public func value(at id: UInt32) -> FileMetadataValue { (try? checkedValue(at:id)) ?? .unknown }
+    public func value(path: String) -> FileMetadataValue { (try? checkedValue(path:path)) ?? .unknown }
+    public func checkedValue(path: String) throws -> FileMetadataValue {
         // Frozen rename captures may form a chain. Walk it without recursive
         // calls so repeated directory renames cannot exhaust the query stack.
         var snapshot = self, resolved = path
         for _ in 0...MetadataIndexCoordinator.maximumRenameAliasDepth {
+            try snapshot.checkStorage()
             if snapshot.overlay.deleted.contains(resolved) { return .unknown }
             if let value = snapshot.overlay.deltaValues[resolved] { return value }
             if let prefix = snapshot.renamedDirectories.keys.filter({PathCanonicalizer.isWithin(resolved,root:$0)}).max(by:{$0.count < $1.count}),
@@ -46,7 +52,9 @@ public struct MetadataQuerySnapshot: Sendable {
                 snapshot = source.snapshot
                 continue
             }
-            return snapshot.ordinal(resolved).map { snapshot.value(at:$0) } ?? .unknown
+            let ordinal = snapshot.ordinal(resolved)
+            try snapshot.checkStorage() // Resolver may have latched a backing I/O fault.
+            return try ordinal.map { try snapshot.checkedValue(at:$0) } ?? .unknown
         }
         return .unknown // Defensive bound even for an injected malformed capture.
     }
@@ -66,8 +74,8 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     public static let maximumRenameAliasCount = 64
     public static let maximumRetainedRenameBytes = 32*1024*1024
     private let lock = NSLock()
-    private var namespace: MMapBaseIndex?
-    private var base: MMapMetadataIndex?
+    private var namespace: (any ImmutableNamespaceBase)?
+    private var base: (any ImmutableMetadataBase)?
     private var resolver: PathResolverSnapshot?
     public let hotDirectoryCache = HotDirectoryCache()
     private var overlay = MetadataOverlay()
@@ -87,6 +95,13 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     public var renameNeedsMaintenance: Bool { lock.withLock { aliasPressure } }
     public var requiresRecovery: Bool { lock.withLock { overflowed } }
     var recoveryState:(overflowed:Bool,epoch:UInt64) {lock.withLock {(overflowed,overflowEpoch)}}
+    public func releaseStorage() {
+      lock.withLock {
+        namespace = nil; base = nil; resolver = nil; renamedDirectories = [:]
+        overlay = MetadataOverlay(); freshness = .unavailable
+        hotDirectoryCache.reset(version:.init(baseUUID:UUID(),generation:0),root:"/")
+      }
+    }
     public init() { overlayByteLimit = 128*1024*1024;overlayEntryLimit = 500_000 }
     // Smaller limits let tests exercise the same production boundary without
     // allocating a second large index under the sanitizers.
@@ -94,13 +109,17 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
         self.overlayByteLimit = min(128*1024*1024,max(1,overlayByteLimit))
         self.overlayEntryLimit = min(500_000,max(1,overlayEntryLimit))
     }
+    public func checkStorage() throws {
+        let values = lock.withLock { (namespace,base) }
+        try values.0?.checkStorage(); try values.1?.checkStorage()
+    }
     public func capture() -> MetadataQuerySnapshot {
         lock.withLock { .init(namespace:namespace,base:base,overlay:overlay,freshness:freshness,resolver:resolver,renamedDirectories:renamedDirectories) }
     }
     func baseDirectoryMatches(path:String,fileID:UInt64?) -> Bool {
         let snapshot = capture()
         guard let namespace = snapshot.namespace,case .base(let ordinal)? = snapshot.resolver?.resolveDirectory(path) else { return false }
-        let record = namespace.record(at:ordinal)
+        guard let record = try? namespace.record(at:ordinal) else { return false }
         return record.kind == .directory && record.fileID == fileID && !snapshot.overlay.deleted.contains(path)
     }
     public func resourceUsage() -> (entries:Int,bytes:Int) { lock.withLock { (overlay.entryCount,safetyBytes+overlay.retainedRenameBytes) } }
@@ -121,7 +140,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     public func restartReplay() { lock.withLock { floor = cursor; historyDone = false; freshness = base == nil ? .building : .catchingUp } }
     public var replayFloor: UInt64 { lock.withLock { floor } }
     public var isDirty: Bool { lock.withLock { overflowed || bootstrapPending || overlay.entryCount > 0 || !renamedDirectories.isEmpty } }
-    public func bind(namespace: MMapBaseIndex, mapped: MMapMetadataIndex? = nil, cursor: UInt64? = nil, retainOverlay: Bool = false) {
+    public func bind(namespace: any ImmutableNamespaceBase, mapped: (any ImmutableMetadataBase)? = nil, cursor: UInt64? = nil, retainOverlay: Bool = false) {
         let pathResolver = PathResolverSnapshot(base:namespace,cache:hotDirectoryCache)
         hotDirectoryCache.reset(version:pathResolver.version,root:namespace.root)
         lock.withLock {
@@ -136,7 +155,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
         }
     }
     public func beginBootstrap(fence: UInt64) { lock.withLock { bootstrapPending = true; floor = fence; if base == nil { cursor = fence }; freshness = .building } }
-    public func install(_ mapped: MMapMetadataIndex, expectedGeneration: UInt64? = nil) throws {
+    public func install(_ mapped: any ImmutableMetadataBase, expectedGeneration: UInt64? = nil) throws {
         try lock.withLock {
             guard let namespace, mapped.header.matches(namespace.header) else { throw SnapshotError.generationChanged }
             base = mapped; bootstrapPending = false
@@ -158,7 +177,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     }
     private func updateLocked(path:String,value:FileMetadataValue?,ordinal:UInt32?) {
             guard !overflowed else { return }
-            let old = overlay.deltaValues[path] ?? ordinal.map { overlay.baseOverrides[$0] ?? base?.value(at:$0) ?? .unknown } ?? .unknown
+            let old = overlay.deltaValues[path] ?? ordinal.map { overlay.baseOverrides[$0] ?? (try? base?.value(at:$0)) ?? .unknown } ?? .unknown
             if let value {
                 if old == value && !overlay.deleted.contains(path) { return }
                 let deletedBytes = overlay.deleted.contains(path) ? 48+path.utf8.count : 0
@@ -211,6 +230,7 @@ public final class MetadataIndexCoordinator: @unchecked Sendable {
     public func markPending() { lock.withLock { if base != nil && !paused { freshness = .catchingUp } } }
     public func advance(_ id:UInt64, historyDone:Bool = false, pending:Bool = false) {
         lock.withLock {
+            do { try namespace?.checkStorage(); try base?.checkStorage() } catch { freshness = .failed; return }
             if !overflowed, id != UInt64.max { cursor = max(cursor,id) }
             self.historyDone = self.historyDone || historyDone
             if base != nil { freshness = paused ? .pausedStale : (self.historyDone && !pending ? .live : .catchingUp) }

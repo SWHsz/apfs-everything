@@ -14,9 +14,9 @@ public enum V2Source: Sendable {
     case .hybrid(let c):
       switch ref {
       case .base(let id):
-        let r = c.base.record(at: id)
+        let r = try c.base.record(at: id)
         return .init(
-          id: 0, parentID: 0, name: c.base.name(at: id), kind: r.kind,
+          id: 0, parentID: 0, name: try c.base.name(at: id), kind: r.kind,
           fileID: r.fileID == 0 ? nil : r.fileID, isBoundary: r.flags != 0)
       case .delta(let id):
         let d = c.delta[id]!
@@ -33,7 +33,7 @@ public enum V2Source: Sendable {
       return try index.exportTreeChildren(Int32(id), generation: generation).map {
         .base(UInt32($0))
       }
-    case .hybrid(let c): return c.children(ref, path: path)
+    case .hybrid(let c): return try c.children(ref, path: path)
     }
   }
   var rootRef: EntryRef {
@@ -50,7 +50,7 @@ public enum SnapshotV2Writer {
     store: SnapshotStore,
     cancellation: CancellationToken = .init(), beforePublish: @escaping () throws -> Void = {},
     fault: ((SnapshotFailurePoint) throws -> Void)? = nil,
-    install: ((MMapBaseIndex, [String: EntryRef], () throws -> Void) throws -> Void)? = nil,
+    install: ((any ImmutableNamespaceBase, [String: EntryRef], () throws -> Void) throws -> Void)? = nil,
     prepareMetadata: (([EntryRef], SnapshotHeader) throws -> Void)? = nil,
     completed: (([EntryRef], SnapshotHeader) -> Void)? = nil,
     resourceMetrics: Metrics? = nil, resourceStage: String = "snapshot", checkpoint: @escaping () throws -> Void = {}
@@ -138,7 +138,7 @@ public enum SnapshotV2Writer {
     guard h.fileLength <= SnapshotFormat.maxFileBytes, generation != .max, cursor != .max else {
       throw SnapshotError.invalid("v2 file/cursor limit")
     }
-    var prepared: MMapBaseIndex?
+    var prepared: (any ImmutableNamespaceBase)?
     var directoryMap: [String: EntryRef] = [:]
     try store.publish(
       write: { fd in
@@ -205,7 +205,7 @@ public enum SnapshotV2Writer {
       }, fault: fault,
       validate: { fd in
         resourceMetrics?.set(resourceStage + ".rss_before_mmap", to: Int(Metrics.processUsage().residentBytes))
-        let b = try MMapBaseIndex(fileDescriptor: fd, identity: identity, checkpoint: checkpoint)
+        let b = try store.immutableNamespaceReader(fileDescriptor:fd,identity:identity,checkpoint:checkpoint)
         resourceMetrics?.set(resourceStage + ".rss_after_mmap", to: Int(b.residentAfterMmap))
         resourceMetrics?.set(resourceStage + ".rss_after_validation", to: Int(b.residentAfterValidation))
         prepared = b

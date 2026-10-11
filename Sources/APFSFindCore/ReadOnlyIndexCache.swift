@@ -12,6 +12,10 @@ public final class ReadOnlyIndexCache {
     }
     deinit { close(fd) }
     public func mappedBase(identity:VolumeIdentity) throws -> MMapBaseIndex {
+      guard let base = try immutableBase(identity:identity,usePRead:false) as? MMapBaseIndex else {throw SnapshotError.invalid("expected internal mmap")}
+      return base
+    }
+    public func immutableBase(identity:VolumeIdentity,usePRead:Bool) throws -> any ImmutableNamespaceBase {
         let listing = openat(fd,".",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW)
         guard listing >= 0 else { throw SnapshotError.io("enumerate read-only cache",errno) }
         guard let directory = fdopendir(listing) else { close(listing); throw SnapshotError.io("fdopendir cache",errno) }
@@ -22,11 +26,15 @@ public final class ReadOnlyIndexCache {
                   name.dropLast(8).utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { continue }
             let readerFD = openat(fd,name,O_RDONLY|O_CLOEXEC|O_NOFOLLOW)
             guard readerFD >= 0 else { continue }
-            if let reader = try? SnapshotReader(fileDescriptor:readerFD,expectedIdentity:identity),let base = reader.mappedBase { return base }
+            if let reader = try? SnapshotReader(fileDescriptor:readerFD,expectedIdentity:identity,usePRead:usePRead),let base = reader.immutableBase { return base }
         }
         throw SnapshotError.invalid("no matching read-only namespace v2 cache")
     }
-    public func mappedMetadata(base: SnapshotHeader) throws -> MMapMetadataIndex {
+    public func mappedMetadata(base:SnapshotHeader) throws -> MMapMetadataIndex {
+      guard let metadata = try immutableMetadata(base:base,usePRead:false) as? MMapMetadataIndex else {throw SnapshotError.invalid("expected internal mmap metadata")}
+      return metadata
+    }
+    public func immutableMetadata(base:SnapshotHeader,usePRead:Bool) throws -> any ImmutableMetadataBase {
         let listing = openat(fd,".",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW)
         guard listing >= 0 else { throw SnapshotError.io("enumerate metadata cache",errno) }
         guard let directory = fdopendir(listing) else { close(listing); throw SnapshotError.io("fdopendir metadata",errno) }
@@ -37,7 +45,9 @@ public final class ReadOnlyIndexCache {
                 name.dropLast(9).utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { continue }
             let readerFD = openat(fd,name,O_RDONLY|O_CLOEXEC|O_NOFOLLOW)
             guard readerFD >= 0 else { continue }
-            if let metadata = try? MMapMetadataIndex(fileDescriptor:readerFD,base:base) { return metadata }
+            if usePRead {
+              if let metadata = try? PReadMetadataIndex(fileDescriptor:readerFD,base:base) {return metadata}
+            } else if let metadata = try? MMapMetadataIndex(fileDescriptor:readerFD,base:base) {return metadata}
         }
         throw SnapshotError.invalid("no matching read-only metadata cache")
     }

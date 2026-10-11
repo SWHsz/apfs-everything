@@ -3,6 +3,7 @@ import Foundation
 /// Runtime contract shared by the ephemeral reference and persistent hybrid.
 public protocol NamespaceIndex: AnyObject, Sendable {
   var root: String { get }
+  func checkStorage() throws
   func apply(_ mutations: [IndexMutation])
   func entry(at path: String) -> NamespaceEntry?
   func children(of path: String) -> [NamespaceEntry]
@@ -24,6 +25,7 @@ extension FileIndex: NamespaceIndex {
   }
 }
 extension NamespaceIndex {
+  public func checkStorage() throws {}
   public func search(_ query: String) -> SearchResult { search(query, limit: 50) }
 }
 public enum EntryRef: Hashable, Sendable {

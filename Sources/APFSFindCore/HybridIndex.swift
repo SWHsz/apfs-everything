@@ -7,7 +7,7 @@ public struct DeltaEntry: Sendable {
   public let foldedName: String
 }
 public struct HybridCapture: Sendable {
-  public let base: MMapBaseIndex
+  public let base: any ImmutableNamespaceBase
   public let tombstones: [UInt64]
   public let delta: [UInt32: DeltaEntry]
   public let deltaChildren: [EntryRef: [String: UInt32]]
@@ -18,39 +18,39 @@ public struct HybridCapture: Sendable {
   public func deleted(_ id: UInt32) -> Bool {
     tombstones[Int(id) / 64] & (1 << (Int(id) % 64)) != 0
   }
-  public func item(_ ref: EntryRef) -> NamespaceEntry {
+  public func item(_ ref: EntryRef) throws -> NamespaceEntry {
     switch ref {
     case .delta(let id): return delta[id]!.entry
     case .base(let id):
-      let r = base.record(at: id)
+      let r = try base.record(at: id)
       return .init(
-        path: base.reconstructPath(id), kind: r.kind, deviceID: base.header.rootDeviceID,
+        path: try base.reconstructPath(id), kind: r.kind, deviceID: base.header.rootDeviceID,
         fileID: r.fileID == 0 ? nil : r.fileID, isMountPoint: r.flags != 0)
     }
   }
-  public func name(_ ref: EntryRef) -> String {
+  public func name(_ ref: EntryRef) throws -> String {
     switch ref {
-    case .base(let i): base.name(at: i)
+    case .base(let i): try base.name(at: i)
     case .delta(let i): delta[i]!.name
     }
   }
-  public func kind(_ ref: EntryRef) -> EntryKind {
+  public func kind(_ ref: EntryRef) throws -> EntryKind {
     switch ref {
-    case .base(let i): base.record(at: i).kind
+    case .base(let i): try base.record(at: i).kind
     case .delta(let i): delta[i]!.entry.kind
     }
   }
-  public func children(_ directory: EntryRef, path: String) -> [EntryRef] {
+  public func children(_ directory: EntryRef, path: String) throws -> [EntryRef] {
     var refs: [EntryRef] = []
     if case .base(let id) = directory {
-      refs = base.directChildren(of: id).filter { !deleted($0) }.map { .base($0) }
+      refs = try base.directChildren(of: id).filter { !deleted($0) }.map { .base($0) }
     }
     refs += (deltaChildren[directory] ?? [:]).values.compactMap { delta[$0] == nil ? nil : .delta($0) }
-    return refs.sorted {
-      let a = name($0)
-      let b = name($1)
+    return try refs.sorted {
+      let a = try name($0)
+      let b = try name($1)
       return MMapBaseIndex.less(
-        (FileEntry.fold(a), a, kind($0).snapshotCode), (FileEntry.fold(b), b, kind($1).snapshotCode)
+        (FileEntry.fold(a), a, try kind($0).snapshotCode), (FileEntry.fold(b), b, try kind($1).snapshotCode)
       )
     }
   }
@@ -75,7 +75,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   private var metadataSource: MetadataIndexCoordinator?
   public func setMetadataSource(_ source: MetadataIndexCoordinator) { lock.withLock { metadataSource = source } }
   private var bootstrap: FileIndex?
-  private var base: MMapBaseIndex?
+  private var base: (any ImmutableNamespaceBase)?
   private var words: [UInt64] = []
   private var delta: [UInt32: DeltaEntry] = [:]
   private var deltaPaths: [String: UInt32] = [:]
@@ -100,13 +100,18 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     self.root = root
     bootstrap = FileIndex(root: root)
   }
-  public init(base: MMapBaseIndex, maximumOverlayEntries:Int = 500_000, maximumOverlayBytes:Int = 128*1024*1024) {
+  public init(base: any ImmutableNamespaceBase, maximumOverlayEntries:Int = 500_000, maximumOverlayBytes:Int = 128*1024*1024) {
     self.maximumOverlayEntries = maximumOverlayEntries; self.maximumOverlayBytes = maximumOverlayBytes
     root = base.root
     bootstrap = nil
     install(base: base)
   }
-  public var mappedBase: MMapBaseIndex? { lock.withLock { base } }
+  public var mappedBase: MMapBaseIndex? { lock.withLock { base as? MMapBaseIndex } }
+  public var immutableBase: (any ImmutableNamespaceBase)? { lock.withLock { base } }
+  public func checkStorage() throws {
+    let values = lock.withLock { (base,metadataSource) }
+    try values.0?.checkStorage(); try values.1?.checkStorage()
+  }
   public func resetWriterWaitMeasurements() {
     lock.withLock {
       writerWaits.removeAll(keepingCapacity: true); writerWaitSlot = 0; writerWaitMaximum = 0
@@ -114,8 +119,16 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     }
   }
   public var transientIndex: FileIndex? { lock.withLock { bootstrap } }
+  public func releaseStorage() {
+    lock.withLock {
+      base = nil; bootstrap = nil; words = []; delta = [:]; deltaPaths = [:]
+      deltaChildren = [:]; deltaParents = [:]; freeIDs = []
+      hotDirectoryCache.reset(version:.init(baseUUID:UUID(),generation:generation),root:root)
+      overlayBytes = 0
+    }
+  }
   public func install(
-    base: MMapBaseIndex, directoryMap: [String: EntryRef]? = nil, generation: UInt64? = nil
+    base: any ImmutableNamespaceBase, directoryMap: [String: EntryRef]? = nil, generation: UInt64? = nil
   ) {
     lock.withLock {
       overflowed = false
@@ -169,12 +182,12 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     return PathResolverSnapshot(base:base,tombstones:words,delta:delta,overlayChildren:deltaChildren,
         generation:generation,cache:hotDirectoryCache,metrics:metrics).resolve(path)
   }
-  private func item(_ ref: EntryRef, path: String) -> NamespaceEntry {
+  private func item(_ ref: EntryRef, path: String) throws -> NamespaceEntry {
     switch ref {
     case .delta(let id): return delta[id]!.entry
     case .base(let id):
       let b = base!
-      let r = b.record(at: id)
+      let r = try b.record(at: id)
       return .init(
         path: path, kind: r.kind, deviceID: b.header.rootDeviceID,
         fileID: r.fileID == 0 ? nil : r.fileID, isMountPoint: r.flags != 0)
@@ -194,21 +207,21 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       guard base === capturedBase else {
         // Rare publication race: resolve against the newly installed mapping.
         guard let ref = reference(canonical) else { return nil }
-        return item(ref,path:canonical)
+        return try? item(ref,path:canonical)
       }
       // Every live overlay entry is keyed by its exact canonical path. Directory
       // removal/replacement clears attached delta descendants and tombstones
       // its whole immutable subtree, so checking these scalar results is enough.
       if let id = deltaPaths[canonical],let entry = delta[id] { return entry.entry }
       guard case .base(let id)? = candidate,!deleted(id) else { return nil }
-      return item(.base(id),path:canonical)
+      return try? item(.base(id),path:canonical)
     }
   }
   public func childCount(of path:String) -> Int? {
     guard let captured = capture(),let ref = captured.resolver.resolveDirectory(path) else { return nil }
     // A conservative sibling count is used only to choose bulk vs sparse I/O.
     let original: Int
-    if case .base(let id) = ref { original = Int(captured.base.record(at:id).childCount) } else { original = 0 }
+    if case .base(let id) = ref { original = Int((try? captured.base.record(at:id))?.childCount ?? 0) } else { original = 0 }
     return original+(captured.deltaChildren[ref]?.count ?? 0)
   }
   public func children(of path: String) -> [NamespaceEntry] {
@@ -217,23 +230,23 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     // Reconciliation needs canonical path order, not search/ranking order.
     // Sorting the same siblings by folded name first performs thousands of
     // unnecessary Unicode folds per parent under ASan and query pressure.
-    return captured.resolver.children(of:ref).map { child in
+    return (try? captured.resolver.children(of:ref).map { child in
       switch child {
       case .delta(let id): return captured.delta[id]!.entry
-      case .base(let id): let r = captured.base.record(at:id)
-        return .init(path:(path == "/" ? "" : path)+"/"+captured.base.name(at:id),kind:r.kind,
+      case .base(let id): let r = try captured.base.record(at:id)
+        return .init(path:(path == "/" ? "" : path)+"/"+(try captured.base.name(at:id)),kind:r.kind,
           deviceID:captured.base.header.rootDeviceID,fileID:r.fileID == 0 ? nil : r.fileID,isMountPoint:r.flags != 0)
       }
-    }.sorted { $0.path < $1.path }
+    }.sorted { $0.path < $1.path }) ?? []
   }
-  @discardableResult private func remove(_ path: String) -> Bool {
+  @discardableResult private func remove(_ path: String) throws -> Bool {
     guard path != root else { return false }
     guard let ref = reference(path) else { return false }
-    let old = item(ref, path: path)
+    let old = try item(ref, path: path)
     let isDir = old.kind == .directory
     var removals:[UInt32]=[]
     if case .base(let id) = ref, let b = base {
-      let range=b.subtreeRange(of:id)
+      let range=try b.subtreeRange(of:id)
       if range.count > 100_000 { overflowed = true; metrics.record("overlay_large_subtree_recovery"); return false }
       for i in range {
         // Delta descendants can attach to any immutable directory in this range.
@@ -242,7 +255,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
         if deleted(i) {continue}
         words[Int(i) / 64] |= 1 << (Int(i) % 64)
         dead += 1
-        let kind = b.record(at: i).kind
+        let kind = try b.record(at: i).kind
         if kind == .file { files -= 1 }
         if kind == .directory { dirs -= 1 }
       }
@@ -298,22 +311,24 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       words = words.map { $0 }
       metrics.record("tombstone_cow_copies")
     }
+    do {
+    try base?.checkStorage()
     var changed = false
     for m in mutations {
       if overflowed { continue }
       if delta.count >= maximumOverlayEntries || overlayBytes >= maximumOverlayBytes { overflowed = true; metrics.record("overlay_safety_stops"); continue }
       switch m {
-      case .remove(let path): changed = remove(path) || changed
+      case .remove(let path): changed = try remove(path) || changed
       case .upsert(let e):
         guard PathCanonicalizer.normalize(e.path) == e.path,
           PathCanonicalizer.isWithin(e.path, root: root)
         else { continue }
-        if let r = reference(e.path), item(r, path: e.path) == e { continue }
-        guard e.path != root, let parent = reference(PathCanonicalizer.parent(of:e.path)), item(parent,path:PathCanonicalizer.parent(of:e.path)).kind == .directory else { continue }
-        let parentEntry = item(parent,path:PathCanonicalizer.parent(of:e.path))
+        if let r = reference(e.path), try item(r, path: e.path) == e { continue }
+        guard e.path != root, let parent = reference(PathCanonicalizer.parent(of:e.path)), try item(parent,path:PathCanonicalizer.parent(of:e.path)).kind == .directory else { continue }
+        let parentEntry = try item(parent,path:PathCanonicalizer.parent(of:e.path))
         guard !parentEntry.isMountPoint, parentEntry.deviceID == 0 || parentEntry.deviceID == base?.header.rootDeviceID else { continue }
         if overlayBytes + 192 + e.path.utf8.count*2 + e.path.split(separator:"/").last!.utf8.count + FileEntry.fold(String(e.path.split(separator:"/").last!)).utf8.count > maximumOverlayBytes { overflowed = true; metrics.record("overlay_safety_stops"); continue }
-        _ = remove(e.path)
+        _ = try remove(e.path)
         if overflowed { continue }
         let name = e.path == root ? "" : String(e.path.split(separator: "/").last!)
         let d = DeltaEntry(
@@ -331,12 +346,14 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
         changed = true
       }
     }
+    try base?.checkStorage()
     if changed {
       generation &+= 1
       if let base { hotDirectoryCache.reset(version:.init(baseUUID:base.header.snapshotUUID!,generation:generation),root:root) }
       lastMutation = ProcessInfo.processInfo.systemUptime
       metrics.record("namespace_mutations")
     }
+    } catch { metrics.record("index_storage_read_failures") }
   }
   func ensureGeneration(atLeast value: UInt64) {
     lock.withLock { generation = max(generation, value) }
@@ -369,8 +386,8 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   public func snapshotEntries() -> [NamespaceEntry] {
     if let b = lock.withLock({ bootstrap }) { return b.snapshotEntries() }
     guard let c = capture() else { return [] }
-    return (0..<c.base.count).compactMap { c.deleted(UInt32($0)) ? nil : c.item(.base(UInt32($0))) }
-      + c.delta.values.map(\.entry)
+    return ((try? (0..<c.base.count).compactMap { c.deleted(UInt32($0)) ? nil : try c.item(.base(UInt32($0))) }
+      + c.delta.values.map(\.entry)) ?? [])
   }
   public func snapshotPaths() -> Set<String> { Set(snapshotEntries().map(\.path)) }
   public func compactionTrigger(_ policy: CompactionPolicy) -> (threshold: Bool, safety: Bool) {
@@ -452,8 +469,22 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     defer { lock.withLock { activeQueries -= 1 } }
     let baseStart = ProcessInfo.processInfo.systemUptime
     var scanned = 0, metadataReads = 0
-    let winners = base.searchBase(
-      bytes, limit: max(0, limit), cancellation: request.cancellation, scanned: { scanned = $0 }, sort: request.sort, metadata: { metadataReads += 1; return metadata?.value(at:$0) ?? .unknown }, deleted: { bitmap[Int($0) / 64] & (1 << (Int($0) % 64)) != 0 })
+    var metadataBlock:PReadMetadataIndex.ReadBlock?
+    func readMetadata(_ id:UInt32) throws -> FileMetadataValue {
+      metadataReads += 1
+      if request.sort.key.requiresMetadata, let capture = metadata,let pread = capture.base as? PReadMetadataIndex {
+        if let value = capture.overlay.baseOverrides[id] {return value}
+        if metadataBlock == nil || Int(id) < metadataBlock!.start || Int(id) >= metadataBlock!.end {
+          metadataBlock = try pread.readBlock(containing:id)
+        }
+        return metadataBlock!.value(id)
+      }
+      return try metadata?.checkedValue(at:id) ?? .unknown
+    }
+    do {
+    try base.checkStorage()
+    let winners = try base.searchBase(
+      bytes, limit: max(0, limit), cancellation: request.cancellation, scanned: { scanned = $0 }, sort: request.sort, metadata: {try readMetadata($0)}, deleted: { bitmap[Int($0) / 64] & (1 << (Int($0) % 64)) != 0 })
     let baseMS = (ProcessInfo.processInfo.systemUptime - baseStart) * 1000
     let overlayStart = ProcessInfo.processInfo.systemUptime
     let fresh = metadata?.freshness ?? .unavailable
@@ -464,20 +495,20 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
     var extra = BoundedTopK<SearchHit>(limit:limit) { SearchOrdering.less($0,$1,sort:request.sort) }
     if !q.isEmpty, limit > 0 {
       let rootName = FileEntry.fold(root == "/" ? "/" : String(root.split(separator:"/").last!))
-      if rootName.contains(q) { metadataReads += 1; extra.insert(hit(root,.directory,rootName == q ? 0 : (rootName.hasPrefix(q) ? 1 : 2),metadata?.value(at:0) ?? .unknown)) }
+      if rootName.contains(q) { metadataReads += 1; extra.insert(hit(root,.directory,rootName == q ? 0 : (rootName.hasPrefix(q) ? 1 : 2),try metadata?.checkedValue(at:0) ?? .unknown)) }
       for (ordinal,d) in live.enumerated() {
         if ordinal % 4096 == 0, request.cancellation.isCancelled { break }
         guard d.foldedName.contains(q) else { continue }
         metadataReads += 1
-        extra.insert(hit(d.entry.path,d.entry.kind,d.foldedName == q ? 0 : (d.foldedName.hasPrefix(q) ? 1 : 2),metadata?.value(path:d.entry.path) ?? .unknown))
+        extra.insert(hit(d.entry.path,d.entry.kind,d.foldedName == q ? 0 : (d.foldedName.hasPrefix(q) ? 1 : 2),try metadata?.checkedValue(path:d.entry.path) ?? .unknown))
       }
     }
     let overlayMS = (ProcessInfo.processInfo.systemUptime-overlayStart)*1000
     let pathStart = ProcessInfo.processInfo.systemUptime
-    var all = winners.map { candidate in
+    var all = try winners.map { candidate in
       if !request.sort.key.requiresMetadata { metadataReads += 1 }
-      return hit(base.reconstructPath(candidate.id),base.record(at:candidate.id).kind,candidate.rank,
-      request.sort.key.requiresMetadata ? candidate.metadata : (metadata?.value(at:candidate.id) ?? .unknown)) } + extra.sorted()
+      return hit(try base.reconstructPath(candidate.id),try base.record(at:candidate.id).kind,candidate.rank,
+      request.sort.key.requiresMetadata ? candidate.metadata : (try metadata?.checkedValue(at:candidate.id) ?? .unknown)) } + extra.sorted()
     all.sort { SearchOrdering.less($0,$1,sort:request.sort) }
     var seen = Set<String>()
     let hits = Array(all.filter { seen.insert($0.path).inserted }.prefix(max(0,limit)))
@@ -494,8 +525,13 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
       "query_path_reconstruction_us",
       to: Int((ProcessInfo.processInfo.systemUptime - pathStart) * 1_000_000))
     metrics.set("query_retries", to: 0)
+    try base.checkStorage(); try metadata?.checkStorage()
     return .init(
       hits: hits, latencyMilliseconds: (ProcessInfo.processInfo.systemUptime - start) * 1000,
       generation: g, cancelled: request.cancellation.isCancelled)
+    } catch {
+      metrics.record("index_storage_search_failures")
+      return .init(hits:[],latencyMilliseconds:(ProcessInfo.processInfo.systemUptime-start)*1000,generation:g,cancelled:request.cancellation.isCancelled,storageError:request.cancellation.isCancelled ? nil : IndexStorageError.reading(error))
+    }
   }
 }

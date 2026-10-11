@@ -212,7 +212,7 @@ final class HybridIndexTests: XCTestCase {
         h.install(base: new, directoryMap: map)
       })
     XCTAssertEqual(capture.base.count, 10_001)
-    XCTAssertEqual(capture.base.reconstructPath(1), v.root + "/file000000")
+    XCTAssertEqual(try capture.base.reconstructPath(1), v.root + "/file000000")
     XCTAssertNotNil(h.entry(at: v.root + "/visible"))
     XCTAssertEqual(h.hybridStats()["overlay_live_entries"] as? Int, 0)
     XCTAssertEqual(done.wait(timeout: .now() + 5), .success)

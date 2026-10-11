@@ -136,7 +136,7 @@ public final class MMapMetadataIndex: @unchecked Sendable {
 
 public enum MetadataWriter {
     public static let maximumChunkBytes = 65536
-    private static func emit(fd:Int32,base:SnapshotHeader,provisional:MetadataHeader,value:(UInt32)->FileMetadataValue,
+    private static func emit(fd:Int32,base:SnapshotHeader,provisional:MetadataHeader,value:(UInt32)throws->FileMetadataValue,
                              fault:((SnapshotFailurePoint)throws->Void)?,checkpoint:()throws->Void) throws -> MetadataHeader {
         try snapshotWriteAll(fd,Data(repeating:0,count:256)); try fault?(.afterHeader)
         var crc:UInt32 = 0
@@ -146,7 +146,7 @@ public enum MetadataWriter {
             for start in stride(from:0,to:count,by:8192) {
                 var bytes = Data(repeating:0,count:min(8192,count-start)*8)
                 for id in start..<min(start+8192,count) {
-                    let v = value(UInt32(id))
+                    let v = try value(UInt32(id))
                     if time { bytes.put(v.modificationTimeNanoseconds ?? 0,at:(id-start)*8) }
                     else { bytes.put(v.logicalSize ?? 0,at:(id-start)*8) }
                 }
@@ -156,7 +156,7 @@ public enum MetadataWriter {
         for start in stride(from:0,to:count,by:16384) {
             var bytes = Data(repeating:0,count:(min(16384,count-start)+3)/4)
             for id in start..<min(start+16384,count) {
-                let v = value(UInt32(id)), flags:UInt8 = (v.logicalSize == nil ? 0 : 1) | (v.modificationTimeNanoseconds == nil ? 0 : 2)
+                let v = try value(UInt32(id)), flags:UInt8 = (v.logicalSize == nil ? 0 : 1) | (v.modificationTimeNanoseconds == nil ? 0 : 2)
                 bytes[(id-start)/4] |= flags << (((id-start)%4)*2)
             }
             try chunk(bytes)
@@ -167,7 +167,7 @@ public enum MetadataWriter {
         try snapshotWriteAll(fd,footer); try snapshotWriteAll(fd,header.encoded(),offset:0)
         return header
     }
-    static func stage(store:SnapshotStore,base:SnapshotHeader,cursor:UInt64,value:(UInt32)->FileMetadataValue,
+    static func stage(store:SnapshotStore,base:SnapshotHeader,cursor:UInt64,value:(UInt32)throws->FileMetadataValue,
                       fault:((SnapshotFailurePoint)throws->Void)?,checkpoint:()throws->Void = {}) throws -> StagedMetadataFile {
         let provisional = try MetadataHeader(base:base,cursor:cursor)
         return try store.stageMetadata(base:base,write:{ fd in try emit(fd:fd,base:base,provisional:provisional,value:value,fault:fault,checkpoint:checkpoint) },fault:fault)
@@ -175,12 +175,12 @@ public enum MetadataWriter {
     @discardableResult
     public static func write(store:SnapshotStore,base:SnapshotHeader,cursor:UInt64,
         metadataUUID:UUID = UUID(),createdAtUnixSeconds:UInt64 = UInt64(Date().timeIntervalSince1970),
-        value:(UInt32)->FileMetadataValue,beforePublish:()throws->Void = {},fault:((SnapshotFailurePoint)throws->Void)? = nil,
+        value:(UInt32)throws->FileMetadataValue,beforePublish:()throws->Void = {},fault:((SnapshotFailurePoint)throws->Void)? = nil,
         cancellation:CancellationToken = .init(),checkpoint:@escaping ()throws->Void = {}) throws -> MetadataHeader {
         let provisional = try MetadataHeader(base:base,cursor:cursor,metadataUUID:metadataUUID,createdAtUnixSeconds:createdAtUnixSeconds)
         func check() throws { guard !cancellation.isCancelled else { throw SnapshotError.cancelled }; try checkpoint() }
         return try store.publish(name:store.metadataFilename,write:{ fd in
             try emit(fd:fd,base:base,provisional:provisional,value:value,fault:fault,checkpoint:check)
-        },beforePublish:{ try check(); try beforePublish() },fault:fault,validate:{fd in _ = try MMapMetadataIndex(fileDescriptor:fd,base:base,checkpoint:check)})
+        },beforePublish:{ try check(); try beforePublish() },fault:fault,validate:{fd in _ = try store.immutableMetadataReader(fileDescriptor:fd,base:base,checkpoint:check)})
     }
 }

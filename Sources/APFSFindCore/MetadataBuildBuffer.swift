@@ -12,10 +12,20 @@ public final class MetadataBuildBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var knownSizes = 0
     private let address: UnsafeMutableRawPointer
-    private let owner: OwnedBenchmarkDirectory
-    public init(count:Int,directory:String = "/private/tmp",beforeMapping:()throws->Void = {}) throws {
+    private let owner: OwnedBenchmarkDirectory?
+    private let heapAllocated:Bool
+    public init(count:Int,directory:String = "/private/tmp",temporaryInMemory:Bool = false,beforeMapping:()throws->Void = {}) throws {
         guard count > 0, UInt64(count) <= SnapshotFormat.maxRecords else { throw SnapshotError.invalid("metadata build count") }
         self.count = count; allocatedBytes = count*16+(count+3)/4
+        if temporaryInMemory {
+            // Building new columns is transient O(N) maintenance scratch, not
+            // a copy of the immutable base. Never map scratch on removable
+            // storage: MAP_PRIVATE can still SIGBUS after surprise removal.
+            try beforeMapping()
+            guard let bytes = calloc(allocatedBytes,1) else {throw SnapshotError.io("allocate metadata scratch",ENOMEM)}
+            address = bytes;owner = nil;heapAllocated = true;return
+        }
+        heapAllocated = false
         let temporaryOwner = try OwnedBenchmarkDirectory(parent:directory,prefix:"apfsfind-real-cache-")
         var success = false
         defer { if !success { try? temporaryOwner.remove() } }
@@ -30,7 +40,7 @@ public final class MetadataBuildBuffer: @unchecked Sendable {
         guard let p = mmap(nil,allocatedBytes,PROT_READ|PROT_WRITE,MAP_PRIVATE,fd,0),p != MAP_FAILED else { throw SnapshotError.io("mmap metadata columns",errno) }
         owner = temporaryOwner; address = p; success = true
     }
-    deinit { munmap(address,allocatedBytes); try? owner.remove() }
+    deinit { if heapAllocated {free(address)} else {munmap(address,allocatedBytes)};try? owner?.remove() }
     private func put(_ value:FileMetadataValue,at id:Int) {
         guard (0..<count).contains(id) else { return }
         address.storeBytes(of:(value.logicalSize ?? 0).littleEndian,toByteOffset:id*8,as:UInt64.self)

@@ -45,6 +45,9 @@ public actor MultiVolumeCoordinator {
   private let selectionStore: any VolumeSelectionStore
   public let maintenance: MaintenanceScheduler
   private let factory: SessionFactory
+  private let storageProvider:any IndexStorageVolumeProviding
+  private let storageResolver:IndexStorageResolver
+  private let storageLocator:IndexStorageLocatorStore?
   private var sessions: [UUID: any VolumeSearching] = [:]
   private var observers: [UUID: Task<Void, Never>] = [:]
   private var mounted: [VolumeDescriptor] = []
@@ -52,6 +55,10 @@ public actor MultiVolumeCoordinator {
   private var globalPauseReasons: Set<IndexPauseReason> = []
   private var individuallyPaused: Set<UUID> = []
   private var stopping = false
+  private var oldIndexCopies:[UUID:IndexStorageMigrationReceipt] = [:]
+  private var migrationTokens:[UUID:CancellationToken] = [:]
+  private var migrationProgress:[UUID:IndexStorageMigrationProgress] = [:]
+  private var migrationTargets:[UUID:String] = [:]
   private var activeQueries:[UUID:SearchCancellationToken]=[:]
   public private(set) var shutdownReport:[String:[String:Double]]=[:]
   private var revision: UInt64 = 0
@@ -59,11 +66,82 @@ public actor MultiVolumeCoordinator {
   public init(provider: any MountedVolumeProvider = LocalMountedVolumeProvider(),
               selectionStore: any VolumeSelectionStore = DefaultsVolumeSelectionStore(),
               maintenance: MaintenanceScheduler = .shared,
+              storageProvider:any IndexStorageVolumeProviding = LocalIndexStorageVolumeProvider(),
+              storageResolver:IndexStorageResolver? = nil,storageLocator:IndexStorageLocatorStore? = nil,
               factory: @escaping SessionFactory = { try VolumeIndexSession(volume: $0, maintenanceScheduler: $1) }) {
     self.provider = provider; self.selectionStore = selectionStore; self.maintenance = maintenance
+    self.storageProvider = storageProvider; self.storageResolver = storageResolver ?? .init(provider:storageProvider); self.storageLocator = storageLocator
     self.factory = factory; selected = selectionStore.load()
   }
   public func start() async { await refreshMountedVolumes() }
+  public func deleteOldIndexCopy(_ id:UUID) async throws {
+    guard let receipt = oldIndexCopies[id],let real = sessions[id] as? VolumeIndexSession else {throw SnapshotError.busy}
+    let resolver = storageResolver,provider = storageProvider
+    try await Task.detached {try real.coordinator.deleteOldIndexCopy(receipt,resolver:resolver,provider:provider)}.value
+    oldIndexCopies.removeValue(forKey:id)
+  }
+  public func cancelStorageMigration(_ id:UUID) { migrationTokens[id]?.cancel() }
+  public func storageProgress() -> [UUID:IndexStorageMigrationProgress] { migrationProgress }
+  public func storageStatus(_ id:UUID) async throws -> IndexStorageStatus {
+    guard let session = sessions[id] as? VolumeIndexSession else { throw SnapshotError.busy }
+    return try await Task.detached { try session.coordinator.storageStatus() }.value
+  }
+  public func moveStorage(_ id:UUID,to policy:IndexStoragePolicy) async throws -> IndexStorageMigrationReceipt {
+    guard !stopping,migrationTokens[id] == nil,let old = sessions[id] as? VolumeIndexSession else { throw SnapshotError.busy }
+    let (source,identity) = try old.coordinator.migrationSource()
+    let provider = storageProvider,resolver = storageResolver
+    let target = try resolver.resolve(policy,source:identity)
+    guard target.state == .available else { throw IndexStorageError(target.state) }
+    let token = CancellationToken(), locator = try storageLocator ?? IndexStorageLocatorStore(), scheduler = maintenance
+    migrationTokens[id] = token; migrationTargets[id] = target.storageMountPath
+    old.setStorageMigrating(true); publish()
+    defer { migrationTokens.removeValue(forKey:id); migrationTargets.removeValue(forKey:id); old.setStorageMigrating(false); publish() }
+    let receipt = try await Task.detached(priority:.utility) { [weak self] in
+      try IndexStorageMigrationCoordinator(provider:provider,locator:locator,resolver:resolver,scheduler:scheduler).migrate(
+        source:source,identity:identity,oldPolicy:old.coordinator.storagePolicy,to:policy,cancellation:token,retainValidatedReaders:true,
+        checkpoint:{ try old.coordinator.validateStorage(); try old.coordinator.validateSourceIdentity(identity) },
+        progress:{ value in Task { await self?.recordStorageProgress(id,value:value) } },
+        withSwitchBarrier:{ operation in
+          old.coordinator.pause()
+          do { try operation() } catch { try? old.coordinator.resume(); throw error }
+        })
+    }.value
+    if stopping { _ = try receipt.takeValidatedStorage(); await old.stop(policy:.fast);return receipt }
+    var preparedReplacement:(any VolumeSearching)?
+    do {
+      let replacement = try factory(old.volume,maintenance)
+      preparedReplacement = replacement
+      if let ready = replacement as? VolumeIndexSession {try ready.coordinator.adoptValidatedStorage(receipt.takeValidatedStorage())}
+      replacement.start()
+      do {
+        let deadline = ProcessInfo.processInfo.systemUptime+5
+        while !replacement.snapshot().searchAvailable && ProcessInfo.processInfo.systemUptime < deadline {
+          try await Task.sleep(for:.milliseconds(10))
+        }
+        guard replacement.snapshot().searchAvailable else {throw SnapshotError.busy}
+      }
+    } catch {
+      if let preparedReplacement {await preparedReplacement.stop(policy:.fast)}
+      defer {old.coordinator.renewResourceRegistration();try? old.coordinator.resume()}
+      do {try locator.publish(.init(identity:identity,policy:receipt.oldPolicy))}
+      catch {
+        // The old files remain valid, but a failed durable rollback must be
+        // visible: restart would otherwise select the new locator silently.
+        throw SnapshotError.invalid("storage switch failed and locator rollback failed: \(error)")
+      }
+      throw error
+    }
+    guard let replacement = preparedReplacement else {throw SnapshotError.busy}
+    await old.stop(policy:.fast)
+    (replacement as? VolumeIndexSession)?.coordinator.renewResourceRegistration()
+    sessions[id] = replacement; observers[id]?.cancel()
+    observers[id] = Task { [weak self] in for await _ in replacement.changes() { if Task.isCancelled { break }; await self?.publish() } }
+    for reason in globalPauseReasons { await replacement.setPauseReason(reason,enabled:true) }
+    if individuallyPaused.contains(id) { await replacement.setPauseReason(.userVolume,enabled:true) }
+    oldIndexCopies[id] = receipt
+    return receipt
+  }
+  private func recordStorageProgress(_ id:UUID,value:IndexStorageMigrationProgress) { migrationProgress[id] = value; publish() }
   public func mountedVolumes() -> [VolumeDescriptor] { mounted }
   public func selectedVolumes() -> Set<UUID> { selected }
   public func sessionsSnapshot() -> [VolumeSessionSnapshot] {
@@ -93,6 +171,16 @@ public actor MultiVolumeCoordinator {
   }
   public func sessionsStream() -> AsyncStream<[VolumeSessionSnapshot]> { observations.stream(initial: sessionsSnapshot()) }
   private func publish() { observations.send(sessionsSnapshot()) }
+  public func storageWillUnmount(path:String) async {
+    for (id,target) in migrationTargets where target == path { migrationTokens[id]?.cancel() }
+    for (id,session) in sessions {
+      guard let real = session as? VolumeIndexSession,
+        real.coordinator.storageMonitor?.resolved.storageMountPath == path else { continue }
+      await maintenance.cancelQueued(volumeID:id)
+      await real.storageWillUnmount()
+    }
+    publish()
+  }
   public func refreshMountedVolumes() async {
     guard !stopping else { return }
     revision &+= 1; let expected = revision
@@ -107,7 +195,15 @@ public actor MultiVolumeCoordinator {
     for volume in mounted where volume.isSystemVolume || selected.contains(volume.volumeUUID) {
       let old = sessions[volume.volumeUUID]
       if let old, old.snapshot().state != .offline, old.volume.mountPath == volume.mountPath,
-        old.volume.deviceID == volume.deviceID { continue }
+        old.volume.deviceID == volume.deviceID {
+        if let real = old as? VolumeIndexSession {
+          if (try? real.coordinator.validateStorage()) != nil { continue }
+          await maintenance.cancelQueued(volumeID:volume.volumeUUID)
+          await real.storageWillUnmount()
+        } else if [.indexStorageOffline,.indexStorageReadOnly,.indexStorageLowSpace].contains(old.snapshot().state) { }
+        else if case .failed = old.snapshot().state { }
+        else { continue }
+      }
       if let old { await old.stop(policy: .fast) }
       guard !stopping, revision == expected else { return }
       do {
@@ -121,7 +217,7 @@ public actor MultiVolumeCoordinator {
         if individuallyPaused.contains(volume.volumeUUID) { await session.setPauseReason(.userVolume, enabled: true) }
         session.start()
       } catch { /* A failed factory is represented by an unavailable session. */
-        sessions[volume.volumeUUID] = UnavailableVolumeSession(volume: volume, error: String(describing: error))
+        sessions[volume.volumeUUID] = UnavailableVolumeSession(volume: volume, error: String(describing: error), storageError:error as? IndexStorageError)
       }
     }
     publish()
@@ -191,6 +287,7 @@ public actor MultiVolumeCoordinator {
   public func stop(policy: ShutdownPolicy = .fast) async {
     let started=ProcessInfo.processInfo.systemUptime
     stopping = true
+    for token in migrationTokens.values { token.cancel() }
     activeQueries.values.forEach{$0.cancel()}
     for task in observers.values { task.cancel() }; observers = [:]
     let current = Array(sessions.values)
@@ -205,10 +302,19 @@ public actor MultiVolumeCoordinator {
 private final class UnavailableVolumeSession: VolumeSearching, @unchecked Sendable {
   let volume: VolumeDescriptor
   let error: String
+  let storageError:IndexStorageError?
   private let lock = NSLock()
   private var offline = false
-  init(volume: VolumeDescriptor, error: String) { self.volume = volume; self.error = error }
-  func snapshot() -> VolumeSessionSnapshot { .init(volume: volume, state: lock.withLock { offline } ? .offline : .failed(error), searchAvailable: false, freshness: .baseSnapshot, indexedEntries: 0, snapshotBytes: 0, unreadableDirectories: 0, pendingReplayEvents: 0) }
+  init(volume: VolumeDescriptor, error: String, storageError:IndexStorageError? = nil) { self.volume = volume; self.error = error; self.storageError = storageError }
+  private var unavailableState:VolumeSessionState {
+    switch storageError?.state {
+    case .offline, .identityChanged: return .indexStorageOffline
+    case .readOnly: return .indexStorageReadOnly
+    case .lowSpace: return .indexStorageLowSpace
+    default: return .failed(error)
+    }
+  }
+  func snapshot() -> VolumeSessionSnapshot { .init(volume: volume, state: lock.withLock { offline } ? .offline : unavailableState, searchAvailable: false, freshness: .baseSnapshot, indexedEntries: 0, snapshotBytes: 0, unreadableDirectories: 0, pendingReplayEvents: 0) }
   func start() {}
   func stop(policy: ShutdownPolicy) async { lock.withLock { offline = true } }
   func search(_ request: SearchRequest) -> SearchResult { .init(hits: [], latencyMilliseconds: 0, generation: 0) }

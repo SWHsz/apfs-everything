@@ -118,6 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.mainMenu = menu
   }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    if let chooser = sender.windows.first(where:{$0 is NSOpenPanel && $0.isVisible}) {
+      chooser.makeKeyAndOrderFront(nil);return true
+    }
     launchPreferences.handleReopen { panel?.show() }; return true
   }
   @objc private func showSearch() { panel?.show() }

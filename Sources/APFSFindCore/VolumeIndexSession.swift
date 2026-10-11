@@ -2,6 +2,7 @@ import Foundation
 
 public enum IndexPauseReason: String, Hashable, Sendable { case userGlobal, userVolume, systemSleep }
 public enum VolumeSessionState: Sendable, Equatable {
+  case indexStorageOffline, indexStorageReadOnly, indexStorageLowSpace, migratingStorage
   case opening, queuedForInitialIndex, scanning, baseReady, catchingUp, live, rebuilding, paused, offline, failed(String)
   public var description: String {
     switch self {
@@ -13,7 +14,11 @@ public enum VolumeSessionState: Sendable, Equatable {
     case .live: "Live"
     case .paused: "索引已暂停，结果可能不是最新"
     case .rebuilding: "Rebuilding"
-    case .offline: "Offline"
+    case .offline: "来源卷离线"
+    case .indexStorageOffline: "索引存储离线"
+    case .indexStorageReadOnly: "索引存储只读"
+    case .indexStorageLowSpace: "索引存储空间不足"
+    case .migratingStorage: "正在迁移索引"
     case .failed(let error): "Failed: " + error
     }
   }
@@ -69,7 +74,7 @@ public final class VolumeIndexSession: VolumeSearching, @unchecked Sendable {
   public let coordinator: PersistentIndexCoordinator
   private let lock = NSLock()
   private var state: VolumeSessionState = .opening
-  private var offline = false, started = false
+  private var offline = false, started = false, migrating = false
   private var observationTask: Task<Void, Never>?
   private let startup = DispatchGroup()
   private let lifecycle = DispatchQueue(label: "apfsfind.volume-lifecycle", qos: .utility)
@@ -80,12 +85,22 @@ public final class VolumeIndexSession: VolumeSearching, @unchecked Sendable {
     coordinator = try PersistentIndexCoordinator(root: volume.mountPath, cacheDirectory: cacheDirectory,
                                                  maintenanceScheduler: maintenanceScheduler)
   }
+  public init(volume:VolumeDescriptor,coordinator:PersistentIndexCoordinator) { self.volume = volume; self.coordinator = coordinator }
   public func snapshot() -> VolumeSessionSnapshot {
     let status = coordinator.readinessSnapshot()
-    let (current, reasons) = lock.withLock { (state, pauseReasons) }
+    let (engineState, reasons) = lock.withLock { (state, pauseReasons) }
+    let current: VolumeSessionState
+    switch coordinator.storageState {
+    case .available: current = lock.withLock { migrating } ? .migratingStorage : engineState
+    case .migrating: current = .migratingStorage
+    case .readOnly: current = .indexStorageReadOnly
+    case .lowSpace: current = .indexStorageLowSpace
+    case .offline, .identityChanged: current = .indexStorageOffline
+    case .unsafePath(let error), .failed(let error): current = .failed(error)
+    }
     let counts = coordinator.metrics.snapshot()
     return .init(volume: volume, state: current,
-                 searchAvailable: current != .offline && status.searchAvailable,
+                 searchAvailable: current != .offline && coordinator.storageState == .available && status.searchAvailable,
                  freshness: current == .paused ? .pausedStale : status.freshness, indexedEntries: status.indexedEntries,
                  snapshotBytes: coordinator.snapshotBytes,
                  unreadableDirectories: counts["scanner_unreadable_directories", default: 0],
@@ -167,6 +182,11 @@ public final class VolumeIndexSession: VolumeSearching, @unchecked Sendable {
   public func search(_ request: SearchRequest) -> SearchResult {
     guard !lock.withLock({ offline }) else { return .init(hits: [], latencyMilliseconds: 0, generation: 0) }
     return coordinator.search(request)
+  }
+  public func setStorageMigrating(_ value:Bool) { lock.withLock { migrating = value }; observations.send(snapshot()) }
+  public func storageWillUnmount() async {
+    await Task.detached { [self] in coordinator.storageWillUnmount() }.value
+    observationTask?.cancel(); observations.send(snapshot())
   }
   public func reconcileParent(of path: String) { coordinator.core.reconcileParent(of: path) }
 }

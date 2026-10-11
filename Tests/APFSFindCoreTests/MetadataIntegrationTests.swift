@@ -446,7 +446,7 @@ final class MetadataIntegrationTests: XCTestCase {
         try Data(repeating:2,count:888).write(to:URL(fileURLWithPath:tree.path("added")))
         waitFor("base override",timeout:10) { c.metadata.capture().value(path:tree.path("added")).logicalSize == 888 }
         c.checkpointMetadata()
-        waitFor("metadata checkpoint",timeout:10) { c.metadata.capture().base?.value(at:c.metadata.capture().ordinal(tree.path("added"))!).logicalSize == 888 }
+        waitFor("metadata checkpoint",timeout:10) { (try? c.metadata.capture().base?.value(at:c.metadata.capture().ordinal(tree.path("added"))!))?.logicalSize == 888 }
         XCTAssertEqual(ns,try Data(contentsOf:URL(fileURLWithPath:store.path)))
         try FileManager.default.removeItem(atPath:tree.path("added"))
         waitFor("metadata removal",timeout:10) { c.index.entry(at:tree.path("added")) == nil && c.metadata.capture().value(path:tree.path("added")) == .unknown }

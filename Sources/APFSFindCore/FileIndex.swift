@@ -81,9 +81,9 @@ public final class FileIndex: @unchecked Sendable {
         }
     }
 
-    func metadataSeed(_ entries: [ScannedEntry],directory:String) throws -> MetadataBuildBuffer {
+    func metadataSeed(_ entries: [ScannedEntry],directory:String,temporaryInMemory:Bool = false) throws -> MetadataBuildBuffer {
         try lock.withReadLock {
-            let values = try MetadataBuildBuffer(count:storage.entries.count,directory:directory)
+            let values = try MetadataBuildBuffer(count:storage.entries.count,directory:directory,temporaryInMemory:temporaryInMemory)
             for entry in entries { if let id = storage.pathToID[entry.namespace.path] { values.update(entry.metadata,at:Int(id)) } }
             return values
         }
@@ -195,8 +195,8 @@ public final class FileIndex: @unchecked Sendable {
         restored.childrenByParent.reserveCapacity(count / 8)
         for ordinal in 0..<count {
             if ordinal % 4096 == 0, cancellation.isCancelled { throw SnapshotError.cancelled }
-            let record = reader.record(at: ordinal)
-            let name = ordinal == 0 ? (reader.root == "/" ? "/" : String(reader.root.split(separator: "/").last!)) : reader.name(at: ordinal)
+            let record = try reader.record(at: ordinal)
+            let name = ordinal == 0 ? (reader.root == "/" ? "/" : String(reader.root.split(separator: "/").last!)) : try reader.name(at: ordinal)
             let parentID = ordinal == 0 ? Int32(-1) : Int32(record.parentID)
             let parentPath = ordinal == 0 ? "" : restored.entries[Int(parentID)].path
             let path = ordinal == 0 ? reader.root : (parentPath == "/" ? "/" : parentPath + "/") + name
