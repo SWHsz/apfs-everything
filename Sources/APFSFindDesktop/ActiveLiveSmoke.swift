@@ -28,13 +28,21 @@ enum ActiveLiveSmoke {
   }
   static func run(_ coordinator: MultiVolumeCoordinator) async {
     let deadline = ProcessInfo.processInfo.systemUptime + 1200
+    var ready = false
+    var nextReport = ProcessInfo.processInfo.systemUptime + 30
     while ProcessInfo.processInfo.systemUptime < deadline {
       let states = await coordinator.sessionsSnapshot()
-      if states.count == 2 && states.allSatisfy({ $0.state == .live && $0.metadataAvailable }) { break }
+      if states.count == 2 && states.allSatisfy({ $0.state == .live && $0.metadataAvailable }),
+        NativeSmokeActions.readyForFixtureValidation(states, fixtureSynchronized: await NativeMenuSmokeValidation.fixtureIsSynchronized(coordinator)) {
+        ready = true; break
+      }
+      if ProcessInfo.processInfo.systemUptime >= nextReport {
+        await diagnostics("active_live_wait", coordinator)
+        nextReport += 30
+      }
       do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
     }
-    let states = await coordinator.sessionsSnapshot()
-    guard states.count == 2 && states.allSatisfy({ $0.state == .live && $0.metadataAvailable }),
+    guard ready,
           let baseline = try? await sample(coordinator) else {
       await diagnostics("active_live_unavailable", coordinator); return
     }
@@ -49,7 +57,14 @@ enum ActiveLiveSmoke {
       guard let next = try? await sample(coordinator) else {
         NativeSmokeActions.emit("active_live_error", ["reason": "diagnostics unavailable"]); return
       }
+      let priorMaximum = gate.maximumObservedPhysicalBytes
       gate.observe(next); samples += 1
+      if gate.maximumObservedPhysicalBytes > priorMaximum {
+        NativeSmokeActions.emit("active_live_peak", [
+          "physical_bytes": next.physicalBytes, "seconds": ProcessInfo.processInfo.systemUptime-start,
+          "event_backlog": next.eventBacklog, "dirty_backlog": next.dirtyBacklog,
+        ])
+      }
       let history = await coordinator.maintenance.telemetry.snapshot
       for record in history where !priorIDs.contains(record["id"] as? String ?? "") {
         if (record["restart_count"] as? Int ?? 0) >= 3 {
@@ -65,6 +80,7 @@ enum ActiveLiveSmoke {
     var blockers = gate.blockers + maintenanceFailures.sorted()
     if !tasks.isEmpty { blockers.append("maintenance unfinished at deadline") }
     NativeSmokeActions.emit("active_live_gate", ["passed": blockers.isEmpty, "blockers": blockers,
+      "maximum_observed_physical_bytes": gate.maximumObservedPhysicalBytes,
       "samples": samples, "seconds": ProcessInfo.processInfo.systemUptime - start,
       "resource_delta": ProcessResourceSample.capture().delta(since: before)])
     await diagnostics("active_live_end", coordinator)

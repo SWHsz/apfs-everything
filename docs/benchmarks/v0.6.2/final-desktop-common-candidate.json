@@ -1,0 +1,292 @@
+{
+  "status": "UI F and B/G passed; same-binary controlled E failed, minimal runtime fix pending",
+  "desktop_sha256": "e35f1a7e4ea3af3b69406432082fd326ab5bdaabbf10a0202002086039f2fc33",
+  "cli_sha256": "03716fd35d2b3cf75aa4ccc9f37773e6329a25779bbe105b03eb056c57f3fcae",
+  "source_hashes": {
+    "Sources/APFSFindDesktop/StatusBarController.swift": "567fa3b729af0a6af13f3e8a20c3eb87a85cca2fc93d7b5465e0b713b9027b04",
+    "Sources/APFSFindDesktop/LaunchAtLoginController.swift": "0400ec1f785b83f51c673a1816260f53f7ade08e6fe9ac1651d61ee647bd2de1",
+    "Sources/APFSFindDesktop/NativeSmokeActions.swift": "33337dc6bc9f634369013ec5c2bdfbf8e3248c78b7bbc84b9727d7d2c9c5ec13",
+    "Sources/APFSFindDesktop/ActiveLiveSmoke.swift": "269f8fb022075c7576768f12d12abb48b05c61b8b3f2acccbd300b6b3fa25c38",
+    "Sources/APFSFindDesktop/NativeMenuSmokeValidation.swift": "e7a0e52d5e1f07dc3b1b888986e67bd411a188ff29a3ea6c55c08fd91afb6bf9",
+    "Tests/APFSFindDesktopTests/BackgroundDesktopTests.swift": "86ff197b06e4b72402e2c11a2c085a86203c10a47016f7b81104fa54d0bdcbfc",
+    "Sources/APFSFindDesktop/AppDelegate.swift": "e4b33fcec4ba557dd7668a439fff4cc198c9718869219b524060d633f1b25766"
+  },
+  "keyboard": {
+    "real_option_space_show_focus_escape_hide_restore": true
+  },
+  "global_menu": {
+    "paused_states": 2,
+    "paused_stale_old_rows": 12,
+    "new_file_absent_while_paused": true,
+    "resume": {
+      "actual": 12,
+      "expected": 12,
+      "full_scans_delta": 0,
+      "metadata_complete": true,
+      "metadata_size_mtime_correct": true,
+      "passed": true,
+      "query_ms": 54.84183330554515,
+      "resource_yield_rebuild_delta": 0,
+      "scope": "owned fixture; timer starts before real menu resume action",
+      "seconds": 8.605486583313905
+    }
+  },
+  "single_volume_menu": {
+    "system_search": {
+      "all_live": true,
+      "count": 31,
+      "query_ms": 71.6829999582842
+    },
+    "system_namespace_live_pause_and_resume": true,
+    "paused_stale_old_rows": 12,
+    "new_file_absent_while_paused": true,
+    "resume": {
+      "actual": 12,
+      "expected": 12,
+      "full_scans_delta": 0,
+      "metadata_complete": true,
+      "metadata_size_mtime_correct": true,
+      "passed": true,
+      "query_ms": 51.978625007905066,
+      "resource_yield_rebuild_delta": 0,
+      "scope": "owned fixture; timer starts before real menu resume action",
+      "seconds": 6.435251541668549
+    }
+  },
+  "quit": {
+    "exit_code": 0,
+    "multi_volume_shutdown_ms": 4.123833263292909,
+    "bases_and_states_unchanged": true,
+    "before": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "sha256": "2903f34da0ddc20157807c7aef8a1bb660c841d660d6c3c2e1f78e2f28779c8e",
+        "bytes": 250312650
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "sha256": "f0be2e82431695f9df69c8f9cf524bfb6ae6d52a0ec95e6b4e5b7899d3c85970",
+        "bytes": 46880970
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752",
+        "bytes": 148111447
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277",
+        "bytes": 25454809
+      }
+    },
+    "after": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "sha256": "2903f34da0ddc20157807c7aef8a1bb660c841d660d6c3c2e1f78e2f28779c8e",
+        "bytes": 250312650
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "sha256": "f0be2e82431695f9df69c8f9cf524bfb6ae6d52a0ec95e6b4e5b7899d3c85970",
+        "bytes": 46880970
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752",
+        "bytes": 148111447
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277",
+        "bytes": 25454809
+      }
+    }
+  },
+  "candidate_tests": {
+    "ordinary": {
+      "exit": 0,
+      "seconds_including_build": 18.016451000003144,
+      "log": "/private/tmp/apfsfind-scoped-final-ordinary-20261011.txt",
+      "sha256": "33d9533573ef3eff4f75d2a597fa5f813be417c1baa1ae3e75419abe8adb7765"
+    },
+    "asan": {
+      "exit": 0,
+      "seconds_including_build": 5.794710374902934,
+      "log": "/private/tmp/apfsfind-scoped-final-asan-20261011.txt",
+      "sha256": "52e99cbd6ca3f3f47b355ea7f268c6320ed53bbe546fc0b68a9c4260521dfdab"
+    },
+    "tsan": {
+      "exit": 0,
+      "seconds_including_build": 18.25062262499705,
+      "log": "/private/tmp/apfsfind-scoped-final-tsan-20261011.txt",
+      "sha256": "8c6164d16c1bfc4705d7f67b6e2f77bc303b32dc7a8a61affea4a9964b05f1ac"
+    },
+    "release": {
+      "exit": 0,
+      "seconds_including_build": 50.50693320797291,
+      "log": "/private/tmp/apfsfind-scoped-final-release-20261011.txt",
+      "sha256": "a4c88b52960c9f145ff869055802e31de38730a42f39f48f2a566d441204c668"
+    }
+  },
+  "e_failure_preserved": {
+    "seconds": 1203.639344,
+    "observations": 237,
+    "emitted_30s_physical_max_mib": 158.564,
+    "end_mib": 113.173,
+    "blocker": "physical footprint limit",
+    "full_scans_delta": 0,
+    "resource_yield_rebuild_delta": 0,
+    "disk_writes_delta": 0,
+    "logical_writes_delta": 0,
+    "concurrent_ui_and_cli_workload": true,
+    "causality_not_established": true
+  },
+  "b_ten_rounds": {
+    "passed": 10,
+    "namespace_paths": 12,
+    "exact_metadata": true,
+    "metadata_complete": true,
+    "max_resume_seconds": 2.665081958,
+    "full_scans_delta": 0,
+    "resource_yield_rebuild_delta": 0
+  },
+  "warm_restart": {
+    "label": "v063-scoped-warm-20261011",
+    "fixture_verifier": {
+      "actual": 12,
+      "expected": 12,
+      "full_scans_delta": 0,
+      "metadata_complete": true,
+      "metadata_size_mtime_correct": true,
+      "mismatches": [],
+      "passed": true,
+      "resource_yield_rebuild_delta": 0,
+      "round": 10,
+      "scope": "owned fixture; not a full filesystem consistency assertion",
+      "seconds": 0.04792733339127153
+    },
+    "states": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "state": "Live",
+        "metadata_available": true,
+        "metadata_freshness": "catchingUp",
+        "full_scans": 0,
+        "yield_rebuild": 0,
+        "search_ready_ms": 3546,
+        "time_to_live_ms": 47519
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "state": "Live",
+        "metadata_available": true,
+        "metadata_freshness": "catchingUp",
+        "full_scans": 0,
+        "yield_rebuild": 0,
+        "search_ready_ms": 2103,
+        "time_to_live_ms": 8054
+      }
+    ],
+    "queries": {
+      "sorts": [
+        {
+          "direction": "ascending",
+          "key": "relevance",
+          "metadata_complete": true,
+          "p95_ms": 341.9116250006482
+        },
+        {
+          "direction": "ascending",
+          "key": "name",
+          "metadata_complete": true,
+          "p95_ms": 404.3519999831915
+        },
+        {
+          "direction": "descending",
+          "key": "name",
+          "metadata_complete": true,
+          "p95_ms": 416.8705417541787
+        },
+        {
+          "direction": "ascending",
+          "key": "modificationTime",
+          "metadata_complete": true,
+          "p95_ms": 250.66950009204447
+        },
+        {
+          "direction": "descending",
+          "key": "modificationTime",
+          "metadata_complete": true,
+          "p95_ms": 244.8462916072458
+        },
+        {
+          "direction": "ascending",
+          "key": "size",
+          "metadata_complete": true,
+          "p95_ms": 281.86158335302025
+        },
+        {
+          "direction": "descending",
+          "key": "size",
+          "metadata_complete": true,
+          "p95_ms": 259.3764583580196
+        }
+      ]
+    },
+    "disk_bytes_written": 0,
+    "logical_bytes_written": 0,
+    "gui_count": 12,
+    "gui_query_ms": 58.1
+  },
+  "warm_quit": {
+    "exit_code": 0,
+    "multi_volume_shutdown_ms": 68.6957499710843,
+    "bases_and_states_unchanged": true
+  },
+  "controlled_e_repeat": {
+    "gate": {
+      "blockers": [
+        "physical footprint limit"
+      ],
+      "passed": false,
+      "resource_delta": {
+        "compressed_before_bytes": 20512768,
+        "compressed_bytes": 48791552,
+        "disk_bytes_read": 147509248,
+        "disk_bytes_written": 0,
+        "idle_wakeups": 4268,
+        "interrupt_wakeups": 27358,
+        "logical_bytes_read": null,
+        "logical_bytes_written": 0,
+        "major_faults": 988,
+        "minor_faults": 473025,
+        "pageins": 988,
+        "peak_compressed_bytes": 103612416,
+        "peak_rss_bytes": 560513024,
+        "rss_after_bytes": 139870208,
+        "rss_before_bytes": 498089984,
+        "system_cpu_seconds": 144.338565,
+        "user_cpu_seconds": 479.434532,
+        "wall_ms": 1203397.1042500343
+      },
+      "samples": 238,
+      "seconds": 1203.3970996666467
+    },
+    "max_emitted_physical_mib": 188.04845428466797,
+    "physical_end_mib": 122.73593139648438,
+    "received_delta": 15141,
+    "processed_delta": 15145,
+    "full_scans_delta": 0,
+    "resource_yield_rebuild_delta": 0,
+    "post_gate_vmmap_summary": {
+      "pid": 19985,
+      "time_local": "2026-10-11 15:07:30 +0900",
+      "outside_gate_window": true,
+      "physical_mib": 186.5,
+      "process_lifetime_peak_mib": 202.1,
+      "malloc_allocated_mib": 65.1,
+      "malloc_dirty_swap_fragmentation_mib": 65.0,
+      "default_malloc_fragmentation_percent": 50,
+      "malloc_large_empty_virtual_mib": 47.5,
+      "malloc_large_empty_dirty_mib": 32.5,
+      "malloc_large_empty_swapped_mib": 13.6,
+      "interpretation": "Temporary allocation/fragmentation is a candidate contributor; no allocation-stack attribution yet."
+    }
+  },
+  "controlled_e_b_ten_rounds": {
+    "passed": true,
+    "max_seconds": 6.0262126250891015
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "status": "intermediate source checks only; not installed for native E/B/F; superseded by hot-content fix",
+  "baseline_head": "d3a7ffe051b6694c4edfa66371109dde7636600c",
+  "checks": {
+    "source_hashes": {
+      "Sources/APFSFindDesktop/StatusBarController.swift": "567fa3b729af0a6af13f3e8a20c3eb87a85cca2fc93d7b5465e0b713b9027b04",
+      "Tests/APFSFindCoreTests/TemporaryTreeTests.swift": "4518af4bb9f80d7788dd6877356335e3489de81e014a9bf309f7755f342dddb4",
+      "Sources/APFSFindCore/ActiveLiveConvergenceGate.swift": "00698a2005774ea409392b5e0c1de512a4dce52b391d22b22088a251cea0e10b",
+      "Sources/APFSFindDesktop/AppDelegate.swift": "e4b33fcec4ba557dd7668a439fff4cc198c9718869219b524060d633f1b25766",
+      "Tests/APFSFindCoreTests/ReconcilerTests.swift": "e2d47975be19ac250e888bf91047861e33aa3a5e3782014c25c02889b616ba4a",
+      "Tests/APFSFindCoreTests/ActiveLiveConvergenceTests.swift": "a83a8d091128ae49c0c64fd8a870072bad71b343c799055752916156feb4a074",
+      "Tests/APFSFindCoreTests/MetadataIntegrationTests.swift": "9b87bfb0bbb81f21c20aac426671fdc5582f38b3c96fdd5a0cbb5082aec9ef71",
+      "Sources/APFSFindDesktop/ActiveLiveSmoke.swift": "3f71c4ca65ccf0e188d375fac7d7d4368b09561315fe57736b620418896fe581",
+      "Tests/APFSFindCoreTests/HybridIndexTests.swift": "b5d9c7f355c6ae72ae17612e77c2dacb12c7bf2b480316cd3b06e23055cca9db",
+      "Sources/APFSFindDesktop/NativeSmokeActions.swift": "33337dc6bc9f634369013ec5c2bdfbf8e3248c78b7bbc84b9727d7d2c9c5ec13",
+      "Sources/APFSFindDesktop/NativeMenuSmokeValidation.swift": "e7a0e52d5e1f07dc3b1b888986e67bd411a188ff29a3ea6c55c08fd91afb6bf9",
+      "Sources/APFSFindDesktop/LaunchAtLoginController.swift": "0400ec1f785b83f51c673a1816260f53f7ade08e6fe9ac1651d61ee647bd2de1",
+      "Tests/APFSFindCoreTests/MetadataDirectoryCursorTests.swift": "388d7f03ae6e1c32f7b994ed713106f5ed3b732ef549469a5464bfe172f9d888",
+      "Tests/APFSFindDesktopTests/BackgroundDesktopTests.swift": "86ff197b06e4b72402e2c11a2c085a86203c10a47016f7b81104fa54d0bdcbfc",
+      "Sources/APFSFindCore/BulkScanner.swift": "6c54b6e4c3986bf3cf2dea749400de19f3ad69d61cedc8cc2f6532fdd66081c2",
+      "Sources/APFSFindCore/MMapBaseIndex.swift": "7e9966212d65473d568e4f72316f9552be6244b460f3b09e69356d64ac4d7647",
+      "Tests/APFSFindCoreTests/TestSupport.swift": "e4d32989165473132664835267964087679d9a558f733720c535b0f36c3eb43a",
+      "Tests/APFSFindCoreTests/BulkScannerTests.swift": "5fe5009b70959888990919b7d56384509445a6977e4b94073612d428e9d3ac8e",
+      "Sources/APFSFindCore/MetadataUpdateCoordinator.swift": "59c4ac91035ea6b0c2a196d16d2f4586ad9a18237173c81864b62892e3ec9c03",
+      "Sources/APFSFindCore/DirectoryReconciler.swift": "158dd17f192f08274a36a4868d876e5f5c646aa56d8dee94996122a0d175e352"
+    },
+    "test_fixture_override": "APFSFIND_TEST_TEMP_ROOT",
+    "test_tmpdir": "/private/tmp/apfsfind-real-cache-E523DA25-5775-4468-9254-A013ADCF12D5/row-offset-test-tmp-20261011",
+    "focused": {
+      "tests": 14,
+      "exit": 0,
+      "log": "/private/tmp/apfsfind-row-offset-focused-20261011.txt"
+    },
+    "checks": {
+      "ordinary": {
+        "exit": 0,
+        "seconds": 97.71192837506533,
+        "log": "/private/tmp/apfsfind-row-offset-ordinary-20261011.txt",
+        "sha256": "b7a70968ef2a9311494d3970ddf4a24d144d7560d77a87f73af010b65a4f50d9"
+      },
+      "asan": {
+        "exit": 0,
+        "seconds": 217.52254262496717,
+        "log": "/private/tmp/apfsfind-row-offset-asan-20261011.txt",
+        "sha256": "2ed6831ab605f832eda56e3359858b6eb71c5c6f17ff5de205edf86cd176210b"
+      },
+      "tsan": {
+        "exit": 0,
+        "seconds": 344.59838120802306,
+        "log": "/private/tmp/apfsfind-row-offset-tsan-20261011.txt",
+        "sha256": "5846abef96305297458ebbe9f0f1e69f5e71bcbc867f6b70dc8785e8dae8fd6e"
+      },
+      "release": {
+        "exit": 0,
+        "seconds": 55.367073541041464,
+        "log": "/private/tmp/apfsfind-row-offset-release-20261011.txt",
+        "sha256": "7989c073f632b631d0d71206b8b97605969baf4dae2d2c0c52c3d327e851c143"
+      },
+      "app": {
+        "exit": 0,
+        "seconds": 5.768415250000544,
+        "log": "/private/tmp/apfsfind-row-offset-app-20261011.txt",
+        "sha256": "14d33f5f076d39829f03f11346df5007e43af99a70df95250ab6518bf018ca19"
+      },
+      "signature": {
+        "exit": 0,
+        "seconds": 0.012259334092959762,
+        "log": "/private/tmp/apfsfind-row-offset-signature-20261011.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "scope": "292 ordinary/ASan/TSan all passed with explicit owned test root; source later changed again; results not transferred to next hash"
+}

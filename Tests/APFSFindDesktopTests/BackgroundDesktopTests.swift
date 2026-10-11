@@ -1,5 +1,7 @@
 import APFSFindCore
 import AppKit
+import Combine
+import Darwin
 import Foundation
 import ServiceManagement
 import XCTest
@@ -46,6 +48,110 @@ private struct DesktopLifecycleVolumes: MountedVolumeProvider {
 }
 @MainActor
 final class BackgroundDesktopTests: XCTestCase {
+  func testNativeFixtureCheckRejectsWrongSizeNanosecondTimeTypeAndDuplicateHits() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("apfsfind-menu-check-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var st = stat(); XCTAssertEqual(lstat(directory.path, &st), 0)
+    let path = directory.path + "/generated", volume = DesktopLifecycleVolumes().volume
+    let fixture = NativeMenuSmokeValidation.Fixture(path: directory.path,
+      values: [path: (257, 1_700_000_000_000_000_001)], device: st.st_dev, inode: st.st_ino)
+    func result(size: UInt64? = 257, time: Int64? = 1_700_000_000_000_000_001,
+      kind: EntryKind = .file, duplicate: Bool = false) -> MultiVolumeSearchResult {
+      let hit = VolumeSearchHit(hit: .init(path: path, kind: kind, logicalSize: size,
+        modificationTimeNanoseconds: time), volume: volume, freshness: .live)
+      return .init(requestID: 1, hits: duplicate ? [hit, hit] : [hit], searchedVolumes: 1,
+        catchingUpVolumes: 0, offlineVolumes: 0, failedVolumes: [], latencyMilliseconds: 0, cancelled: false)
+    }
+    XCTAssertTrue(fixture.matches(result()))
+    XCTAssertFalse(fixture.matches(result(size: 173)))
+    XCTAssertFalse(fixture.matches(result(time: 1_700_000_000_000_000_000)))
+    XCTAssertFalse(fixture.matches(result(size: nil, time: nil)))
+    XCTAssertFalse(fixture.matches(result(kind: .directory)))
+    XCTAssertFalse(fixture.matches(result(duplicate: true)))
+  }
+  func testNativeGateRequiresExactFixtureSynchronizationWhileAllowingUnrelatedMetadataChurn() {
+    let a = DesktopLifecycleVolumes().volume
+    let b = VolumeDescriptor(volumeUUID: UUID(), displayName: "Second", mountPath: "/second")
+    func snapshot(_ volume: VolumeDescriptor, _ freshness: MetadataFreshness,
+      available: Bool = true) -> VolumeSessionSnapshot {
+      .init(volume: volume, state: .live, searchAvailable: true, freshness: .live,
+        indexedEntries: 12, snapshotBytes: 0, unreadableDirectories: 0, pendingReplayEvents: 0,
+        metadataAvailable: available, metadataFreshness: freshness)
+    }
+    XCTAssertFalse(NativeSmokeActions.readyForFixtureValidation([snapshot(a, .live), snapshot(b, .live)], fixtureSynchronized: false))
+    XCTAssertFalse(NativeSmokeActions.readyForFixtureValidation([snapshot(a, .live), snapshot(b, .live, available: false)], fixtureSynchronized: true))
+    XCTAssertFalse(NativeSmokeActions.readyForFixtureValidation([snapshot(a, .live)], fixtureSynchronized: true))
+    XCTAssertTrue(NativeSmokeActions.readyForFixtureValidation([snapshot(a, .catchingUp), snapshot(b, .live)], fixtureSynchronized: true))
+  }
+  func testOpenVolumeSubmenuSurvivesSnapshotAndLoginUpdates() async throws {
+    let provider = DesktopLifecycleVolumes()
+    let coordinator = MultiVolumeCoordinator(provider: provider, maintenance: .init(),
+      factory: { v, _ in DesktopLifecycleSession(v) })
+    await coordinator.start()
+    let service = FakeLoginService(), login = LaunchAtLoginController(service: service)
+    let bar = StatusBarController(coordinator: coordinator, login: login,
+      show: {}, settings: {}, quit: {})
+    defer { bar.stop() }
+    bar.update(await coordinator.sessionsSnapshot(), globalPaused: false)
+    let root = bar.menu
+    let volumeItem = try XCTUnwrap(root.item(withTitle: "Fixture"))
+    let child = try XCTUnwrap(volumeItem.submenu)
+    let pauseItem = try XCTUnwrap(child.item(withTitle: "暂停索引"))
+    bar.menuWillOpen(root)
+    await coordinator.setAllPaused(.userGlobal, enabled: true)
+    service.status = .enabled; login.refresh()
+    let changed = await coordinator.sessionsSnapshot()
+    for _ in 0..<100 {
+      bar.update(changed, globalPaused: true)
+      bar.menuNeedsUpdate(root)
+      await Task.yield()
+    }
+    XCTAssertTrue(root.item(withTitle: "Fixture") === volumeItem)
+    XCTAssertTrue(volumeItem.submenu === child)
+    XCTAssertTrue(child.item(withTitle: "暂停索引") === pauseItem)
+    // The original hovered item must still invoke the correct volume action.
+    child.performActionForItem(at: child.index(of: pauseItem))
+    let deadline = ProcessInfo.processInfo.systemUptime + 3
+    while !(await coordinator.sessionsSnapshot().first?.pauseReasons.contains(.userVolume) ?? false),
+      ProcessInfo.processInfo.systemUptime < deadline { await Task.yield() }
+    let paused = await coordinator.sessionsSnapshot()
+    XCTAssertTrue(paused.first?.pauseReasons.contains(.userVolume) == true)
+    bar.update(paused, globalPaused: true)
+    bar.menuDidClose(root)
+    while root.item(withTitle: "恢复所有索引") == nil,
+      ProcessInfo.processInfo.systemUptime < deadline { await Task.yield() }
+    XCTAssertNotNil(root.item(withTitle: "恢复所有索引"))
+    XCTAssertNotNil(root.item(withTitle: "Fixture")?.submenu?.item(withTitle: "恢复索引"))
+    XCTAssertNotNil(root.item(withTitle: "登录时启动（已启用）"))
+    await coordinator.stop()
+  }
+  func testUnchangedPresentationPreservesMenuItemsAndLoginDoesNotRepublish() async throws {
+    let provider = DesktopLifecycleVolumes()
+    let coordinator = MultiVolumeCoordinator(provider: provider, maintenance: .init(),
+      factory: { v, _ in DesktopLifecycleSession(v) })
+    await coordinator.start()
+    let login = LaunchAtLoginController(service: FakeLoginService())
+    var notifications = 0
+    let observation = login.objectWillChange.sink { notifications += 1 }
+    defer { observation.cancel() }
+    let bar = StatusBarController(coordinator: coordinator, login: login,
+      show: {}, settings: {}, quit: {})
+    defer { bar.stop() }
+    let snapshots = await coordinator.sessionsSnapshot()
+    bar.update(snapshots, globalPaused: false)
+    let item = try XCTUnwrap(bar.menu.item(withTitle: "Fixture"))
+    // Entry-count progress does not change any visible menu label or action.
+    let progress = VolumeSessionSnapshot(volume: provider.volume, state: .live,
+      searchAvailable: true, freshness: .live, indexedEntries: 999,
+      snapshotBytes: 1024, unreadableDirectories: 0, pendingReplayEvents: 42)
+    for _ in 0..<100 {
+      bar.update([progress], globalPaused: false); bar.menuNeedsUpdate(bar.menu)
+    }
+    XCTAssertTrue(bar.menu.item(withTitle: "Fixture") === item)
+    XCTAssertEqual(notifications, 0)
+    await coordinator.stop()
+  }
   func testStatusItemActionsRouteToLifecycleLoginAndQuit() async throws {
     let provider = DesktopLifecycleVolumes()
     let coordinator = MultiVolumeCoordinator(provider: provider, maintenance:.init(), factory: { v, _ in DesktopLifecycleSession(v) })

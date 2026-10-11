@@ -34,6 +34,17 @@ public protocol DirectoryReading {
                        cancellation: CancellationToken) throws -> [NamespaceEntry]
 }
 
+/// A single synchronous enumeration owns this collector. The visitor is
+/// Sendable for scan workers, but never outlives readScannedDirectory here.
+private final class NamespaceListing: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [NamespaceEntry] = []
+    var entries: [NamespaceEntry] { lock.withLock { values } }
+    func append(_ page: [ScannedEntry]) {
+        lock.withLock { values.append(contentsOf: page.lazy.map(\.namespace)) }
+    }
+}
+
 public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     private let requestedRoot: String
     public let workerCount: Int
@@ -106,20 +117,33 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     }
 
     public func readDirectory(_ path: String, rootDeviceID: UInt64) throws -> [NamespaceEntry] {
-        try readScannedDirectory(path, rootDeviceID: rootDeviceID, cancellation: nil).map(\.namespace)
+        try readNamespaceDirectory(path, rootDeviceID: rootDeviceID, cancellation: nil, maximumEntries: nil)
     }
 
     /// Cancel between bulk pages; never return a partial directory as a complete diff.
     public func readDirectory(_ path: String, rootDeviceID: UInt64,
                               cancellation: CancellationToken) throws -> [NamespaceEntry] {
-        let entries = try readScannedDirectory(path, rootDeviceID: rootDeviceID,
-                                        cancellation: Optional(cancellation),maximumEntries:100_000, yieldToQueries:false).map(\.namespace)
+        let entries = try readNamespaceDirectory(path, rootDeviceID: rootDeviceID,
+                                        cancellation: cancellation, maximumEntries: 100_000)
         guard !cancellation.isCancelled else { throw ScannerError(path: path, code: ECANCELED) }
         return entries
     }
 
+    private func readNamespaceDirectory(_ path: String, rootDeviceID: UInt64,
+                                       cancellation: CancellationToken?, maximumEntries: Int?) throws -> [NamespaceEntry] {
+        let listing = NamespaceListing()
+        // Keep the atomic namespace listing required by reconciliation, without
+        // also retaining metadata for every entry in that directory. Cold scan
+        // and metadata callers retain their existing collection behavior.
+        _ = try readScannedDirectory(path, rootDeviceID: rootDeviceID, cancellation: cancellation,
+            collectEntries: false, visit: { listing.append($0) }, maximumEntries: maximumEntries,
+            yieldToQueries: false, collectDirectories: false)
+        guard cancellation?.isCancelled != true else { throw ScannerError(path: path, code: ECANCELED) }
+        return listing.entries
+    }
+
     public func readScannedDirectory(_ path: String, rootDeviceID: UInt64,
-                               cancellation: CancellationToken? = nil, collectEntries:Bool = true, visit:(@Sendable ([ScannedEntry])->Void)? = nil, maximumEntries:Int? = nil, yieldToQueries:Bool = false) throws -> [ScannedEntry] {
+                               cancellation: CancellationToken? = nil, collectEntries:Bool = true, visit:(@Sendable ([ScannedEntry])->Void)? = nil, maximumEntries:Int? = nil, yieldToQueries:Bool = false, collectDirectories:Bool = true) throws -> [ScannedEntry] {
         applyThreadPolicy()
         var error: Int32 = 0
         guard let reader = apfs_bulk_reader_open(path, rootDeviceID, 1, &error) else {
@@ -129,6 +153,8 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
             if apfs_bulk_reader_close(reader) != 0 { metrics.record("scanner_close_errors") }
         }
         var result: [ScannedEntry] = []
+        var visitedEntries = 0
+        metrics.maximum("scanner_scanned_collected_entries_max", 0)
         while cancellation?.isCancelled != true {
             try checkpoint()
             if yieldToQueries && result.count >= 4096 {
@@ -170,8 +196,15 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                                              isMountPoint: record.is_mount_point != 0), metadata: FileMetadataValue(record)))
             }
             visit?(page)
-            result += collectEntries ? page : page.filter { Self.shouldTraverse(entry:$0.namespace,rootDeviceID:rootDeviceID) }
-            if let maximumEntries, result.count > maximumEntries { throw ScannerError(path:path,code:EOVERFLOW) }
+            if collectEntries { result += page }
+            else if collectDirectories { result += page.filter { Self.shouldTraverse(entry:$0.namespace,rootDeviceID:rootDeviceID) } }
+            visitedEntries += page.count
+            metrics.maximum("scanner_scanned_page_entries_max", page.count)
+            metrics.maximum("scanner_scanned_collected_entries_max", result.count)
+            // Namespace-only collection keeps no ScannedEntry result. Count
+            // the actual entries so its original 100k atomic diff cap survives.
+            let boundedCount = collectDirectories || collectEntries ? result.count : visitedEntries
+            if let maximumEntries, boundedCount > maximumEntries { throw ScannerError(path:path,code:EOVERFLOW) }
             metrics.record("scanner_entries",by:page.count)
         }
         metrics.record("scanner_directories")

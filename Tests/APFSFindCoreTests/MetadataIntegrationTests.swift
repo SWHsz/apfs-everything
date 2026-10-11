@@ -71,6 +71,8 @@ final class MetadataIntegrationTests: XCTestCase {
         XCTAssertLessThanOrEqual(metrics.snapshot()["test_parent_reads",default:0],32)
         XCTAssertEqual(meta.processedCursor,10,"unread parents retain the conservative fence")
         XCTAssertGreaterThan(updater.pendingCount,0)
+        XCTAssertEqual(metrics.snapshot()["metadata_pending_groups"],0,"continuations do not allocate one singleton group per path")
+        XCTAssertGreaterThan(metrics.snapshot()["metadata_continuation_paths",default:0],0)
         waitFor("all ordinary parents converge",timeout:10) {
             _ = ns.search(.init(query:"file-",limit:10))
             updater.flush();return updater.pendingCount == 0

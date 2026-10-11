@@ -1,0 +1,793 @@
+{
+  "status": "Same binary 297 full ordinary/ASan/TSan checks and B/E/G/F passed; published HEAD CI pending",
+  "baseline_head": "d3a7ffe051b6694c4edfa66371109dde7636600c",
+  "scope": "authoritative full parent repeat at bounded late-content overflow or ambiguity; same pages/caps/cursor fence; no namespace state machine/cold builder/snapshot change",
+  "tests": 297,
+  "core_tests": 273,
+  "desktop_tests": 24,
+  "optional_mount_skips": 1,
+  "negative_control": {
+    "tests": 2,
+    "failures": 7,
+    "exit": 1,
+    "log": "/private/tmp/apfsfind-partial-parent-negative-20261011.txt",
+    "sha256": "9a6ff0ca9cd0ddab3e37b657421e879ba31bfe5e859f4c6e45244c14b57b627c",
+    "cases": [
+      "testLateContentBudgetExpandsPartialParentPass",
+      "testDirectoryEventPreservesLateContentOutsidePartialPass"
+    ]
+  },
+  "focused": {
+    "tests": 53,
+    "exit": 0,
+    "seconds": 15.158,
+    "log": "/private/tmp/apfsfind-authoritative-repeat-focused-20261011.txt"
+  },
+  "source_hashes": {
+    "Sources/APFSFindDesktop/StatusBarController.swift": "567fa3b729af0a6af13f3e8a20c3eb87a85cca2fc93d7b5465e0b713b9027b04",
+    "Tests/APFSFindCoreTests/TemporaryTreeTests.swift": "4518af4bb9f80d7788dd6877356335e3489de81e014a9bf309f7755f342dddb4",
+    "Sources/APFSFindCore/ActiveLiveConvergenceGate.swift": "00698a2005774ea409392b5e0c1de512a4dce52b391d22b22088a251cea0e10b",
+    "Sources/APFSFindDesktop/AppDelegate.swift": "e4b33fcec4ba557dd7668a439fff4cc198c9718869219b524060d633f1b25766",
+    "Tests/APFSFindCoreTests/ReconcilerTests.swift": "e2d47975be19ac250e888bf91047861e33aa3a5e3782014c25c02889b616ba4a",
+    "Tests/APFSFindCoreTests/ActiveLiveConvergenceTests.swift": "a83a8d091128ae49c0c64fd8a870072bad71b343c799055752916156feb4a074",
+    "Tests/APFSFindCoreTests/MetadataIntegrationTests.swift": "9b87bfb0bbb81f21c20aac426671fdc5582f38b3c96fdd5a0cbb5082aec9ef71",
+    "Sources/APFSFindDesktop/ActiveLiveSmoke.swift": "3f71c4ca65ccf0e188d375fac7d7d4368b09561315fe57736b620418896fe581",
+    "Tests/APFSFindCoreTests/HybridIndexTests.swift": "b5d9c7f355c6ae72ae17612e77c2dacb12c7bf2b480316cd3b06e23055cca9db",
+    "Sources/APFSFindDesktop/NativeSmokeActions.swift": "33337dc6bc9f634369013ec5c2bdfbf8e3248c78b7bbc84b9727d7d2c9c5ec13",
+    "Sources/APFSFindDesktop/NativeMenuSmokeValidation.swift": "e7a0e52d5e1f07dc3b1b888986e67bd411a188ff29a3ea6c55c08fd91afb6bf9",
+    "Sources/APFSFindDesktop/LaunchAtLoginController.swift": "0400ec1f785b83f51c673a1816260f53f7ade08e6fe9ac1651d61ee647bd2de1",
+    "Tests/APFSFindCoreTests/MetadataDirectoryCursorTests.swift": "5d91fefb7f1297dcad8ccedc2d31793c089ff0bab80c0247e7dcd8906542c00e",
+    "Tests/APFSFindDesktopTests/BackgroundDesktopTests.swift": "86ff197b06e4b72402e2c11a2c085a86203c10a47016f7b81104fa54d0bdcbfc",
+    "Sources/APFSFindCore/BulkScanner.swift": "6c54b6e4c3986bf3cf2dea749400de19f3ad69d61cedc8cc2f6532fdd66081c2",
+    "Sources/APFSFindCore/MMapBaseIndex.swift": "7e9966212d65473d568e4f72316f9552be6244b460f3b09e69356d64ac4d7647",
+    "Tests/APFSFindCoreTests/TestSupport.swift": "e4d32989165473132664835267964087679d9a558f733720c535b0f36c3eb43a",
+    "Tests/APFSFindCoreTests/BulkScannerTests.swift": "5fe5009b70959888990919b7d56384509445a6977e4b94073612d428e9d3ac8e",
+    "Sources/APFSFindCore/MetadataUpdateCoordinator.swift": "c9163bc20e5a93a4378ba8d96648cdebbbe76697329f92aa525fa979059dcf02",
+    "Sources/APFSFindCore/DirectoryReconciler.swift": "158dd17f192f08274a36a4868d876e5f5c646aa56d8dee94996122a0d175e352"
+  },
+  "checks": {
+    "source_hashes": {
+      "Sources/APFSFindDesktop/StatusBarController.swift": "567fa3b729af0a6af13f3e8a20c3eb87a85cca2fc93d7b5465e0b713b9027b04",
+      "Tests/APFSFindCoreTests/TemporaryTreeTests.swift": "4518af4bb9f80d7788dd6877356335e3489de81e014a9bf309f7755f342dddb4",
+      "Sources/APFSFindCore/ActiveLiveConvergenceGate.swift": "00698a2005774ea409392b5e0c1de512a4dce52b391d22b22088a251cea0e10b",
+      "Sources/APFSFindDesktop/AppDelegate.swift": "e4b33fcec4ba557dd7668a439fff4cc198c9718869219b524060d633f1b25766",
+      "Tests/APFSFindCoreTests/ReconcilerTests.swift": "e2d47975be19ac250e888bf91047861e33aa3a5e3782014c25c02889b616ba4a",
+      "Tests/APFSFindCoreTests/ActiveLiveConvergenceTests.swift": "a83a8d091128ae49c0c64fd8a870072bad71b343c799055752916156feb4a074",
+      "Tests/APFSFindCoreTests/MetadataIntegrationTests.swift": "9b87bfb0bbb81f21c20aac426671fdc5582f38b3c96fdd5a0cbb5082aec9ef71",
+      "Sources/APFSFindDesktop/ActiveLiveSmoke.swift": "3f71c4ca65ccf0e188d375fac7d7d4368b09561315fe57736b620418896fe581",
+      "Tests/APFSFindCoreTests/HybridIndexTests.swift": "b5d9c7f355c6ae72ae17612e77c2dacb12c7bf2b480316cd3b06e23055cca9db",
+      "Sources/APFSFindDesktop/NativeSmokeActions.swift": "33337dc6bc9f634369013ec5c2bdfbf8e3248c78b7bbc84b9727d7d2c9c5ec13",
+      "Sources/APFSFindDesktop/NativeMenuSmokeValidation.swift": "e7a0e52d5e1f07dc3b1b888986e67bd411a188ff29a3ea6c55c08fd91afb6bf9",
+      "Sources/APFSFindDesktop/LaunchAtLoginController.swift": "0400ec1f785b83f51c673a1816260f53f7ade08e6fe9ac1651d61ee647bd2de1",
+      "Tests/APFSFindCoreTests/MetadataDirectoryCursorTests.swift": "5d91fefb7f1297dcad8ccedc2d31793c089ff0bab80c0247e7dcd8906542c00e",
+      "Tests/APFSFindDesktopTests/BackgroundDesktopTests.swift": "86ff197b06e4b72402e2c11a2c085a86203c10a47016f7b81104fa54d0bdcbfc",
+      "Sources/APFSFindCore/BulkScanner.swift": "6c54b6e4c3986bf3cf2dea749400de19f3ad69d61cedc8cc2f6532fdd66081c2",
+      "Sources/APFSFindCore/MMapBaseIndex.swift": "7e9966212d65473d568e4f72316f9552be6244b460f3b09e69356d64ac4d7647",
+      "Tests/APFSFindCoreTests/TestSupport.swift": "e4d32989165473132664835267964087679d9a558f733720c535b0f36c3eb43a",
+      "Tests/APFSFindCoreTests/BulkScannerTests.swift": "5fe5009b70959888990919b7d56384509445a6977e4b94073612d428e9d3ac8e",
+      "Sources/APFSFindCore/MetadataUpdateCoordinator.swift": "c9163bc20e5a93a4378ba8d96648cdebbbe76697329f92aa525fa979059dcf02",
+      "Sources/APFSFindCore/DirectoryReconciler.swift": "158dd17f192f08274a36a4868d876e5f5c646aa56d8dee94996122a0d175e352"
+    },
+    "test_fixture_override": "APFSFIND_TEST_TEMP_ROOT",
+    "test_tmpdir": "/private/tmp/apfsfind-real-cache-E523DA25-5775-4468-9254-A013ADCF12D5/row-offset-test-tmp-20261011",
+    "focused": {
+      "tests": 53,
+      "exit": 0,
+      "log": "/private/tmp/apfsfind-authoritative-repeat-focused-20261011.txt"
+    },
+    "checks": {
+      "ordinary": {
+        "exit": 0,
+        "seconds": 98.31743104197085,
+        "log": "/private/tmp/apfsfind-authoritative-repeat-ordinary-20261011.txt",
+        "sha256": "a104b46ff35fed79504d117e2db5d320b2d848921718ac479f77f8636f238b34"
+      },
+      "asan": {
+        "exit": 0,
+        "seconds": 233.6071509589674,
+        "log": "/private/tmp/apfsfind-authoritative-repeat-asan-20261011.txt",
+        "sha256": "49cbc46b73846316f4771870d3ecfb080ea85cecf7952f02a0bfbd0b6c1d551b"
+      },
+      "tsan": {
+        "exit": 0,
+        "seconds": 356.5324982920429,
+        "log": "/private/tmp/apfsfind-authoritative-repeat-tsan-20261011.txt",
+        "sha256": "77760161876683e8ada48389f20323f58eac0103859344b27ec37f595b060819"
+      },
+      "release": {
+        "exit": 0,
+        "seconds": 50.10340112505946,
+        "log": "/private/tmp/apfsfind-authoritative-repeat-release-20261011.txt",
+        "sha256": "869bd6559f0e1d3eedd80185d37e45515e81009d63e2566bf635a77fe96f31a2"
+      },
+      "app": {
+        "exit": 0,
+        "seconds": 1.8640554590383545,
+        "log": "/private/tmp/apfsfind-authoritative-repeat-app-20261011.txt",
+        "sha256": "43d19008527b20cefb1c0b4c9cbac6d5390f39e888f2caa06f4907bceea24522"
+      },
+      "signature": {
+        "exit": 0,
+        "seconds": 0.009397209039889276,
+        "log": "/private/tmp/apfsfind-authoritative-repeat-signature-20261011.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "desktop_sha256": "9de7dd73ccaa66d76ac5fbbbb670e3641b5d7970b32beba20c4a7219e551e4b0",
+  "cli_sha256": "34a44bc31ae309ef8add2f249e23bc2006f8a1514258e460250a09503df27e1b",
+  "G": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 1671168,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 0,
+      "interrupt_wakeups": 3,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 0,
+      "pageins": 0,
+      "peak_compressed_bytes": 1671168,
+      "peak_rss_bytes": 10371072,
+      "rss_after_bytes": 8175616,
+      "rss_before_bytes": 10371072,
+      "system_cpu_seconds": 0.00018600000000000214,
+      "user_cpu_seconds": 7.400000000000115e-05,
+      "wall_ms": 60000.23050000891
+    },
+    "idle_seconds": 60.00033754168544,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 67.93912500143051,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 39.929250022396445,
+        "p50": 19.75612505339086,
+        "p90": 20.897541660815477,
+        "p95": 21.877708262763917,
+        "p99": 23.763875011354685
+      },
+      "delete": {
+        "max": 53.810458397492766,
+        "p50": 19.261416629888117,
+        "p90": 20.060083363205194,
+        "p95": 20.678083295933902,
+        "p99": 26.46537497639656
+      },
+      "rename": {
+        "max": 43.06866670958698,
+        "p50": 21.725416649132967,
+        "p90": 22.792833391577005,
+        "p95": 23.263583309017122,
+        "p99": 32.377124996855855
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "E": {
+    "blockers": [],
+    "maximum_observed_physical_bytes": 141690416,
+    "passed": true,
+    "resource_delta": {
+      "compressed_before_bytes": 20709376,
+      "compressed_bytes": 46546944,
+      "disk_bytes_read": 353460224,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 4921,
+      "interrupt_wakeups": 24896,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 913,
+      "minor_faults": 225378,
+      "pageins": 913,
+      "peak_compressed_bytes": 69632000,
+      "peak_rss_bytes": 529547264,
+      "rss_after_bytes": 124780544,
+      "rss_before_bytes": 461996032,
+      "system_cpu_seconds": 163.11203,
+      "user_cpu_seconds": 476.97387200000003,
+      "wall_ms": 1202396.6702499893
+    },
+    "samples": 237,
+    "seconds": 1202.3966601666762,
+    "window_start_entries": [
+      1576863,
+      2828791
+    ],
+    "window_end_entries": [
+      1576869,
+      2829208
+    ],
+    "end_physical_bytes": 93537840,
+    "scope": "Same roots / and /Volumes/Data 1, original owned cache/cursors; real active replay/repair workload. Normal unmeasured preparation checkpoint previously removed disappeared transient entries. Counts reflect current live filesystem, not older 4.9m count."
+  },
+  "B": {
+    "rounds": [
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 1,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 9.477075750008225
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 2,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 3.987436500028707
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 3,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 1.0263451666105539
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 4,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 8.09878554160241
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 5,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 2.4145297500072047
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 6,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 5.006395500036888
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 7,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 1.8743086666800082
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 8,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 3.8790259166853502
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 9,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 7.233219583402388
+      },
+      {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 10,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 2.017212083330378
+      }
+    ],
+    "summary": {
+      "passed": true,
+      "rounds": 10
+    }
+  },
+  "F": {
+    "status": "All current binary F hotkeys, sorts, global/single real menu actions, normal Quit and warm restart passed",
+    "hotkeys": "User confirmed current binary display, focus, Escape hide and Option+Space restore normal",
+    "ui_sorts": {
+      "relevance_ms": 34.2,
+      "name_ms": 45.5,
+      "size_ms": 34.4,
+      "mtime_ms": 34.3,
+      "results": 12
+    },
+    "paused_ui": {
+      "global": {
+        "old_results": 12,
+        "old_base3_size": 110,
+        "old_born_size": 47,
+        "new_prefix_results": 0,
+        "freshness": "pausedStale"
+      },
+      "volume": {
+        "old_results": 12,
+        "old_base3_size": 173,
+        "old_born_size": 77,
+        "new_prefix_results": 0,
+        "freshness": "pausedStale"
+      }
+    },
+    "native_stages": [
+      {
+        "stage": "menu_global",
+        "data": {
+          "paused": true
+        }
+      },
+      {
+        "stage": "menu_global_states",
+        "data": {
+          "paused": true,
+          "sessions": [
+            {
+              "freshness": "pausedStale",
+              "id": "00000000-0000-0000-0000-000000000001",
+              "metadata_available": true,
+              "metadata_freshness": "pausedStale",
+              "state": "索引已暂停，结果可能不是最新"
+            },
+            {
+              "freshness": "pausedStale",
+              "id": "00000000-0000-0000-0000-000000000002",
+              "metadata_available": true,
+              "metadata_freshness": "pausedStale",
+              "state": "索引已暂停，结果可能不是最新"
+            }
+          ]
+        }
+      },
+      {
+        "stage": "menu_global",
+        "data": {
+          "paused": false
+        }
+      },
+      {
+        "stage": "menu_global_states",
+        "data": {
+          "paused": false,
+          "sessions": [
+            {
+              "freshness": "catchingUp",
+              "id": "00000000-0000-0000-0000-000000000001",
+              "metadata_available": true,
+              "metadata_freshness": "catchingUp",
+              "state": "Catching up"
+            },
+            {
+              "freshness": "catchingUp",
+              "id": "00000000-0000-0000-0000-000000000002",
+              "metadata_available": true,
+              "metadata_freshness": "catchingUp",
+              "state": "Catching up"
+            }
+          ]
+        }
+      },
+      {
+        "stage": "menu_global_fixture_verify",
+        "data": {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_complete": true,
+          "metadata_size_mtime_correct": true,
+          "passed": true,
+          "query_ms": 38.69399998802692,
+          "resource_yield_rebuild_delta": 0,
+          "scope": "owned fixture; timer starts before real menu resume action",
+          "seconds": 9.384829583344981
+        }
+      },
+      {
+        "stage": "menu_volume",
+        "data": {
+          "paused": true,
+          "volume": "00000000-0000-0000-0000-000000000002"
+        }
+      },
+      {
+        "stage": "menu_volume_states",
+        "data": {
+          "paused": true,
+          "sessions": [
+            {
+              "freshness": "live",
+              "id": "00000000-0000-0000-0000-000000000001",
+              "metadata_available": true,
+              "metadata_freshness": "catchingUp",
+              "state": "Live"
+            },
+            {
+              "freshness": "pausedStale",
+              "id": "00000000-0000-0000-0000-000000000002",
+              "metadata_available": true,
+              "metadata_freshness": "pausedStale",
+              "state": "索引已暂停，结果可能不是最新"
+            }
+          ]
+        }
+      },
+      {
+        "stage": "menu_volume_system_search",
+        "data": {
+          "all_live": true,
+          "count": 31,
+          "query_ms": 46.94779159035534
+        }
+      },
+      {
+        "stage": "menu_volume",
+        "data": {
+          "paused": false,
+          "volume": "00000000-0000-0000-0000-000000000002"
+        }
+      },
+      {
+        "stage": "menu_volume_states",
+        "data": {
+          "paused": false,
+          "sessions": [
+            {
+              "freshness": "live",
+              "id": "00000000-0000-0000-0000-000000000001",
+              "metadata_available": true,
+              "metadata_freshness": "catchingUp",
+              "state": "Live"
+            },
+            {
+              "freshness": "catchingUp",
+              "id": "00000000-0000-0000-0000-000000000002",
+              "metadata_available": true,
+              "metadata_freshness": "catchingUp",
+              "state": "Catching up"
+            }
+          ]
+        }
+      },
+      {
+        "stage": "menu_volume_fixture_verify",
+        "data": {
+          "actual": 12,
+          "expected": 12,
+          "full_scans_delta": 0,
+          "metadata_complete": true,
+          "metadata_size_mtime_correct": true,
+          "passed": true,
+          "query_ms": 111.45625007338822,
+          "resource_yield_rebuild_delta": 0,
+          "scope": "owned fixture; timer starts before real menu resume action",
+          "seconds": 6.617918416741304
+        }
+      },
+      {
+        "stage": "shutdown",
+        "data": {
+          "00000000-0000-0000-0000-000000000001": {
+            "shutdown_cancel_maintenance_ms": 0.0068749068304896355,
+            "shutdown_cancel_queries_ms": 0.0002916203811764717,
+            "shutdown_metadata_updater_ms": 4.077750025317073,
+            "shutdown_namespace_drain_ms": 0.07766671478748322,
+            "shutdown_session_teardown_ms": 0.005958369001746178,
+            "shutdown_state_write_ms": 0.000875093974173069,
+            "shutdown_stop_watcher_ms": 1.3308333000168204,
+            "shutdown_total_ms": 5.5129165994003415,
+            "shutdown_wait_checkpoint_group_ms": 0.00045832712203264236,
+            "shutdown_wait_metadata_group_ms": 0.00012491364032030106
+          },
+          "00000000-0000-0000-0000-000000000002": {
+            "shutdown_cancel_maintenance_ms": 0.008458388037979603,
+            "shutdown_cancel_queries_ms": 0.0002916203811764717,
+            "shutdown_metadata_updater_ms": 0.002791639417409897,
+            "shutdown_namespace_drain_ms": 0.041208346374332905,
+            "shutdown_session_teardown_ms": 0.002125045284628868,
+            "shutdown_state_write_ms": 0.0005833571776747704,
+            "shutdown_stop_watcher_ms": 0.05783338565379381,
+            "shutdown_total_ms": 0.12304168194532394,
+            "shutdown_wait_checkpoint_group_ms": 0.00045832712203264236,
+            "shutdown_wait_metadata_group_ms": 8.335337042808533e-05
+          },
+          "multi_volume": {
+            "shutdown_total_ms": 6.23449997510761
+          }
+        }
+      }
+    ],
+    "exit": {
+      "exit": 0,
+      "seconds": 2121.855751416995,
+      "finished_epoch": 1791722596.9200509,
+      "pid": 70066,
+      "label": "v063-authoritative-repeat-native-20261011"
+    },
+    "before_quit_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 245045769,
+        "sha256": "82c31253a85ba25bad3c85940eb33a7486d630a97fa46550b356ebb136b2e00f"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 45977324,
+        "sha256": "a40b8b023e13c04acfb5c458c9456450ea91f4006b80151d058c172bc0d80a92"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      }
+    },
+    "after_quit_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 245045769,
+        "sha256": "82c31253a85ba25bad3c85940eb33a7486d630a97fa46550b356ebb136b2e00f"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 45977324,
+        "sha256": "a40b8b023e13c04acfb5c458c9456450ea91f4006b80151d058c172bc0d80a92"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      }
+    },
+    "restart": {
+      "verify": {
+        "actual": 12,
+        "expected": 12,
+        "full_scans_delta": 0,
+        "metadata_complete": true,
+        "metadata_size_mtime_correct": true,
+        "mismatches": [],
+        "passed": true,
+        "resource_yield_rebuild_delta": 0,
+        "round": 10,
+        "scope": "owned fixture; not a full filesystem consistency assertion",
+        "seconds": 0.03891120827756822
+      },
+      "queries": {
+        "sorts": [
+          {
+            "direction": "ascending",
+            "key": "relevance",
+            "metadata_complete": true,
+            "p95_ms": 108.25716669205576
+          },
+          {
+            "direction": "ascending",
+            "key": "name",
+            "metadata_complete": true,
+            "p95_ms": 138.3739166194573
+          },
+          {
+            "direction": "descending",
+            "key": "name",
+            "metadata_complete": true,
+            "p95_ms": 125.26491668540984
+          },
+          {
+            "direction": "ascending",
+            "key": "modificationTime",
+            "metadata_complete": true,
+            "p95_ms": 159.0765833389014
+          },
+          {
+            "direction": "descending",
+            "key": "modificationTime",
+            "metadata_complete": true,
+            "p95_ms": 120.08987506851554
+          },
+          {
+            "direction": "ascending",
+            "key": "size",
+            "metadata_complete": true,
+            "p95_ms": 192.25929165259004
+          },
+          {
+            "direction": "descending",
+            "key": "size",
+            "metadata_complete": true,
+            "p95_ms": 94.95966671966016
+          }
+        ]
+      },
+      "sessions": [
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "state": "Live",
+          "metadata_available": true,
+          "search_ready_ms": 2015,
+          "live_ms": 9898,
+          "full_scans": 0,
+          "yield_rebuilds": 0
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "state": "Live",
+          "metadata_available": true,
+          "search_ready_ms": 3120,
+          "live_ms": 115965,
+          "full_scans": 0,
+          "yield_rebuilds": 0
+        }
+      ],
+      "ui": {
+        "count": 12,
+        "query_ms": 50.0,
+        "size_display_correct": true,
+        "mtime_display_correct": true
+      },
+      "shutdown": {
+        "00000000-0000-0000-0000-000000000001": {
+          "shutdown_cancel_maintenance_ms": 0.013333396054804325,
+          "shutdown_cancel_queries_ms": 0.00024994369596242905,
+          "shutdown_metadata_updater_ms": 0.03354158252477646,
+          "shutdown_namespace_drain_ms": 0.07295841351151466,
+          "shutdown_session_teardown_ms": 0.003041699528694153,
+          "shutdown_state_write_ms": 0.0005416804924607277,
+          "shutdown_stop_watcher_ms": 0.06391666829586029,
+          "shutdown_total_ms": 0.19487494137138128,
+          "shutdown_wait_checkpoint_group_ms": 0.0003334134817123413,
+          "shutdown_wait_metadata_group_ms": 8.335337042808533e-05
+        },
+        "00000000-0000-0000-0000-000000000002": {
+          "shutdown_cancel_maintenance_ms": 0.006416579708456993,
+          "shutdown_cancel_queries_ms": 0.00037497375160455704,
+          "shutdown_metadata_updater_ms": 0.0034583499655127525,
+          "shutdown_namespace_drain_ms": 0.022708438336849213,
+          "shutdown_session_teardown_ms": 0.0019166618585586548,
+          "shutdown_state_write_ms": 0.0007916241884231567,
+          "shutdown_stop_watcher_ms": 1.2557499576359987,
+          "shutdown_total_ms": 1.2968750670552254,
+          "shutdown_wait_checkpoint_group_ms": 0.00020838342607021332,
+          "shutdown_wait_metadata_group_ms": 4.1676685214042664e-05
+        },
+        "multi_volume": {
+          "shutdown_total_ms": 2.0439166110008955
+        }
+      },
+      "exit": {
+        "exit": 0,
+        "seconds": 299.24190691602416,
+        "finished_epoch": 1791722931.572205,
+        "pid": 74056,
+        "label": "v063-authoritative-repeat-restart-20261011"
+      },
+      "before_quit_inventory": {
+        "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+          "bytes": 245045769,
+          "sha256": "82c31253a85ba25bad3c85940eb33a7486d630a97fa46550b356ebb136b2e00f"
+        },
+        "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+          "bytes": 25454809,
+          "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+        },
+        "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+          "bytes": 45977324,
+          "sha256": "a40b8b023e13c04acfb5c458c9456450ea91f4006b80151d058c172bc0d80a92"
+        },
+        "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+          "bytes": 148111447,
+          "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+        }
+      },
+      "after_quit_inventory": {
+        "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+          "bytes": 245045769,
+          "sha256": "82c31253a85ba25bad3c85940eb33a7486d630a97fa46550b356ebb136b2e00f"
+        },
+        "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+          "bytes": 25454809,
+          "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+        },
+        "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+          "bytes": 45977324,
+          "sha256": "a40b8b023e13c04acfb5c458c9456450ea91f4006b80151d058c172bc0d80a92"
+        },
+        "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+          "bytes": 148111447,
+          "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+        }
+      },
+      "same_desktop_sha256": true
+    }
+  },
+  "captures": {
+    "native_stdout": {
+      "path": "/private/tmp/apfsfind-real-cache-E523DA25-5775-4468-9254-A013ADCF12D5/v063-authoritative-repeat-native-20261011.native.stdout",
+      "bytes": 683239,
+      "sha256": "06b3c7d658d1c213a5354f9b72aaa6a1f7c9c23215c7470e09b22e74fcc9344c"
+    },
+    "native_stderr": {
+      "path": "/private/tmp/apfsfind-real-cache-E523DA25-5775-4468-9254-A013ADCF12D5/v063-authoritative-repeat-native-20261011.native.stderr",
+      "sha256": "8652e6134d351bbefbbcae4b9ea18e3dbec5f1da77d01f083b31de0f3fa22d4a"
+    },
+    "restart_stdout": {
+      "path": "/private/tmp/apfsfind-real-cache-E523DA25-5775-4468-9254-A013ADCF12D5/v063-authoritative-repeat-restart-20261011.native.stdout",
+      "bytes": 58619,
+      "sha256": "1a6855212c75a7c0d3c41d78fc843aa41bf9a85f2b5d41ae3e1403513afaed7a"
+    },
+    "restart_stderr": {
+      "path": "/private/tmp/apfsfind-real-cache-E523DA25-5775-4468-9254-A013ADCF12D5/v063-authoritative-repeat-restart-20261011.native.stderr",
+      "sha256": "8851355221739bdf236e76c616f59ef4914fee728f3cd4beeb63bb76102cbec8"
+    }
+  }
+}

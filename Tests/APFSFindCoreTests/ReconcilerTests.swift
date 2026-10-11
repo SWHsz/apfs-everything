@@ -94,6 +94,39 @@ final class ReconcilerTests: XCTestCase {
         XCTAssertEqual(core.metrics.snapshot()["rebuild_requests_reconcile_error",default:0],0)
         XCTAssertEqual(core.metrics.snapshot()["full_scans",default:0],0)
     }
+    func testWideDiffPreservesIdentityDuplicateAndMutationOrdering() {
+        var existing = (0..<12_000).map { NamespaceEntry(path:"/test/file-\($0)",kind:.file,deviceID:7,fileID:UInt64($0+1)) }
+        var actual: [NamespaceEntry] = [], expectedUpserts: [NamespaceEntry] = []
+        var expectedRemovals: [String] = []
+        for i in 0..<12_000 {
+            if i % 7 == 0 {expectedRemovals.append(existing[i].path);continue}
+            let item = i % 11 == 0 ? NamespaceEntry(path:existing[i].path,kind:.symlink,deviceID:7,fileID:UInt64(i+20_000)) : existing[i]
+            actual.append(item)
+            if i % 11 == 0 {expectedUpserts.append(item)}
+        }
+        let duplicateFile = NamespaceEntry(path:"/test/duplicate",kind:.file,deviceID:7,fileID:1)
+        let duplicateLast = NamespaceEntry(path:duplicateFile.path,kind:.directory,deviceID:7,fileID:2)
+        existing += [duplicateFile,duplicateLast]
+        actual.append(duplicateLast) // The last existing identity still wins.
+        let changedFile = NamespaceEntry(path:"/test/changed",kind:.file,deviceID:7,fileID:3)
+        let changedDirectory = NamespaceEntry(path:changedFile.path,kind:.directory,deviceID:7,fileID:4)
+        actual += [changedFile,changedDirectory]
+        expectedUpserts += [changedFile,changedDirectory]
+        let removed = NamespaceEntry(path:"/test/removed-duplicate",kind:.file)
+        existing += [removed,removed]
+        expectedRemovals += [removed.path,removed.path]
+        var removals: [String] = [], upserts: [NamespaceEntry] = []
+        var sawUpsert = false
+        for mutation in DirectoryReconciler.diff(existing:existing,actual:actual) {
+            switch mutation {
+            case .remove(let path): XCTAssertFalse(sawUpsert);removals.append(path)
+            case .upsert(let item): sawUpsert = true;upserts.append(item)
+            }
+        }
+        XCTAssertEqual(removals,expectedRemovals)
+        XCTAssertEqual(upserts,expectedUpserts)
+    }
+
     func testDirectoryDiffAndTypeChange() {
         let old = [NamespaceEntry(path: "/test/remove", kind: .directory), .init(path: "/test/type", kind: .file)]
         let new = [NamespaceEntry(path: "/test/add", kind: .file), .init(path: "/test/type", kind: .directory)]

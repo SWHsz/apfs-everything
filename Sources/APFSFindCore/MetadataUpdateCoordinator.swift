@@ -33,6 +33,18 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private let changed: @Sendable () -> Void
     private let readDirectory: @Sendable (String, CancellationToken) throws -> [ScannedEntry]
     private var pending: [String: Set<String>] = [:]
+    // Deferred work is already path-deduplicated. Retain one set between
+    // slices rather than allocating a singleton Set for every remaining path.
+    private var continuationPaths = Set<String>()
+    private func insertPending(_ path:String,key:String) {
+        if key == path { continuationPaths.remove(path) }
+        pending[key,default:[]].insert(path)
+    }
+    private func recordPending() {
+        metrics.set("metadata_pending_groups",to:pending.count)
+        metrics.set("metadata_continuation_paths",to:continuationPaths.count)
+        metrics.set("pending_metadata_lookups",to:pending.count+continuationPaths.count+collapsed.count+discoveredSubtrees.count+(parentSweep.map{max(1,$0.requested.count)+$0.lateContentPaths.count} ?? 0))
+    }
     private var collapsed: Set<String> = []
     private var discoveredSubtrees = Set<String>()
     private var inboxRootRepair = false
@@ -55,10 +67,16 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
     private final class ParentSweep {
         let cursor: MetadataDirectoryCursor
         var requested: Set<String>, found = Set<String>()
+        var lateContentPaths = Set<String>()
         var all: Bool, repeatPass = false
         var entries = 0
         init(cursor:MetadataDirectoryCursor,requested:Set<String>,all:Bool) {
             self.cursor = cursor;self.requested = requested;self.all = all
+        }
+        func requireAuthoritativeRepeat() {
+            // The discarded late paths can lie outside the original sparse
+            // request. A repeat must cover all currently indexed siblings.
+            all = true;repeatPass = true;lateContentPaths.removeAll()
         }
     }
     private var parentSweep: ParentSweep?
@@ -68,9 +86,11 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             (indexed.deviceID == 0 || indexed.deviceID == entry.deviceID) &&
             (indexed.fileID == nil || indexed.fileID == entry.fileID)
     }
-    /// Each page is consumed before opening another one. Events received after
-    /// the page was read require a second pass rather than resetting progress.
-    private func refreshParentPage(_ parent:String,requested:Set<String>,all:Bool) throws -> Bool {
+    /// Each page is consumed before opening another one. Late content writes
+    /// retain bounded path compensation; ambiguity repeats the authoritative
+    /// parent pass without resetting its current progress.
+    private func refreshParentPage(_ parent:String,requested:Set<String>,all:Bool,
+                                   deferredPaths:inout Set<String>) throws -> Bool {
         if parentSweep?.cursor.path != parent {
             precondition(parentSweep == nil,"finish the active parent before another parent")
             parentSweep = ParentSweep(cursor:try MetadataDirectoryCursor(path:parent,device:device,excludedRoots:repairExclusions,metrics:metrics,pageMetric:"metadata_parent_bulk_pages"),requested:requested,all:all)
@@ -78,6 +98,9 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         guard let sweep = parentSweep else {return true}
         sweep.requested.formUnion(requested);sweep.all = sweep.all || all
         guard sweep.requested.count <= policy.maxPendingEntries else {throw ScannerError(path:parent,code:EOVERFLOW)}
+        if sweep.requested.count+sweep.lateContentPaths.count > policy.maxPendingEntries {
+            sweep.requireAuthoritativeRepeat()
+        }
         guard let current = namespace.entry(at:parent),current.kind == .directory,
               current.fileID == nil || current.fileID == sweep.cursor.fileID else {
             sweep.cursor.close();parentSweep = nil
@@ -105,13 +128,26 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             parentSweep = ParentSweep(cursor:try MetadataDirectoryCursor(path:parent,device:device,excludedRoots:repairExclusions,metrics:metrics,pageMetric:"metadata_parent_bulk_pages"),requested:sweep.requested,all:sweep.all)
             metrics.record("metadata_parent_repeat_passes");return false
         }
+        // Known file content writes need an authoritative refresh of those
+        // paths, not another full sibling pass. Keep the cursor fenced until
+        // the following batch consumes them, even if their old page was read.
+        deferredPaths.formUnion(sweep.lateContentPaths)
+        metrics.record("metadata_parent_compensation_paths",by:sweep.lateContentPaths.count)
         parentSweep = nil;return true
     }
     private func retainParentSweepForPublication() {
         guard let sweep = parentSweep else {return}
-        for path in sweep.requested {pending[path,default:[]].insert(path)}
+        for path in sweep.requested {
+            if pending[path] != nil {insertPending(path,key:path)}
+            else {continuationPaths.insert(path)}
+        }
+        for path in sweep.lateContentPaths {
+            if pending[path] != nil {insertPending(path,key:path)}
+            else {continuationPaths.insert(path)}
+        }
         if sweep.all {collapsed.insert(sweep.cursor.path)}
         sweep.cursor.close();parentSweep = nil
+        recordPending()
     }
     private var renameOnly = Set<String>()
     private struct RenameOrigin {
@@ -251,7 +287,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         }
         if inboxRootRepair {repeatInboxRootRepair = true;metrics.record("metadata_inbox_scope_repeat")}
         else {inboxRootRepair = true;discoveredSubtrees.insert(root);metrics.record("metadata_inbox_scope_repairs")}
-        index.markPending();metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count+(parentSweep.map{max(1,$0.requested.count)} ?? 0))
+        index.markPending();recordPending()
         schedule(after:0.005);changed()
     }
     private func receive(_ events:[FileSystemEvent]) {
@@ -293,13 +329,24 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                 }
                 let parent = PathCanonicalizer.parent(of:path)
                 if let sweep = parentSweep, parent == sweep.cursor.path || path == sweep.cursor.path {
-                    sweep.repeatPass = true
+                    if parent == sweep.cursor.path, classification == .contentOnly,
+                       impact == .refreshSizeAndTime,
+                       e.flags & UInt32(kFSEventStreamEventFlagItemIsFile) != 0,
+                       namespace.entry(at:path)?.kind == .file,
+                       !sweep.repeatPass {
+                        if !sweep.lateContentPaths.contains(path),
+                           sweep.requested.count+sweep.lateContentPaths.count >= policy.maxPendingEntries {
+                            sweep.requireAuthoritativeRepeat()
+                        } else {sweep.lateContentPaths.insert(path)}
+                        return true
+                    }
+                    sweep.requireAuthoritativeRepeat()
                 }
                 if collapsed.contains(parent) {
                     metrics.record("metadata_events_deduplicated")
                     // Enumeration refreshes present siblings, but cannot clear
                     // a disappeared child's previous sidecar/delta value.
-                    if impact == .remove {pending[path,default:[]].insert(path)}
+                    if impact == .remove {insertPending(path,key:path)}
                     return true
                 }
                 let item = namespace.entry(at:path)
@@ -331,20 +378,22 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     renameOrigins[key] = .init(path:path,value:snapshot.value(path:path),snapshot:retained,retainedBytes:bytes)
                 }
                 if rename { renameOnly.insert(path) } else { renameOnly.remove(path) }
-                if pending[key] != nil { metrics.record("metadata_events_deduplicated") }
-                pending[key,default:[]].insert(path)
+                if pending[key] != nil || (key == path && continuationPaths.contains(path)) { metrics.record("metadata_events_deduplicated") }
+                insertPending(path,key:key)
                 if e.flags & UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed) != 0,
                    PathCanonicalizer.isWithin(parent,root:root) {
                     let parentEntry = namespace.entry(at:parent)
                     let parentKey = parentEntry?.fileID.map { "\(device):\($0)" } ?? parent
-                    pending[parentKey,default:[]].insert(parent)
+                    insertPending(parent,key:parentKey)
                 }
                 if collapsed.count >= 16_384 || discoveredSubtrees.count >= 16_384 {
                     metrics.record("metadata_pending_frontier_overflows")
-                    pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); metrics.set("pending_metadata_lookups",to:0); requestRecovery(); return false
+                    pending.removeAll(); continuationPaths.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll(); recordPending(); requestRecovery(); return false
                 }
-                if pending.count >= policy.maxPendingEntries {
-                    collapsed.formUnion(pending.values.flatMap { $0.map { PathCanonicalizer.parent(of:$0) } }); pending.removeAll()
+                if pending.count+continuationPaths.count >= policy.maxPendingEntries {
+                    collapsed.formUnion(pending.values.flatMap { $0.map { PathCanonicalizer.parent(of:$0) } })
+                    collapsed.formUnion(continuationPaths.map {PathCanonicalizer.parent(of:$0)})
+                    pending.removeAll();continuationPaths.removeAll()
                     metrics.record("metadata_parent_collapses")
                 }
                 return true
@@ -352,8 +401,8 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
             if !keepReceiving {return}
         }
         recordOrigins()
-        if pending.isEmpty && collapsed.isEmpty && discoveredSubtrees.isEmpty && parentSweep == nil { advanceCompletedCursor(); changed(); return }
-        metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count+(parentSweep.map{max(1,$0.requested.count)} ?? 0)); index.markPending(); changed()
+        if pending.isEmpty && continuationPaths.isEmpty && collapsed.isEmpty && discoveredSubtrees.isEmpty && parentSweep == nil { recordPending();advanceCompletedCursor(); changed(); return }
+        recordPending(); index.markPending(); changed()
         schedule(after:policy.debounceSeconds)
     }
     private func schedule(after delay:Double) {
@@ -369,11 +418,12 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         let resources = ProcessResourceSample.capture()
         metrics.set("metadata_update_active",to:1)
         defer { metrics.set("metadata_update_active",to:0); metrics.recordResources("metadata_event_updates",since:resources) }
-        guard !pending.isEmpty || !collapsed.isEmpty || !discoveredSubtrees.isEmpty || parentSweep != nil else { metrics.set("pending_metadata_lookups",to:0); advanceCompletedCursor(); return }
+        guard !pending.isEmpty || !continuationPaths.isEmpty || !collapsed.isEmpty || !discoveredSubtrees.isEmpty || parentSweep != nil else { recordPending(); advanceCompletedCursor(); return }
         metrics.record("metadata_scheduler_wakeups")
         let now = ProcessInfo.processInfo.systemUptime
         if now-lookupWindow >= 1 { lookupWindow = now; lookupsInWindow = 0 }
-        let paths = Set(pending.values.flatMap { $0 })
+        var paths = continuationPaths
+        for group in pending.values {paths.formUnion(group)}
         var deferredPaths = Set<String>()
         var deferredParents = Set<String>()
         var parentSliceYield = false
@@ -466,7 +516,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     if pagedRepairs {
                         var completed = false
                         repeat {
-                            completed = try autoreleasepool {try refreshParentPage(parent,requested:Set(requestedPaths),all:collapsed.contains(parent))}
+                            completed = try autoreleasepool {try refreshParentPage(parent,requested:Set(requestedPaths),all:collapsed.contains(parent),deferredPaths:&deferredPaths)}
                             if completed {break}
                             parentAttempts += 1
                         } while parentAttempts < min(32,max(1,policy.maxParentPagesPerSlice)) && ProcessInfo.processInfo.systemUptime-parentSliceStart < 0.020 && !scanCancellation.isCancelled
@@ -509,6 +559,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     metrics.record("metadata_parent_errno_\(code)")
                     if DirectoryReconciler.recovery(for:code,isRoot:parent == root) == .rebuild {
                         deferredPaths.formUnion(interrupted?.requested ?? [])
+                        deferredPaths.formUnion(interrupted?.lateContentPaths ?? [])
                         if needsRecovery(parent,code:code) { metrics.record("metadata_parent_recovery_requests"); requestRecovery() }
                         if code != EOVERFLOW { deferredParents.insert(parent) }
                     }
@@ -538,7 +589,10 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                     metrics.record("metadata_subtree_yields"); break subtreeSlice
                 }
                 do {
-                    let paged = inboxRootRepair && pagedRepairs
+                    // A normally discovered directory can be as wide as an
+                    // overflow repair. Keep the same bounded page/cursor path
+                    // for both instead of collecting its whole listing.
+                    let paged = pagedRepairs
                     let entries:[ScannedEntry]
                     if paged {
                         if repairCursor?.path != directory {
@@ -554,6 +608,7 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
                         }
                         entries = try cursor.next(cancellation:scanCancellation)
                     } else {entries = try readDirectory(directory,scanCancellation)}
+                    metrics.maximum("metadata_subtree_batch_entries_max", entries.count)
                     noteBulkAllocation(entries.count)
                     localIOFailures.removeValue(forKey:directory)
                     subtreeDirectories += 1 // A page is a bounded scheduling unit.
@@ -608,16 +663,16 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         recordOrigins()
         renameOnly.removeAll(keepingCapacity:true)
         pending.removeAll(keepingCapacity:true); collapsed = deferredParents
+        continuationPaths = deferredPaths
         if !deferredPaths.isEmpty || !deferredParents.isEmpty || parentSweep != nil {
-            for path in deferredPaths { pending[path] = [path] }
-            metrics.set("pending_metadata_lookups",to:pending.count+collapsed.count+discoveredSubtrees.count+(parentSweep.map{max(1,$0.requested.count)} ?? 0))
+            recordPending()
             schedule(after:parentSliceYield && !slowDeferred ? 0.005 : max(0.001,1-(ProcessInfo.processInfo.systemUptime-lookupWindow))); changed(); return
         }
         if !remainingSubtrees.isEmpty {
-            metrics.set("pending_metadata_lookups",to:remainingSubtrees.count)
+            recordPending()
             schedule(after:0.005); changed(); return
         }
-        metrics.set("pending_metadata_lookups",to:0); advanceCompletedCursor(); changed()
+        recordPending(); advanceCompletedCursor(); changed()
     }
     public func resetReplay() { queue.sync { historyDone = false; maximumID = index.processedCursor; index.restartReplay() } }
     public func suspend() { queue.sync { guard !scanCancellation.isCancelled else { return }; work?.cancel(); work = nil; epoch &+= 1; autoreleasepool { drain() }; work?.cancel(); work = nil; epoch &+= 1; retainParentSweepForPublication(); suspended = true } }
@@ -642,10 +697,10 @@ public final class MetadataUpdateCoordinator: @unchecked Sendable {
         // Received callbacks have been classified before this barrier. Deferred
         // lookups keep the old processed fence; fast exit must not enumerate a
         // large pending tree. Restart replay recovers these unpersisted values.
-        pending.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll()
+        pending.removeAll(); continuationPaths.removeAll(); collapsed.removeAll(); discoveredSubtrees.removeAll()
         repairCursor?.close();repairCursor = nil
         parentSweep?.cursor.close();parentSweep = nil
         buffered.removeAll(); renameOrigins.removeAll(); recordOrigins(); localIOFailures.removeAll()
-        inboxLock.withLock { inbox.removeAll() }; metrics.set("pending_metadata_lookups",to:0)
+        inboxLock.withLock { inbox.removeAll() }; recordPending()
     } }
 }

@@ -1,0 +1,538 @@
+{
+  "status": "tests/signature/G/Quit passed; cold and warm E early physical failure; B/F pending",
+  "source_baseline_head": "d3a7ffe051b6694c4edfa66371109dde7636600c",
+  "desktop_sha256": "24df2f2e8ace87e83c584b20e1e153db3b63cf08c2235c805bfb33cfb4aa2f67",
+  "cli_sha256": "3b5717284c0b96a8fa1ff2d6d18e5db4cefa488724eb51858d01d9477b038969",
+  "info_sha256": "bb1da1edfa4fa29a83ff6cb8a5dc501cbd6ada131e363c381f6c807e96aeb4ee",
+  "source_hashes": {
+    "Sources/APFSFindCore/ActiveLiveConvergenceGate.swift": "00698a2005774ea409392b5e0c1de512a4dce52b391d22b22088a251cea0e10b",
+    "Sources/APFSFindCore/BulkScanner.swift": "6c54b6e4c3986bf3cf2dea749400de19f3ad69d61cedc8cc2f6532fdd66081c2",
+    "Sources/APFSFindCore/MetadataUpdateCoordinator.swift": "59c4ac91035ea6b0c2a196d16d2f4586ad9a18237173c81864b62892e3ec9c03",
+    "Sources/APFSFindDesktop/ActiveLiveSmoke.swift": "3f71c4ca65ccf0e188d375fac7d7d4368b09561315fe57736b620418896fe581",
+    "Sources/APFSFindDesktop/AppDelegate.swift": "e4b33fcec4ba557dd7668a439fff4cc198c9718869219b524060d633f1b25766",
+    "Sources/APFSFindDesktop/LaunchAtLoginController.swift": "0400ec1f785b83f51c673a1816260f53f7ade08e6fe9ac1651d61ee647bd2de1",
+    "Sources/APFSFindDesktop/NativeMenuSmokeValidation.swift": "e7a0e52d5e1f07dc3b1b888986e67bd411a188ff29a3ea6c55c08fd91afb6bf9",
+    "Sources/APFSFindDesktop/NativeSmokeActions.swift": "33337dc6bc9f634369013ec5c2bdfbf8e3248c78b7bbc84b9727d7d2c9c5ec13",
+    "Sources/APFSFindDesktop/StatusBarController.swift": "567fa3b729af0a6af13f3e8a20c3eb87a85cca2fc93d7b5465e0b713b9027b04",
+    "Tests/APFSFindCoreTests/ActiveLiveConvergenceTests.swift": "a83a8d091128ae49c0c64fd8a870072bad71b343c799055752916156feb4a074",
+    "Tests/APFSFindCoreTests/BulkScannerTests.swift": "5fe5009b70959888990919b7d56384509445a6977e4b94073612d428e9d3ac8e",
+    "Tests/APFSFindCoreTests/MetadataDirectoryCursorTests.swift": "388d7f03ae6e1c32f7b994ed713106f5ed3b732ef549469a5464bfe172f9d888",
+    "Tests/APFSFindCoreTests/MetadataIntegrationTests.swift": "9b87bfb0bbb81f21c20aac426671fdc5582f38b3c96fdd5a0cbb5082aec9ef71",
+    "Tests/APFSFindDesktopTests/BackgroundDesktopTests.swift": "86ff197b06e4b72402e2c11a2c085a86203c10a47016f7b81104fa54d0bdcbfc"
+  },
+  "phase_b_included": false,
+  "test_counts": {
+    "core": 262,
+    "desktop": 24,
+    "optional_mount_skipped": 1
+  },
+  "checks": {
+    "source_sha256": "59c4ac91035ea6b0c2a196d16d2f4586ad9a18237173c81864b62892e3ec9c03",
+    "checks": {
+      "negative": {
+        "exit": 1,
+        "seconds_including_build": 6.579925374942832,
+        "log": "/private/tmp/apfsfind-continuation-negative-20261011.txt",
+        "sha256": "3e6afc9d2ae22f46e314696fbfb1685013c8ce32b5f3201b97c2c0d8703955a7"
+      },
+      "ordinary": {
+        "exit": 0,
+        "seconds_including_build": 95.4694735420635,
+        "log": "/private/tmp/apfsfind-continuation-ordinary-20261011.txt",
+        "sha256": "fd1ebba126dee7accbcf445f9f2a3bc3344640da64df1d8e073f5ff4ee0a4b79"
+      },
+      "asan": {
+        "exit": 0,
+        "seconds_including_build": 221.03295899997465,
+        "log": "/private/tmp/apfsfind-continuation-asan-20261011.txt",
+        "sha256": "8e537e9cc4c7b1bf235735e8f9ac934f95f55670d8767d24f9fbc8c01d731e86"
+      },
+      "tsan": {
+        "exit": 0,
+        "seconds_including_build": 341.3985599579755,
+        "log": "/private/tmp/apfsfind-continuation-tsan-20261011.txt",
+        "sha256": "758fb475c919572108523a43320dde9f5dd996570afac6b5fd16f5af379024be"
+      },
+      "release": {
+        "exit": 0,
+        "seconds_including_build": 53.724786333041266,
+        "log": "/private/tmp/apfsfind-continuation-release-20261011.txt",
+        "sha256": "79fe68f4d3986e2c556936e236c935623d177e11a472a692378a83dc9406afd0"
+      },
+      "app": {
+        "exit": 0,
+        "seconds_including_build": 1.9766111660283059,
+        "log": "/private/tmp/apfsfind-continuation-app-20261011.txt",
+        "sha256": "d99f6cd6b237db122a69f7965d06986ac78d67748c687059f25a0d153714489f"
+      },
+      "signature": {
+        "exit": 0,
+        "seconds_including_build": 0.009560832986608148,
+        "log": "/private/tmp/apfsfind-continuation-signature-20261011.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "change": "Retain one deferred-path set across metadata slices; preserve initial identity grouping, budgets, frontiers and cursor fence.",
+  "controlled_quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 2572288,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 1,
+      "interrupt_wakeups": 3,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 0,
+      "pageins": 0,
+      "peak_compressed_bytes": 2572288,
+      "peak_rss_bytes": 10272768,
+      "rss_after_bytes": 7602176,
+      "rss_before_bytes": 10272768,
+      "system_cpu_seconds": 0.00021200000000000038,
+      "user_cpu_seconds": 5.6000000000000494e-05,
+      "wall_ms": 60005.14625001233
+    },
+    "idle_seconds": 60.00528412498534,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 229.83241663314402,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 42.60379169136286,
+        "p50": 20.440166699700058,
+        "p90": 21.574916667304933,
+        "p95": 21.77200000733137,
+        "p99": 27.854624902829528
+      },
+      "delete": {
+        "max": 41.353041655384004,
+        "p50": 19.217833294533193,
+        "p90": 20.424416637979448,
+        "p95": 20.573124988004565,
+        "p99": 37.340083392336965
+      },
+      "rename": {
+        "max": 46.48775001987815,
+        "p50": 21.664708270691335,
+        "p90": 22.41454168688506,
+        "p95": 22.511416696943343,
+        "p99": 23.862666683271527
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "cold_recovery_early_failure": {
+    "status": "cold-recovery E early physical failure; B/F not completed",
+    "desktop_sha256": "24df2f2e8ace87e83c584b20e1e153db3b63cf08c2235c805bfb33cfb4aa2f67",
+    "maximum_observed_physical_bytes": 178276656,
+    "peaks": [
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 132106520,
+        "seconds": 5.017331791692413
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 132155672,
+        "seconds": 10.032871666713618
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 133237016,
+        "seconds": 15.051736125024036
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 1,
+        "physical_bytes": 133875992,
+        "seconds": 25.16098570835311
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 133925144,
+        "seconds": 30.178542666719295
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 134301976,
+        "seconds": 35.19886454171501
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 1,
+        "physical_bytes": 134334744,
+        "seconds": 50.26396008336451
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 1,
+        "physical_bytes": 134531352,
+        "seconds": 55.34733020828571
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 140462360,
+        "seconds": 60.502737958333455
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 3,
+        "physical_bytes": 145148184,
+        "seconds": 65.5104957500007
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 159058200,
+        "seconds": 70.51692595833447
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 162072856,
+        "seconds": 75.54602687503211
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 177506584,
+        "seconds": 80.54769266664516
+      },
+      {
+        "dirty_backlog": 1,
+        "event_backlog": 78,
+        "physical_bytes": 177555736,
+        "seconds": 90.63074649998453
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 2,
+        "physical_bytes": 177621272,
+        "seconds": 105.83535099995788
+      },
+      {
+        "dirty_backlog": 1,
+        "event_backlog": 3,
+        "physical_bytes": 177686808,
+        "seconds": 110.84803645836655
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 1,
+        "physical_bytes": 178161968,
+        "seconds": 120.93217937496956
+      },
+      {
+        "dirty_backlog": 1,
+        "event_backlog": 6,
+        "physical_bytes": 178243888,
+        "seconds": 141.37562208331656
+      },
+      {
+        "dirty_backlog": 1,
+        "event_backlog": 2,
+        "physical_bytes": 178276656,
+        "seconds": 146.50054441671818
+      }
+    ],
+    "startup_full_scans": [
+      1,
+      0
+    ],
+    "start_physical_bytes": 664521200,
+    "cold_lifetime_peak_bytes": 2109246440,
+    "start_entries": [
+      3061661,
+      1576531
+    ],
+    "tasks_at_start": [],
+    "last_progress_tasks": [],
+    "before_legal_recovery_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 255757162,
+        "sha256": "7b3072ee823cac444aa28f7c84bb9ee0f87f4dec157b1c8c1a492365801c77e1"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 48234481,
+        "sha256": "b3a27ef282ed2e044f8f30f90e66309b353d5ffff6e9abcb0cb1cc04b7126a45"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      }
+    },
+    "immediate_pre_quit_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 261934972,
+        "sha256": "008fc80545a70f6a4f68842e6a9c9d010e1789cb2c86676b4c8d15a473de1fb7"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 49752231,
+        "sha256": "acf5b2a9fe06d99a7599782f4b2ee9a8b52855470e0b41c3bab112d120079b11"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      }
+    },
+    "raw_prefix_sha256": "1c686a45894931074d0de89a10551d8c09b99559513bc60654351245128aec85",
+    "normal_quit": {
+      "exit": 0,
+      "seconds": 411.3891768329777,
+      "finished_epoch": 1791708282.735355,
+      "pid": 42402,
+      "label": "v063-compact-continuation-native-20261011"
+    },
+    "shutdown_records": [
+      {
+        "00000000-0000-0000-0000-000000000001": {
+          "shutdown_cancel_maintenance_ms": 0.01366669312119484,
+          "shutdown_cancel_queries_ms": 0.00020838342607021332,
+          "shutdown_metadata_updater_ms": 0.005124951712787151,
+          "shutdown_namespace_drain_ms": 0.023916596546769142,
+          "shutdown_session_teardown_ms": 0.0017499551177024841,
+          "shutdown_state_write_ms": 0.00037497375160455704,
+          "shutdown_stop_watcher_ms": 0.04116666968911886,
+          "shutdown_total_ms": 0.09266671258956194,
+          "shutdown_wait_checkpoint_group_ms": 0.0003332970663905144,
+          "shutdown_wait_metadata_group_ms": 0.000125030055642128
+        },
+        "00000000-0000-0000-0000-000000000002": {
+          "shutdown_cancel_maintenance_ms": 0.005583395250141621,
+          "shutdown_cancel_queries_ms": 0.00024994369596242905,
+          "shutdown_metadata_updater_ms": 0.010791700333356857,
+          "shutdown_namespace_drain_ms": 0.036375015042722225,
+          "shutdown_session_teardown_ms": 0.0017082784324884415,
+          "shutdown_state_write_ms": 0.00024994369596242905,
+          "shutdown_stop_watcher_ms": 0.036791665479540825,
+          "shutdown_total_ms": 0.09829166810959578,
+          "shutdown_wait_checkpoint_group_ms": 0.00016670674085617065,
+          "shutdown_wait_metadata_group_ms": 8.335337042808533e-05
+        },
+        "multi_volume": {
+          "shutdown_total_ms": 0.1508750719949603
+        }
+      }
+    ],
+    "after_quit_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 261934972,
+        "sha256": "008fc80545a70f6a4f68842e6a9c9d010e1789cb2c86676b4c8d15a473de1fb7"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 49752231,
+        "sha256": "acf5b2a9fe06d99a7599782f4b2ee9a8b52855470e0b41c3bab112d120079b11"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      }
+    },
+    "quit_inventory_stable": true,
+    "last_peak_seconds": 146.50054441671818,
+    "raw_sha256": "d6dd5aec15f532b49b48dfc3e935de8f590f2be7ea7237ac29c0e1e2372ad7d6"
+  },
+  "warm_early_failure": {
+    "status": "warm E early physical failure; B/F not completed; heap/vmmap diagnostic after failure",
+    "label": "v063-compact-continuation-warm-E-20261011",
+    "desktop_sha256": "24df2f2e8ace87e83c584b20e1e153db3b63cf08c2235c805bfb33cfb4aa2f67",
+    "peaks": [
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 194037296,
+        "seconds": 5.020984124974348
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 1,
+        "physical_bytes": 194070064,
+        "seconds": 15.062498208251782
+      },
+      {
+        "dirty_backlog": 0,
+        "event_backlog": 0,
+        "physical_bytes": 194086448,
+        "seconds": 20.360447958344594
+      }
+    ],
+    "maximum_observed_physical_bytes": 194086448,
+    "last_peak_seconds": 20.360447958344594,
+    "start_physical_bytes": 194053680,
+    "startup_full_scans": [
+      0,
+      0
+    ],
+    "tasks_at_start": [],
+    "entries": [
+      3061719,
+      1576534
+    ],
+    "immediate_pre_quit_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 261934972,
+        "sha256": "008fc80545a70f6a4f68842e6a9c9d010e1789cb2c86676b4c8d15a473de1fb7"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 49752231,
+        "sha256": "acf5b2a9fe06d99a7599782f4b2ee9a8b52855470e0b41c3bab112d120079b11"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      }
+    },
+    "allocation_diagnostic": {
+      "heap_bytes": 40575925,
+      "allocator_allocated_mib": 38.6,
+      "allocator_dirty_plus_swap_fragmentation_mib": 77.2,
+      "empty_large_dirty_mib": 42.5,
+      "empty_large_swap_mib": 10.0,
+      "full_scanned_arrays_present": false,
+      "continuation_singleton_sets_eliminated": true,
+      "captures": {
+        "continuation-warm-failed-heap-20261011.txt": {
+          "bytes": 241406,
+          "sha256": "77ff58675e5ae5d435e7f8dbaf0ef7bd663267f5f8c5501b95977504bfc972a3"
+        },
+        "continuation-warm-failed-vmmap-20261011.txt": {
+          "bytes": 8000,
+          "sha256": "b3ec7af8d52bba1d4e00e107440c90c8bb369e04e912a0efec1dc7be2771e066"
+        }
+      }
+    },
+    "normal_quit": {
+      "exit": 0,
+      "seconds": 441.16048579197377,
+      "finished_epoch": 1791708789.2461069,
+      "pid": 43290,
+      "label": "v063-compact-continuation-warm-E-20261011"
+    },
+    "shutdown_records": [
+      {
+        "00000000-0000-0000-0000-000000000001": {
+          "shutdown_cancel_maintenance_ms": 0.0019583385437726974,
+          "shutdown_cancel_queries_ms": 0.000125030055642128,
+          "shutdown_metadata_updater_ms": 0.006625079549849033,
+          "shutdown_namespace_drain_ms": 0.040083425119519234,
+          "shutdown_session_teardown_ms": 0.0022083986550569534,
+          "shutdown_state_write_ms": 0.001250067725777626,
+          "shutdown_stop_watcher_ms": 9.60691669024527,
+          "shutdown_total_ms": 9.666416677646339,
+          "shutdown_wait_checkpoint_group_ms": 0.0004166504368185997,
+          "shutdown_wait_metadata_group_ms": 0.00016659032553434372
+        },
+        "00000000-0000-0000-0000-000000000002": {
+          "shutdown_cancel_maintenance_ms": 0.012708245776593685,
+          "shutdown_cancel_queries_ms": 0.0006667105481028557,
+          "shutdown_metadata_updater_ms": 0.0112500274553895,
+          "shutdown_namespace_drain_ms": 0.21037505939602852,
+          "shutdown_session_teardown_ms": 0.0017499551177024841,
+          "shutdown_state_write_ms": 0.0019583385437726974,
+          "shutdown_stop_watcher_ms": 0.0435833353549242,
+          "shutdown_total_ms": 0.2902917331084609,
+          "shutdown_wait_checkpoint_group_ms": 0.000500003807246685,
+          "shutdown_wait_metadata_group_ms": 4.1676685214042664e-05
+        },
+        "multi_volume": {
+          "shutdown_total_ms": 11.841875035315752
+        }
+      }
+    ],
+    "raw_sha256": "44b436d227c673aa1fc20359d7f91c8a3907c0a5254f9f0a138072c95193675d",
+    "after_quit_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 261934972,
+        "sha256": "008fc80545a70f6a4f68842e6a9c9d010e1789cb2c86676b4c8d15a473de1fb7"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 49752231,
+        "sha256": "acf5b2a9fe06d99a7599782f4b2ee9a8b52855470e0b41c3bab112d120079b11"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      }
+    },
+    "quit_inventory_stable": true
+  },
+  "diagnostic_only_vm_capture": {
+    "mode": "MallocStackLogging=vm; diagnostic only, not acceptance",
+    "desktop_sha256": "24df2f2e8ace87e83c584b20e1e153db3b63cf08c2235c805bfb33cfb4aa2f67",
+    "pid": 44248,
+    "raw_sha256": "64136f1e4f8fcf781a26b74a374d15300c0d6923453c256130a4f337bc532777",
+    "raw_bytes": 14053324,
+    "vm_allocations": {
+      "namespace_validation_lengths": {
+        "count": 2,
+        "maximum_bytes": 12288000,
+        "allocation_bytes_total_not_retained_bytes": 18579456
+      },
+      "directory_diff_pair_arrays": {
+        "count": 7,
+        "maximum_bytes": 6242304,
+        "allocation_bytes_total_not_retained_bytes": 35831808
+      },
+      "directory_diff_dictionaries": {
+        "count": 18,
+        "maximum_bytes": 8667136,
+        "allocation_bytes_total_not_retained_bytes": 135135232
+      },
+      "atomic_namespace_listing": {
+        "count": 11,
+        "maximum_bytes": 8388608,
+        "allocation_bytes_total_not_retained_bytes": 62914560
+      }
+    },
+    "boundary": "VM allocation events identify transient buffer sources; totals are not retained heap or physical peak. Large allocator empty regions in separate normal failed run are a separate observation.",
+    "normal_quit": {
+      "exit": 0,
+      "seconds": 242.86124600004405,
+      "finished_epoch": 1791709071.2226071,
+      "pid": 44248,
+      "label": "v063-compact-continuation-vm-diagnostic-20261011"
+    }
+  }
+}

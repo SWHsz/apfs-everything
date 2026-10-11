@@ -15,4 +15,13 @@ final class ActiveLiveConvergenceTests: XCTestCase {
         gate.observe(sample(4000, scans: 1))
         XCTAssertTrue(gate.blockers.contains("full scan during active window"))
     }
+    func testShortPhysicalPeakRemainsReportedAfterTrendWindowExpires() {
+        var gate = ActiveLiveConvergenceGate(baseline: sample(0))
+        let peak: UInt64 = 160*1024*1024
+        gate.observe(.init(received:0,processed:0,eventBacklog:0,dirtyBacklog:0,
+            fullScans:0,resourceYieldRebuilds:0,recoveryYields:0,physicalBytes:peak))
+        for i in 1...250 { gate.observe(sample(i)) }
+        XCTAssertEqual(gate.maximumObservedPhysicalBytes,peak)
+        XCTAssertEqual(gate.blockers,["physical footprint limit"])
+    }
 }

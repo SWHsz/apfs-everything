@@ -255,3 +255,74 @@ Root metadata bootstrap先yield busy，重试等待lease时捕获旧base；更�
 最终同一签名Desktop SHA256 `481cfe30c587be5802566c72b45c356b6ed025ca4aa43228056bbf0b468f418d` 沿用原cache/cursor，两个卷启动full scans均0；固定active-live1203.216s、236次五秒gate观察通过：full scans0/yield rebuild0、无restart loop/未完成deadline maintenance、event2759 received/processed，启动积累的metadata pending最大28,687降至0。两个卷合计4,904,707 entries；namespace/metadata全目录map和materialized mmap entry均0。30秒诊断physical最高84.283MiB、结束55.939MiB，窗口开始lifetime peak92.330MiB另列；全部236次gate观察保持原150MiB上限。CPU386.419s（包含窗口开始积累的局部修复）、disk/logical writes0，不将真实active workload CPU称controlled quiet。
 
 随后十轮B全部通过，最长2.957275s，每轮owned12路径及size/精确mtime正确，连续broad query压力下full scans/yield rebuild0，原30秒期限不变。原e11 round5失败、7066删除回归及所有旧资源失败均保留，不用旧binary成功替代本次结果。Mac在最终UI检查时仍锁屏，F真实global/single-volume菜单、UI查询、正常Quit/restart尚未完成。当前实例保持打开，已请求解锁及菜单确认；#3保持OPEN、无tag。冻结窗口/actions capture见[aggregate receipts](benchmarks/v0.6.2/native-runs.json)，此前失败e11实例身份/hash复核后SIGTERM(-15)，退出四份base不变，不能称正常UI Quit。
+
+
+## 2026-10-11：最终桌面交互与后续资源复验
+
+在相同签名候选 `e35f1a7e4ea3af3b69406432082fd326ab5bdaabbf10a0202002086039f2fc33` 上，用户确认 Option+Space 显示/焦点、Escape 隐藏和再次恢复正常。真实菜单全局恢复在 8.605487 秒内收敛，单卷恢复在 6.435252 秒内收敛；两者都在持续 broad query 下达到 namespace 12/12、size 与纳秒 mtime 正确、metadataComplete=true，full scan/resource-yield rebuild delta=0。单卷暂停及恢复时 System namespace 保持 Live，暂停期间 System 查询返回 31 条 live 结果，耗时 71.683ms。暂停卷显示旧的 12 条结果并标记 stale，新创建项不可搜索。
+
+正常 Command+Q 的 multi-volume shutdown 为 4.123833ms、exit=0；两个 namespace base、两个 metadata base 和 state 文件清单/哈希不变。相同 app/Info/cache 暖重启无需 full scan，两卷 search-ready 3.546/2.103s、Live 47.519/8.054s，metadata available，fixture exact 12/12、metadataComplete=true；其后正常退出 68.696ms、exit=0，base/state 哈希不变。
+
+该候选仍不能关闭 #3：第一次资源窗口同时发生 UI/独立 CLI 工作负载，physical 输出采样峰值 158.564MiB；随后没有额外 UI/benchmark 的完整 1203.397100 秒窗口再次超限（238 次观察，输出采样峰值 188.048MiB、末端 122.736MiB）。后者 disk/logical writes、full scan/resource-yield rebuild delta 均为零，10 轮增量检查全部通过、最长 6.026213 秒。不能以旧 binary 的 E 通过替代，也不能认定 UI 是超限根因。完整失败和 UI 数据见 [common-candidate receipt](benchmarks/v0.6.2/final-desktop-common-candidate.json)。
+
+普通 discovered metadata subtree 现已交给已有的安全 64KiB directory cursor，避免一次收集最多 100,000 条目录项；namespace reconciliation、cold builder 和磁盘格式不变。2048 文件的新目录回归覆盖真实分页、查询压力下 yield、未完成的游标 fence 和最终精确元数据。旧路径对照测试未使用分页，一次完成全目录，因此不满足分页/yield断言；这不表示旧路径丢失已完成数据的 cursor。修复的定向 6 项、完整普通/ASan/TSan 各 284 项均已通过，1 项可选 mount skip；release、正式 app 打包/严格签名验证和 CLI controlled quiet G 也通过。新 binary 的资源/UI门槛仍待完成。旧签名 app/manifest 已单独保存，#3 保持 open。
+
+新签名 Desktop SHA256 `c6774c873a223559258d72165683e5ee71c22e55233b912db70dc3fcff3ca1e7` 的首次实盘启动触发真实 System queue overflow recovery：启动 full scans=2，Test Volume 2=0，未人为清缓存或修改 cursor。恢复后固定 E 窗口 1204.832357s/238 samples 仍失败：physical footprint limit 和 maintenance unfinished at deadline。窗口开始 physical 623.752MiB、结束 184.158MiB；启动 cold builder lifetime peak 1.9GiB 单列，本轮未重构。截止时 System opportunistic metadataCheckpoint 因真实 memory warning 排队约 771 秒，未隐藏或取消任务来改变 gate。窗口内 full-scan/resource-yield rebuild delta=0，disk/logical writes=0；后续 10 轮 B 全部通过，最长 5.526934s，namespace 12/12、size/ns mtime、metadataComplete 均正确。该结果不能计为 E 通过，也不能据此宣布分页修复解决所有内存问题。
+
+上述实例真实 Command+Q exit=0、multi-volume shutdown 1.334375ms，四份 base 与 state 清单/哈希不变。同一签名 app/Info/cache 的后续暖重启无需 full scan/resource-yield rebuild，两卷 search-ready 2.590/1.511s、Live 59.402/6.406s；fixture exact 12/12、完整元数据在 36.093ms 验证通过，UI 返回 12 条、35.6ms。暖实例 Command+Q exit=0、shutdown 3.489500ms，base/state 哈希仍不变。独立暖启动的固定 E/B 复验仍待完成；保留冷恢复后失败，不以暖启动结果覆盖它。见 [paged-candidate receipt](benchmarks/v0.6.2/paged-desktop-common-candidate.json)。
+
+该独立暖启动 E 完成 1201.679783s/237 samples，仍 **FAIL**，唯一 blocker 为 physical footprint。30 秒输出采样最高 136.658MiB、末端 112.392MiB，但更密集的 5 秒 gate 确实捕获超限；不能以较稀疏输出宣称低于 150MiB。末端 lifetime peak 164.814MiB 不等于已记录的窗口内精确最大值。两卷启动 full scans=0，窗口无 full scan/resource-yield rebuild/写入，截止维护队列为空；10 轮 B 全部通过，最长 6.750896s。随后 Mac 锁屏，owned 失败实例身份/签名核对后 SIGTERM(-15)，base/state 未变，明确不计为正常 UI Quit。
+
+窗口后的只读 heap 捕获 64,316,845 bytes 已分配对象，其中两份 ScannedEntry 数组共 8,437,760 bytes。实际 namespace reader 先收集全目录 ScannedEntry 再 map namespace，这条路径与 metadata 分页无关。下一最小修复仅让 namespace reader 逐页提取 NamespaceEntry，不额外保存整个目录的 metadata 数组；原子 listing/diff、100k 上限、cold scan、metadata API 和格式保持原行为。2050 个文件/目录/symlink 的结果及 identity 与原 reader 完全一致，取消和限额错误仍不返回部分完整目录；旧路径对照在同一回归中因保留全目录 ScannedEntry 失败 1 项。专项 12 项通过，完整检查进行中。这不证明已消除全部内存尖峰；后续 gate 会同时记录全部 5 秒观察的最大值。锁屏时 Allocations 采集未完成启动，已停止本轮分析进程，不声称取得分配栈归因。
+
+
+namespace-only listing 候选 85f 的完整普通/ASan/TSan 各 286 项（Core 262、Desktop 24、1 项可选 mount skip）通过；release、正式打包、strict signature 通过。独立 CLI G：60.004292s，CPU 0.000317s、disk/logical writes 0、idle sampler/deferred/metadata/compaction wakeups 0；1000 paused mutations 增量恢复 100.385ms。真实双卷首次窗口启动 full scans 两卷均 0，namespace reader 的全目录 ScannedEntry collection 最大值两卷均 0，但第 30.860s 的 5 秒 gate 样本达到 198,198,928 bytes（189.017MiB）。在不可逆超限后提前终止本轮实例，最后窗口进度 336.372s；这是 early failure，未完成 E/B/F，不能以之后内存回落替代峰值。owned 实例 SIGTERM，明确不是正常 Quit。见 [namespace-listing receipt](benchmarks/v0.6.2/namespace-listing-desktop-common-candidate.json)。
+
+相同 85f executable 的独立 `MallocStackLogging=lite` 诊断取得只读分配栈/heap。此模式含额外内存开销，全部性能数字不计入验收；没有修改 app、Info 或签名。2026-10-11 17:06:06 JST 的当前 heap 为 74,601,653 bytes，其中 deferred-path singleton Set 重建栈 38,226 allocations、4.08MiB；未发现此前全目录 ScannedEntry 集合。它只归因采样时仍存活的对象，不解释全部 physical footprint 或瞬时峰值。下一最小修复将续扫路径保留为单个 Set，保留初始 identity/hardlink 分组、原 cap/预算和 unfinished cursor fence；40 项定向测试通过。新增断言验证续扫不会重新建立每路径 singleton group，同时保留原最终 namespace/精确 metadata/cursor 正确性断言。当前完整普通/ASan/TSan/release/签名检查进行中，新签名 native E/B/F 尚未验收。
+
+compact-continuation 候选 Desktop SHA256 `24df2f2e8ace87e83c584b20e1e153db3b63cf08c2235c805bfb33cfb4aa2f67`、CLI `3b5717284c0b96a8fa1ff2d6d18e5db4cefa488724eb51858d01d9477b038969` 的普通/ASan/TSan 各 286 项全部通过，release/app/strict signature 通过。负对照仅恢复 singleton Set 重建，资源断言失败 2 项；固定实现保留原最终正确性和游标测试。当前 G/E/B/F 尚未验收，不能继承早期候选结果。见 [compact-continuation receipt](benchmarks/v0.6.2/compact-continuation-desktop-common-candidate.json)。
+
+24df 候选首次启动因真实历史队列 overflow 进入既有 recovery：System full scan 1、Test Volume 2 0；startup cold lifetime peak 2011.534MiB，单列且未重写 cold builder。恢复后 active window 启动 physical 633.737MiB，之后 5 秒样本仍到 170.018MiB，提前终止，不能计为完整 E/B/F。两卷就绪后的 tasks 空；不通过清 cache 或修改 cursor 隐藏恢复。真实 Command+Q exit 0、shutdown 0.150875ms，立即退出前后四份 base/state 清单哈希稳定；旧 baseline 的 System namespace/metadata 合法 recovery 写入另行保留。下一步以相同 app/Info/cache 做独立暖启动窗口，保留本次冷恢复失败。
+
+
+24df 独立暖启动同样 early FAIL：两卷 startup full scans 0、tasks 空，5 秒 physical 样本最高 185.095MiB；没有完成 E/B/F。实际 Command+Q exit 0，shutdown 11.841875ms，退出前后四份 base/state 哈希不变。失败后的只读 heap 为 40,575,925 bytes，allocator allocated 38.6MiB / fragmentation dirty+swap 77.2MiB；empty-large dirty 42.5MiB、swap 10MiB。续扫 singleton Sets 已减少为少数集合，未再保留全目录 ScannedEntry 数组；不以较低 heap 分配量宣称 physical 门槛通过。
+
+独立 `MallocStackLogging=vm` 诊断捕获 VM 分配事件（全部性能数字不计验收）。直接栈归因到 DirectoryReconciler.diff 的 eager map 临时 pair arrays：7 次 ≥1MiB 分配，共 35,831,808 bytes、最大 6,242,304 bytes；dictionary allocations、原子 namespace listing 和 validation lengths 单独记录，分配总量不是 retained bytes 或 physical peak。下一最小修复保持原子 listing/diff 和原 frontier/fence/预算：仅将 presence lookup 改为路径 Set，并以 lazy pairs 构造原 existing identity dictionary，避免不使用的完整 entry values 和 pair-array 副本。删除仍按 existing 顺序，upsert 仍按 actual 顺序，existing 重复路径仍 last-wins；12k 条目的身份/重复/顺序回归和既有 reconciliation/metadata 定向 38 项通过。当前完整检查待完成，新 signed 候选资源门槛待验证；没有重写 deferred reconciliation 或 cold builder。
+
+lazy-diff 候选 Desktop SHA256 `b7f3cce1691f4df092208c27fd6d5cbebbf89888ed53951acc74e2e5ec8ecc27`、CLI `408017d8c569e0918e130f38ada5a3ce0a870e6bb611d84cf46e1aa42354f373` 完整普通/ASan/TSan 各 287 项（Core 263、Desktop 24、1 项可选 mount skip）通过，release/app/strict signature 通过。G/E/B/F 尚未验收，旧候选的失败和菜单结果不移用。见 [lazy-diff receipt](benchmarks/v0.6.2/lazy-diff-desktop-common-candidate.json)。
+
+
+lazy-diff b7f 的 controlled quiet G 通过：60.009793s、1000 paused mutations 239.705875ms、disk/logical writes 0。但真实双卷 E 在 86.7876s 的 5 秒观察中达到 164.502MiB，此后最高 196.783MiB；窗口启动 126.392MiB、两卷 startup full scans 0。这是提前失败，未完成 E/B/F。失败后仍运行较久，最终因锁屏无法正常 UI Quit，身份/签名核对后 SIGTERM，process exit -15、总运行 1173.290s；不能将它计为正常退出或完整 20 分钟验收。原始峰值和终止记录保留在 lazy-diff receipt。
+
+下一实验候选仅缩减 transient allocation：existing lookup 的 value 改为原数组 row offset，保持重复路径 last-wins、顺序和 identity 比较；namespace validation 的临时 UInt32 表改为 scoped anonymous VM，成功/错误/取消时显式 munmap，不改变 snapshot 格式、runtime mapping 或 reconciliation 调度。新增取消后关闭 FD/重新打开回归；定向 64 项通过，release/app/strict signature 通过。Desktop SHA256 `84cf87e6c4ffb41fa5041c17ca37a53c5b843c921767b3bfe5024a6d2d7fa022`，CLI `49a45302b3ca69346011de3735479a4eb3a874ec83b2b225d79591baed6e58d1`。当前只做资源实验，完整普通/ASan/TSan 尚未在此 source hash 上执行，不继承旧结果。外部测试监控在首次超过既定 150MiB 门槛时核对 PID/argv/executable SHA 后 SIGTERM，并保存失败记录；不修改生产 app 门槛或计时。
+
+compact-scratch 84cf 的资源实验仍 early FAIL：第 128.248394s 的 5 秒样本 physical 169.189MiB；owned monitor 在首次不可逆超限后 SIGTERM，process exit -15、总运行 192.622435s。四份 namespace/metadata base 的前后哈希不变，无 state 变化；未完成 E/B/F，不计正常 Quit。该 source hash 尚未跑完整 sanitizer。保留 [独立候选 receipt](benchmarks/v0.6.2/compact-scratch-desktop-common-candidate.json)，随后独立分配栈诊断的全部资源数字不计验收。
+
+独立 84cf `MallocStackLogging=lite` 存活对象采样为 128,549,911 bytes；StringStorage 64,317,664 bytes、namespace delta dictionary 15,122,432 bytes。此次真实 replay 后 System namespace overlay 76,754 条、估算 36,484,801 bytes，Test Volume 2 overlay 14,213 条、7,332,304 bytes；全量目录 path map 两卷均 0。该诊断不计任何资源门槛，也不能将 allocation 总量当作普通运行 physical peak 的完整归因。现有正常 namespace compaction 已排队；没有清 cache、推进 cursor 或减少源数据。随后执行当前 production hash 的完整检查，尝试将 TMPDIR 放在已排除的 owned cache 下。实测发现 macOS Foundation 的 temporaryDirectory 忽略该变量，测试 fixture 仍在系统 T 目录；这次隔离未生效，不能声称避开了合成事件。新增 test-only APFSFIND_TEST_TEMP_ROOT 明确选择现存 owned 0700/no-symlink 根，默认行为不变，并验证 cleanup、缺失根、权限和 symlink 拒绝。生产 exclusion 和 app executable 未改。
+
+84cf 的完整普通与 ASan 各 288 项通过；TSan exit 1，原始报告两次指向 record validation 的 scratch UInt32 write 与随后 FSEvents flags read 使用同一 VM 地址。匿名 scratch 映射实验已撤回，不安装 sanitizer suppression、不更改 FSEvents callback 的并发语义，也不把前次 sanitizer 通过移用到这个失败 hash。保留 row-offset lookup 和取消/关闭 FD 回归；新测试临时根采用显式 test-only override，生产默认目录与 exclusion 不变。
+
+撤回匿名 scratch 后的 row-offset 中间 source 完整普通/ASan/TSan 各 292 项通过；release/app/strict signature 通过。显式 APFSFIND_TEST_TEMP_ROOT 已从 integration 输出中的实际 fixture 路径验证生效。该中间 executable 没有安装作最终 native 验收；之后 source 再变，不移用 sanitizer 结果。
+
+84cf 的正常维护准备（全部资源数字排除验收，期间完整检查并发）运行 1151.736s 后超时，未发生 namespace compaction；System pending metadata 92,283、parent repeat passes 27，任务仍排队，末端系统 memory pressure warning。owned SIGTERM，不计正常 Quit；原有 cache/cursor 未重置。
+
+确定性回归逐页向已读取的文件写入并送 typed Modified 事件，旧逻辑把已知内容写入也转换成全父目录 repeat：负对照出现 3 项失败（另一目录仍 size=999 而非13、processed cursor 保持100、8次整目录 repeat）。最小修复仅对 namespace 仍索引的 typed file content 写入保留有界 late paths，当前 parent pass 完成后补查这些路径；cursor 在后续补查完成前保持原 fence。歧义/目录/namespace 事件保留整父目录重读，原 maxPendingEntries 满额也回退整目录，不改 cap 或 namespace reconciliation frontier。暂停/发布、真实 I/O 失败保留 late paths。新增持续写入、预算回退和原 requested 集合之外的 late write 经发布屏障保留用例；51 项定向全部通过，完整 295 项和新 signed native gates 正在验证。
+
+
+当前 hot-content 候选 Desktop SHA256 `a85290bfe66e62755c96de6a27c70d44dca4f967cb25f5d1890a01734b1b2fb4`、CLI `2b85070c8d521f8549b52c66c6b7ea236d662454de6b3c2c4babe1598c239644`：完整 295 项（Core 271 + Desktop 24、1 项可选 mount skip）普通 96.924s、ASan 230.835s、TSan 347.773s 全部通过，release/app/strict signature 通过。已替换独立测试 App，并归档 84cf 实验候选；新 native E/B/G/F 尚未通过，不继承旧 binary 结果。见 [hot-content receipt](benchmarks/v0.6.2/hot-content-desktop-common-candidate.json)。
+
+
+复查部分 parent pass 的回退发现遗漏：requested 300 项、late content 6 项触发 305 项预算后，原实现丢弃 late paths，却只重复原 requested 集合；另一个目录事件也会丢掉此前 late content。两项负对照共 7 项精确 size 断言失败，cursor 已推进，原始失败保留。最小修复集中把这些回退升级为当前父目录的 authoritative all-sibling repeat，保留分页/cap/原 cursor fence。a852 的原生窗口已在总运行 501.760s 后 SIGTERM 停止；最高观察 131.22MiB，但未完成 E/B/F，不能标为通过。新候选需重新执行检查和固定窗口。
+
+
+当前 authoritative-repeat 候选 Desktop SHA256 `9de7dd73ccaa66d76ac5fbbbb670e3641b5d7970b32beba20c4a7219e551e4b0`、CLI `34a44bc31ae309ef8add2f249e23bc2006f8a1514258e460250a09503df27e1b` 完整 297 项（273 Core + 24 Desktop、1 项可选 mount skip）普通 98.317s、ASan 233.607s、TSan 356.532s 全部通过，release/app/strict signature 通过。独立 App 已替换并归档 a852；仍需当前 binary 的 G/E/B/F。见 [authoritative-repeat receipt](benchmarks/v0.6.2/authoritative-repeat-desktop-common-candidate.json)。
+
+
+9de authoritative-repeat 同一最终 binary 的 G/E/B 已通过。Controlled quiet 60.000338s、CPU 0.000260s、disk/logical writes 0，1000 paused changes 恢复 67.939125ms。真实双卷 E 固定窗口 1202.396660s、237 次五秒观察，全部观察 maximum physical 141,690,416 bytes（135.127MiB），结束 89.205MiB；无 full scan/resource-yield rebuild、维护 restart loop 或截止未完成任务，两卷末端 pending metadata 均 0。窗口 disk/logical writes 0、disk reads 353,460,224 bytes、user/system CPU 476.973872/163.112030s；真实 replay/repair CPU 单列，不称 quiet。窗口起始 indexed entries 1,576,863 + 2,828,791，末端 1,576,869 + 2,829,208；保持原 `/` 与 `/Volumes/Data 1` roots、原缓存/cursor，计数反映当前真实文件系统；此前未计验收的正常 checkpoint 清除了已消失 transient entries，不能沿用历史 4.9m 数字。
+
+随后 10 轮 B 持续 broad query 下全部通过：每轮 namespace 12/12、size 与纳秒 mtime 正确、metadataComplete=true，full scan/yield rebuild delta 0，最长 9.477076s，原 30 秒期限不变。实际搜索窗口返回 12 条；relevance/name/size/mtime 四种排序分别约 34.2/45.5/34.4/34.3ms。用户确认当前实例的 Option+Space 显示/焦点、Escape 隐藏与再次恢复正常。
+
+当前 binary 的真实状态栏全局/单卷菜单恢复分别 9.384830s / 6.617918s，12 路径/size/纳秒 mtime/metadataComplete 均正确，full scan/yield rebuild delta 0。暂停时旧 12 条仍可搜索、标记 pausedStale，新建 prefix 查询 0 条；单卷暂停时 System namespace 保持 Live，系统查询 31 条 live 结果（46.948ms）。测试目录 inode 保持不变，所有变动仅限本轮 owned fixture。正常 Command+Q exit 0、multi-volume shutdown 6.234500ms；立即退出前后两份 namespace、两份 metadata base 清单/哈希不变，未存在 `.state` 文件，locator/cache 未改。相同 signed app/Info/cache 暖重启进行中，当前 HEAD CI 仍待发布验证；#3 尚未关闭。完整当前 receipt 见 authoritative-repeat-desktop-common-candidate.json；所有此前失败按 hash 保留，不移用到本次验收。
+
+
+同一 9de app/Info/cache 暖重启通过：Test Volume 2 / System search-ready 2.015 / 3.120s，namespace Live 9.898 / 115.965s（仍有历史元数据修复，不把 namespace Live 当作全局 metadata fresh）；两卷 metadata available。owned fixture 12/12、size/纳秒 mtime 正确、metadataComplete=true，校验查询 38.911ms；GUI 12 条、50.0ms，warm broad-query 七种排序每种 5 次，p95 94.960–192.259ms，均 metadataComplete=true。两卷 full scan/yield rebuild 0，源/cache/cursor 未重置。第二次正常 Command+Q exit 0、multi-volume shutdown 2.043917ms，四份 base 哈希和 state 清单仍不变。最终 B/E/G/F 均在同一 executable SHA 上完成，本机完整普通/ASan/TSan 297 项通过；现在只剩已授权发布后当前 HEAD 的四项 required CI，再关闭 #3。

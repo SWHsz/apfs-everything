@@ -33,7 +33,10 @@ final class LaunchAtLoginController: ObservableObject {
     @unknown default: return "状态未知"
     }
   }
-  func refresh() { status = service.status }
+  func refresh() {
+    let current = service.status
+    if status != current { status = current }
+  }
   func setEnabled(_ enabled: Bool) throws {
     refresh()
     do {

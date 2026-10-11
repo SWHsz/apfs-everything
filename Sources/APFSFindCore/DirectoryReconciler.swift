@@ -63,10 +63,16 @@ public final class DirectoryReconciler {
     }
 
     public static func diff(existing: [NamespaceEntry], actual: [NamespaceEntry]) -> [IndexMutation] {
-        let new = Dictionary(actual.map { ($0.path, $0) }, uniquingKeysWith: { _, b in b })
-        let old = Dictionary(existing.map { ($0.path, $0) }, uniquingKeysWith: { _, b in b })
-        var changes = existing.filter { new[$0.path] == nil }.map { IndexMutation.remove($0.path) }
-        for item in actual where old[item.path] != item { changes.append(.upsert(item)) }
+        // Presence needs only paths. Consume pairs lazily so a wide atomic
+        // directory diff does not also allocate full-entry tuple arrays.
+        let present = Set(actual.lazy.map(\.path))
+        let old = Dictionary(existing.enumerated().lazy.map { ($0.element.path, $0.offset) }, uniquingKeysWith: { _, b in b })
+        var changes: [IndexMutation] = []
+        for item in existing where !present.contains(item.path) { changes.append(.remove(item.path)) }
+        for item in actual {
+            if let position = old[item.path], existing[position] == item { continue }
+            changes.append(.upsert(item))
+        }
         return changes
     }
 
@@ -139,11 +145,11 @@ public final class DirectoryReconciler {
                 }
                 plan.mutations += changes
                 metrics.record("directory_reconciles"); completed += 1; plan.completedDirectories.append(directory)
-                let old = Dictionary(existing.map { ($0.path, $0) }, uniquingKeysWith: { _, b in b })
+                let old = Dictionary(existing.enumerated().lazy.map { ($0.element.path, $0.offset) }, uniquingKeysWith: { _, b in b })
                 for child in actual where BulkScanner.shouldTraverse(entry: child, rootDeviceID: rootDeviceID) {
                     guard PathCanonicalizer.parent(of:child.path) == directory else { continue }
                     // New/type-replaced directories can already contain a complete tree.
-                    let replaced = old[child.path]?.hasSameDirectoryIdentity(as: child) != true
+                    let replaced = old[child.path].map { existing[$0].hasSameDirectoryIdentity(as: child) } != true
                     if recursive || work.reset || replaced {
                         pending.append(.init(path: child.path, reset: work.reset || replaced,recursive:recursive))
                     }

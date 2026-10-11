@@ -19,8 +19,12 @@ public struct ActiveLiveConvergenceGate: Sendable {
     private let baseline: ActiveLiveSample
     private var samples: [ActiveLiveSample] = []
     private var failures = Set<String>()
+    /// Includes every gate observation, even when the bounded trend window has
+    /// discarded an older sample. The slower diagnostic output can miss peaks.
+    public private(set) var maximumObservedPhysicalBytes: UInt64 = 0
     public init(baseline: ActiveLiveSample) { self.baseline = baseline }
     public mutating func observe(_ sample: ActiveLiveSample) {
+        maximumObservedPhysicalBytes = max(maximumObservedPhysicalBytes, sample.physicalBytes)
         if sample.fullScans != baseline.fullScans { failures.insert("full scan during active window") }
         if sample.resourceYieldRebuilds != baseline.resourceYieldRebuilds { failures.insert("resource_yield rebuild") }
         if sample.recoveryYields-baseline.recoveryYields > 3 { failures.insert("recovery restart loop") }

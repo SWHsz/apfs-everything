@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--label", default="first")
+    parser.add_argument("--restart", action="store_true", help="Warm validation without changing or re-signing the owned bundle")
     args = parser.parse_args()
     assert re.fullmatch(r"[A-Za-z0-9-]+", args.label), "invalid capture label"
     manifest = json.loads(args.manifest.read_text())
@@ -52,7 +53,11 @@ def main():
         stream.close()
 
     with stdout.open("xb") as out, stderr.open("xb") as err:
-        process = subprocess.Popen([str(app/"Contents/MacOS/APFSFind")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        environment = os.environ.copy()
+        environment.pop("APFSFIND_SMOKE_RESTART", None)
+        if args.restart:
+            environment["APFSFIND_SMOKE_RESTART"] = "1"
+        process = subprocess.Popen([str(app/"Contents/MacOS/APFSFind")], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
         readers = [threading.Thread(target=capture,args=(process.stdout,out)),threading.Thread(target=capture,args=(process.stderr,err))]
         for reader in readers: reader.start()
         pid_path.write_text(json.dumps({"pid":process.pid,"started_epoch":time.time(),"label":args.label}))

@@ -1,6 +1,10 @@
 # v0.6.2 — Reconciliation Convergence（验收进行中）
 
-从 `5588ec7e1305839a81473a535aaadb121d1da0ff` 开始，只处理 Issue #3；Issue #1 已关闭，Issue #2 不开始，NSv2/metav1及cold builder不变。最终代码候选 `87448d9` 已推送：本机完整279项普通/ASan/TSan、release及受控quiet通过，四项required CI全绿。最终同一signed binary的双卷窗口1203.216s、236次gate观察通过；30秒诊断physical最高84.28MiB、结束55.94MiB，全程full scans0/yield rebuild0、无维护loop、backlog清空、disk/logical writes0。十轮owned pause/mutate/resume+并发查询全部12路径/size/精确mtime正确，最长2.957s。Mac仍锁屏，真实菜单、UI查询、正常Quit/restart待验证；测试实例保持打开，当前#3 OPEN、无release tag，不能将B/E/G通过称完整验收。
+本轮从 `d3a7ffe051b6694c4edfa66371109dde7636600c` 继续 Phase A（#3 最终同 binary 桌面/资源验收），通过后进入 Phase B（#2 分层存储）。当前 9de 签名候选 297 项普通/ASan/TSan、G/E/B、真实热键/全局与单卷菜单、正常 Quit 已通过；暖重启也通过，发布后的 required CI 待验证。#1 已关闭，#2/#3 保持 OPEN，无 release tag。历史 binary 的结果按 SHA 分开保留。
+
+状态栏闪动修复后的 e35 候选已完成真实全局/单卷暂停恢复、键盘显示/焦点/隐藏、正常 Quit 和暖重启；但该候选 E 内存门槛失败。普通 metadata subtree 改用既有分页游标后，c677 候选 284 项普通/ASan/TSan、B/G/Quit/restart 通过，冷恢复和独立暖启动 E 仍失败。进一步移除 namespace 枚举全目录的 ScannedEntry 副本后，85f 候选 286 项普通/ASan/TSan、release/签名/G 通过；真实双卷窗口第 31 秒捕获 189.02 MiB，已提前终止，不能计为完整 E/B/F 通过。完整原始失败记录和同 binary 边界见 [validation](docs/v062-validation.md)。
+
+metadata 续扫路径集合修复（24df）已通过 286 项普通/ASan/TSan、release/签名/G；冷恢复及暖启动 E 仍超限，正常 Quit 和哈希稳定通过，失败已保留。只读 VM 分配栈进一步定位到目录 diff 的 eager map pair-array 副本；当前最小修复去掉这些副本及只用于 presence 的完整 entry-value map，保持原子 diff、身份/删除/插入顺序、frontier/预算/cursor。38 项定向测试及 287 项普通/ASan/TSan、release/签名通过，新签名候选 G/E/B/F 待验收。格式和 cold builder 保持不变；本轮候选尚未推送。
 
 局部修复用有界、合并祖先路径的 `DeferredReconcileQueue` 保存 frontier 与 minimum cursor。每片最多 32 个目录 / 20 ms，查询中至少完成一个原子父目录；one-shot 重试，队列清空后才推进 namespace cursor。权限错误局部保留，反复权威 I/O 失败或 hard overflow 才恢复；真正 stream invalidation 合并为一次 active recovery。Full rebuild 的 yield 重试同一个 recovery epoch，保留旧 base、释放临时 graph，不产生 resource_yield rebuild。
 
@@ -1005,13 +1009,19 @@ base 216,137,950 bytes（216.14 MB、89.88 bytes/entry），运行 210.44 s；�
 运行期间 permission-denied 计数分别为 `/` 950、数据卷 891、工作盘 4，包含 replay/reconciliation 的重复访问，
 不能当作不同不可读目录的数量。这是当前可访问范围的索引体积，不是完整 inode 总量或一次全盘 fresh verify 结果。
 
+## v0.6.3 进行中的验收与存储基础
+
+连续验收/分层存储任务仍在进行，详见 [v0.6.2 追加验收](docs/v062-validation.md) 和 [v0.6.3 工作记录](docs/v063-validation.md)。#3 仍 OPEN，各候选 E/UI 按 executable SHA 区分。匿名 validation scratch 实验已因 E 超限及 TSan VM 地址报告撤回；row-offset 中间 source 292 项普通/ASan/TSan及发布/签名通过，未移用为最终 native 验收。真实 metadata 的重复父目录 pass 已用旧代码 3 项失败复现；当前仅对已知文件内容写入使用有界补查，保留歧义事件整目录重读、原 cap 和 cursor fence，51 项定向通过。前一 a852 候选完整 295 项及 G 通过，但窗口中复查发现部分 parent pass 回退会遗漏 late content，两项负对照 7 项断言失败。已将回退改为当前父目录的完整分页补偿，新 297 项候选普通/ASan/TSan、release/app/strict signature 已通过，当前 9de binary 的 G/E/B、真实 UI/菜单/热键及正常 Quit 已通过，暖重启也通过，待发布后 CI。cold builder、snapshot 格式和 namespace reconciliation 状态机未重写。
+
+新增 storage policy、原子 locator、UUID resolver、空间公式和有界 pread 基础类，13 项专项普通/ASan/TSan 通过，但尚未接入实际 namespace/metadata reader、迁移、离线重连、Settings/CLI。owned APFS child probe 已确认旧 mmap 强制 detach 会 SIGBUS；pread 基础读取同类 detach 返回 EIO 并正常退出。这不是生产外置存储验收，#2 仍 OPEN，无 tag，日用 index 未移动。
+
 ## 限制与后续边界
 
 - required path 已实现，无 TODO/stub。数据来自单次本机 benchmark，不是多机器统计保证。
 - 查询仍线性扫描 folded names；持续无间隔 synthetic writer 会出现 broad query 长尾，见真实分位数。
   不宣称所有查询低于 100 ms，也不把 RAM patch 的时间冒充真实百万文件 FSEvents 搜索可见性。
-- RAM 保留目录完整路径和 live overlay；目录很多/路径很长时 directory map 成本仍会上升。
-  overlay bytes 是保守估算，不是 allocator 的精确账单；持续不可写存储下无法保证阈值硬上限。
+- mmap 查询已移除全量目录路径 map；RAM 保留有界热目录 cache 和 live overlay。
+  replay 大量变更仍会占用 overlay 和 repair 内存；overlay bytes 是保守估算，不是 allocator 的精确账单，当前真实 E physical 门槛尚未重新通过。
 - cold/rebuild 暂时拥有完整 RAM 索引；compaction planning arrays 是 O(N)，观测 peak RSS 不是绝对瞬时上界。
   scoped reconciliation 可临时构造该范围的 paths；:verify 全量 fresh path sets 也会增加内存，需要静止目录。
 - 单次大目录子树删除仍可较长占用更新锁；已测普通文件 writer 与并发查询，未验证所有百万平面目录/超深树分布。

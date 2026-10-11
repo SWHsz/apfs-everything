@@ -88,6 +88,33 @@ final class BulkScannerTests: XCTestCase {
         }
     }
 
+    func testNamespaceListingRetainsOnlyPagedMetadataAndAllNamespaces() throws {
+        let root = try temporaryRoot()
+        for i in 0..<2048 { try Data().write(to: root.appendingPathComponent("entry-\(i)")) }
+        let nested = root.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("link"), withDestinationURL: nested)
+        let metrics = Metrics(), scanner = BulkScanner(root: root.path, metrics: metrics)
+        let device = try scanner.rootDeviceID()
+        let listing = try scanner.readDirectory(root.path, rootDeviceID: device, cancellation: CancellationToken())
+        let oracle = try BulkScanner(root: root.path).readScannedDirectory(root.path, rootDeviceID: device)
+        XCTAssertEqual(Set(listing.map(\.path)), Set(oracle.map(\.namespace.path)))
+        XCTAssertEqual(listing.count, 2050)
+        let byPath = Dictionary(uniqueKeysWithValues: oracle.map { ($0.namespace.path, $0.namespace) })
+        for entry in listing { XCTAssertEqual(entry, byPath[entry.path]) }
+        XCTAssertEqual(metrics.snapshot()["scanner_scanned_collected_entries_max"], 0)
+        XCTAssertGreaterThan(metrics.snapshot()["scanner_scanned_page_entries_max"] ?? 0, 0)
+        XCTAssertLessThan(metrics.snapshot()["scanner_scanned_page_entries_max"] ?? 2050, 2050)
+        XCTAssertThrowsError(try scanner.readScannedDirectory(root.path, rootDeviceID: device,
+            collectEntries: false, maximumEntries: 8, collectDirectories: false)) {
+            XCTAssertEqual(($0 as? ScannerError)?.code, EOVERFLOW)
+        }
+        let cancelled = CancellationToken(); cancelled.cancel()
+        XCTAssertThrowsError(try scanner.readDirectory(root.path, rootDeviceID: device, cancellation: cancelled)) {
+            XCTAssertEqual(($0 as? ScannerError)?.code, ECANCELED)
+        }
+    }
+
     func testPreCancelledScanDoesNotEnumerateDescendants() throws {
         let root = try temporaryRoot()
         try Data().write(to: root.appendingPathComponent("seed.txt"))

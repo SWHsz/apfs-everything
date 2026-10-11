@@ -58,7 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       Bundle.main.object(forInfoDictionaryKey:"APFSFindResourceSmoke") as? Bool == true else { return }
     resourceSmokeTask = Task { [weak self] in
       self?.panel?.hide()
-      if Bundle.main.object(forInfoDictionaryKey:"APFSFindSmokeRestart") as? Bool == true {
+      if Bundle.main.object(forInfoDictionaryKey:"APFSFindSmokeRestart") as? Bool == true
+        || ProcessInfo.processInfo.environment["APFSFIND_SMOKE_RESTART"] == "1" {
         await NativeSmokeActions.run(coordinator,restart:true);return
       }
       if Bundle.main.object(forInfoDictionaryKey:"APFSFindActiveLiveSmoke") as? Bool == true {

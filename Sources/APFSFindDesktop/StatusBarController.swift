@@ -2,7 +2,7 @@ import APFSFindCore
 import AppKit
 import Combine
 
-struct BackgroundStatusPresentation {
+struct BackgroundStatusPresentation: Equatable {
   let symbol: String
   let title: String
   init(sessions: [VolumeSessionSnapshot]) {
@@ -18,6 +18,20 @@ struct BackgroundStatusPresentation {
     }
   }
 }
+private struct BackgroundMenuPresentation: Equatable {
+  struct Volume: Equatable {
+    let id: UUID
+    let title: String
+    let state: String
+    let paused: Bool
+  }
+  let status: BackgroundStatusPresentation
+  let globalPaused: Bool
+  let volumes: [Volume]
+  let loginDescription: String
+  let loginEnabled: Bool
+  let loginError: String?
+}
 @MainActor
 final class StatusBarController: NSObject, NSMenuDelegate {
   private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -27,6 +41,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
   private var sessions: [VolumeSessionSnapshot] = []
   private var globalPaused = false
   private var enabled = true
+  private var trackingMenu = false
+  private var renderedPresentation: BackgroundMenuPresentation?
   private var observation: AnyCancellable?
   var menu: NSMenu { item.menu! }
   init(coordinator: MultiVolumeCoordinator, login: LaunchAtLoginController,
@@ -42,12 +58,18 @@ final class StatusBarController: NSObject, NSMenuDelegate {
   }
   func update(_ snapshots: [VolumeSessionSnapshot], globalPaused: Bool) {
     sessions = snapshots; self.globalPaused = globalPaused
-    let status = BackgroundStatusPresentation(sessions: snapshots)
-    let image = NSImage(systemSymbolName: status.symbol, accessibilityDescription: status.title)
-    image?.isTemplate = true; item.button?.image = image; item.button?.toolTip = status.title
     rebuildMenu()
   }
   func menuNeedsUpdate(_ menu: NSMenu) { login.refresh(); rebuildMenu() }
+  func menuWillOpen(_ menu: NSMenu) { trackingMenu = true }
+  func menuDidClose(_ menu: NSMenu) {
+    trackingMenu = false
+    // Let AppKit finish dispatching the selected item's action before replacing it.
+    Task { @MainActor [weak self] in
+      await Task.yield()
+      self?.rebuildMenu()
+    }
+  }
   private func add(_ title: String, _ selector: Selector?, to menu: NSMenu, value: Any? = nil, checked: Bool = false) {
     let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
     entry.target = self; entry.representedObject = value
@@ -55,7 +77,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     menu.addItem(entry)
   }
   private func rebuildMenu() {
-    guard let menu = item.menu else { return }; menu.removeAllItems()
+    // A snapshot may arrive while AppKit is tracking a nested submenu. Removing
+    // its items then destroys the hovered item and closes/reopens that submenu.
+    guard enabled, !trackingMenu, let menu = item.menu else { return }
+    let presentation = BackgroundMenuPresentation(
+      status: BackgroundStatusPresentation(sessions: sessions), globalPaused: globalPaused,
+      volumes: sessions.map { .init(id: $0.id, title: $0.volume.displayName,
+        state: $0.state.description, paused: $0.pauseReasons.contains(.userVolume)) },
+      loginDescription: login.description, loginEnabled: login.enabled, loginError: login.error)
+    guard presentation != renderedPresentation else { return }
+    renderedPresentation = presentation
+    let status = presentation.status
+    let image = NSImage(systemSymbolName: status.symbol, accessibilityDescription: status.title)
+    image?.isTemplate = true; item.button?.image = image; item.button?.toolTip = status.title
+    menu.removeAllItems()
     add("显示搜索窗口", #selector(showSearch), to: menu)
     add(BackgroundStatusPresentation(sessions: sessions).title, nil, to: menu)
     add(globalPaused ? "恢复所有索引" : "暂停所有索引", #selector(toggleGlobal), to: menu)
@@ -80,17 +115,25 @@ final class StatusBarController: NSObject, NSMenuDelegate {
   @objc private func toggleLogin() { try? login.setEnabled(!login.enabled) }
   @objc private func toggleGlobal() {
     let enabled = !globalPaused
+    let started = ProcessInfo.processInfo.systemUptime
     Task {
       await coordinator.setAllPaused(.userGlobal, enabled: enabled)
-      if Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.")==true { NativeSmokeActions.emit("menu_global",["paused":enabled]) }
+      if Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.")==true {
+        NativeSmokeActions.emit("menu_global",["paused":enabled])
+        await NativeSmokeActions.menuObservation(coordinator,stage:"menu_global",paused:enabled,actionStarted:started)
+      }
     }
   }
   @objc private func toggleVolume(_ sender: NSMenuItem) {
     guard let id = sender.representedObject as? UUID else { return }
     let paused = sessions.first { $0.id == id }?.pauseReasons.contains(.userVolume) ?? false
+    let started = ProcessInfo.processInfo.systemUptime
     Task {
       await coordinator.setVolumePaused(id, enabled: !paused)
-      if Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.")==true { NativeSmokeActions.emit("menu_volume",["volume":id.uuidString,"paused":!paused]) }
+      if Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.")==true {
+        NativeSmokeActions.emit("menu_volume",["volume":id.uuidString,"paused":!paused])
+        await NativeSmokeActions.menuObservation(coordinator,stage:"menu_volume",paused:!paused,actionStarted:started)
+      }
     }
   }
   func stop() {

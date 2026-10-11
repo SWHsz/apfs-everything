@@ -15,6 +15,32 @@ final class HybridIndexTests: XCTestCase {
       cursor: 7, store: s)
     return try XCTUnwrap(s.reader(expectedIdentity: v).mappedBase)
   }
+  func testValidationCancellationClosesDescriptorAndAllowsReopen() throws {
+    let cache = try TemporaryTree(cache:true), identity = snapshotIdentity()
+    let published = try base(cache)
+    let store = try SnapshotStore(directory:cache.root,identity:identity)
+    XCTAssertLessThan(published.header.fileLength,UInt64(65_536))
+    // Two tiny CRC passes, then the first record's checkpoint. Cancellation
+    // during record validation must close the descriptor and mapping.
+    for _ in 0..<20 {
+      let fd = open(store.path,O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+      XCTAssertGreaterThanOrEqual(fd,0)
+      var checks = 0
+      XCTAssertThrowsError(try MMapBaseIndex(fileDescriptor:fd,identity:identity,checkpoint:{
+        checks += 1
+        if checks == 3 {throw SnapshotError.cancelled}
+      })) { error in
+        guard case SnapshotError.cancelled = error else {return XCTFail("unexpected validation error: \(error)")}
+      }
+      XCTAssertEqual(checks,3)
+      XCTAssertEqual(fcntl(fd,F_GETFD),-1)
+      XCTAssertEqual(errno,EBADF)
+    }
+    let reopened = try XCTUnwrap(store.reader(expectedIdentity:identity).mappedBase)
+    XCTAssertEqual(reopened.count,published.count)
+    XCTAssertEqual(reopened.root,published.root)
+  }
+
   func testStablePointLookupNeverReportsMissingDuringUnrelatedMutations() throws {
     let cache = try TemporaryTree(cache:true),v = snapshotIdentity(),ram = FileIndex(root:v.root)
     let stable = v.root + (1...12).map { "/stable-long-component-\($0)" }.joined() + "/target"

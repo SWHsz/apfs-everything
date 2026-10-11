@@ -1,0 +1,233 @@
+{
+  "status": "tests/signature/G passed; E early physical failure; B/F pending",
+  "source_baseline_head": "d3a7ffe051b6694c4edfa66371109dde7636600c",
+  "desktop_sha256": "b7f3cce1691f4df092208c27fd6d5cbebbf89888ed53951acc74e2e5ec8ecc27",
+  "cli_sha256": "408017d8c569e0918e130f38ada5a3ce0a870e6bb611d84cf46e1aa42354f373",
+  "info_sha256": "bb1da1edfa4fa29a83ff6cb8a5dc501cbd6ada131e363c381f6c807e96aeb4ee",
+  "source_hashes": {
+    "Sources/APFSFindCore/ActiveLiveConvergenceGate.swift": "00698a2005774ea409392b5e0c1de512a4dce52b391d22b22088a251cea0e10b",
+    "Sources/APFSFindCore/BulkScanner.swift": "6c54b6e4c3986bf3cf2dea749400de19f3ad69d61cedc8cc2f6532fdd66081c2",
+    "Sources/APFSFindCore/DirectoryReconciler.swift": "dbea71f25763aa972ef6de27a78612a7100da59d428aa3fc3f18b323b95a1d8a",
+    "Sources/APFSFindCore/MetadataUpdateCoordinator.swift": "59c4ac91035ea6b0c2a196d16d2f4586ad9a18237173c81864b62892e3ec9c03",
+    "Sources/APFSFindDesktop/ActiveLiveSmoke.swift": "3f71c4ca65ccf0e188d375fac7d7d4368b09561315fe57736b620418896fe581",
+    "Sources/APFSFindDesktop/AppDelegate.swift": "e4b33fcec4ba557dd7668a439fff4cc198c9718869219b524060d633f1b25766",
+    "Sources/APFSFindDesktop/LaunchAtLoginController.swift": "0400ec1f785b83f51c673a1816260f53f7ade08e6fe9ac1651d61ee647bd2de1",
+    "Sources/APFSFindDesktop/NativeMenuSmokeValidation.swift": "e7a0e52d5e1f07dc3b1b888986e67bd411a188ff29a3ea6c55c08fd91afb6bf9",
+    "Sources/APFSFindDesktop/NativeSmokeActions.swift": "33337dc6bc9f634369013ec5c2bdfbf8e3248c78b7bbc84b9727d7d2c9c5ec13",
+    "Sources/APFSFindDesktop/StatusBarController.swift": "567fa3b729af0a6af13f3e8a20c3eb87a85cca2fc93d7b5465e0b713b9027b04",
+    "Tests/APFSFindCoreTests/ActiveLiveConvergenceTests.swift": "a83a8d091128ae49c0c64fd8a870072bad71b343c799055752916156feb4a074",
+    "Tests/APFSFindCoreTests/BulkScannerTests.swift": "5fe5009b70959888990919b7d56384509445a6977e4b94073612d428e9d3ac8e",
+    "Tests/APFSFindCoreTests/MetadataDirectoryCursorTests.swift": "388d7f03ae6e1c32f7b994ed713106f5ed3b732ef549469a5464bfe172f9d888",
+    "Tests/APFSFindCoreTests/MetadataIntegrationTests.swift": "9b87bfb0bbb81f21c20aac426671fdc5582f38b3c96fdd5a0cbb5082aec9ef71",
+    "Tests/APFSFindCoreTests/ReconcilerTests.swift": "e2d47975be19ac250e888bf91047861e33aa3a5e3782014c25c02889b616ba4a",
+    "Tests/APFSFindDesktopTests/BackgroundDesktopTests.swift": "86ff197b06e4b72402e2c11a2c085a86203c10a47016f7b81104fa54d0bdcbfc"
+  },
+  "phase_b_included": false,
+  "test_counts": {
+    "core": 263,
+    "desktop": 24,
+    "optional_mount_skipped": 1
+  },
+  "checks": {
+    "source_sha256": "dbea71f25763aa972ef6de27a78612a7100da59d428aa3fc3f18b323b95a1d8a",
+    "checks": {
+      "ordinary": {
+        "exit": 0,
+        "seconds_including_build": 91.77956679207273,
+        "log": "/private/tmp/apfsfind-lazy-diff-ordinary-20261011.txt",
+        "sha256": "884336db60d7e2b4e7b12936a8061aba53cb6035b7f359b9f46de9ce22a0f493"
+      },
+      "asan": {
+        "exit": 0,
+        "seconds_including_build": 223.29849670792464,
+        "log": "/private/tmp/apfsfind-lazy-diff-asan-20261011.txt",
+        "sha256": "c057a0cb6aa6e1ad3b922096b79b8904d97ada6072b2abfb58e1be8ef50c37ae"
+      },
+      "tsan": {
+        "exit": 0,
+        "seconds_including_build": 334.09800141700543,
+        "log": "/private/tmp/apfsfind-lazy-diff-tsan-20261011.txt",
+        "sha256": "ebe82b4f3c1ba9ccf82ae34a491ca2285a195f03a9c9c85e66f8819a2078129c"
+      },
+      "release": {
+        "exit": 0,
+        "seconds_including_build": 49.456712750019506,
+        "log": "/private/tmp/apfsfind-lazy-diff-release-20261011.txt",
+        "sha256": "27aa659fe840bcc671a4969e6548397130a64f54e4de8071248bc62eb52a0a20"
+      },
+      "app": {
+        "exit": 0,
+        "seconds_including_build": 1.4779710000148043,
+        "log": "/private/tmp/apfsfind-lazy-diff-app-20261011.txt",
+        "sha256": "4649457172f81f9ec5e8b78b526a0f47a9f2ee2d07ecd150b0c89c20601016cc"
+      },
+      "signature": {
+        "exit": 0,
+        "seconds_including_build": 0.009858208009973168,
+        "log": "/private/tmp/apfsfind-lazy-diff-signature-20261011.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "change": "Path-only presence Set and lazy existing dictionary pairs remove unnecessary full-entry and tuple-array copies. Atomic directory diff, identity/ordering, frontier/caps/cursor unchanged.",
+  "controlled_quiet": {
+    "benchmark": "background",
+    "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+    "controlled_quiet_passed": true,
+    "cpu_sampler_idle_wakeups": 0,
+    "cpu_sampler_inactive_after": true,
+    "cpu_sampler_inactive_before": true,
+    "idle_compaction_scheduler_wakeups": 0,
+    "idle_deferred_reconcile_timer_after": 0,
+    "idle_deferred_reconcile_timer_before": 0,
+    "idle_metadata_scheduler_wakeups": 0,
+    "idle_resources": {
+      "compressed_before_bytes": 0,
+      "compressed_bytes": 2244608,
+      "disk_bytes_read": 0,
+      "disk_bytes_written": 0,
+      "idle_wakeups": 0,
+      "interrupt_wakeups": 2,
+      "logical_bytes_read": null,
+      "logical_bytes_written": 0,
+      "major_faults": 0,
+      "minor_faults": 1,
+      "pageins": 0,
+      "peak_compressed_bytes": 2244608,
+      "peak_rss_bytes": 10403840,
+      "rss_after_bytes": 7667712,
+      "rss_before_bytes": 10403840,
+      "system_cpu_seconds": 0.00019900000000000126,
+      "user_cpu_seconds": 6.300000000000056e-05,
+      "wall_ms": 60009.74720832892
+    },
+    "idle_seconds": 60.00979270832613,
+    "pause_mutations": 1000,
+    "paused_retained_stale": true,
+    "periodic_polling": 0,
+    "resume_converge_ms": 239.7058749338612,
+    "scope": "window-independent engine; native window lifecycle is validated separately",
+    "verify_consistent": true,
+    "visibility_ms": {
+      "create": {
+        "max": 56.318541639484465,
+        "p50": 20.427916664630175,
+        "p90": 21.93145838100463,
+        "p95": 22.832916700281203,
+        "p99": 24.19858332723379
+      },
+      "delete": {
+        "max": 22.17508340254426,
+        "p50": 19.937624922022223,
+        "p90": 21.391749964095652,
+        "p95": 21.718416712246835,
+        "p99": 22.090000100433826
+      },
+      "rename": {
+        "max": 27.588874916546047,
+        "p50": 21.883125067688525,
+        "p90": 23.475416586734354,
+        "p95": 24.155333288945258,
+        "p99": 26.368833263404667
+      }
+    },
+    "visibility_samples_per_operation": 100
+  },
+  "early_failure": {
+    "status": "E early physical failure, window aborted; B/F not completed",
+    "label": "v063-lazy-diff-native-20261011",
+    "desktop_sha256": "b7f3cce1691f4df092208c27fd6d5cbebbf89888ed53951acc74e2e5ec8ecc27",
+    "start_physical_bytes": 132531760,
+    "maximum_observed_physical_bytes": 206341680,
+    "peaks": [
+      {
+        "dirty_backlog": 2,
+        "event_backlog": 6,
+        "physical_bytes": 116606512,
+        "seconds": 5.036846833303571
+      },
+      {
+        "dirty_backlog": 2,
+        "event_backlog": 4,
+        "physical_bytes": 123602480,
+        "seconds": 10.148444624966942
+      },
+      {
+        "dirty_backlog": 2,
+        "event_backlog": 3,
+        "physical_bytes": 172492336,
+        "seconds": 86.78760704165325
+      },
+      {
+        "dirty_backlog": 2,
+        "event_backlog": 17516,
+        "physical_bytes": 179258928,
+        "seconds": 345.5407095833216
+      },
+      {
+        "dirty_backlog": 1,
+        "event_backlog": 33255,
+        "physical_bytes": 202507824,
+        "seconds": 350.5503846249776
+      },
+      {
+        "dirty_backlog": 4,
+        "event_backlog": 109,
+        "physical_bytes": 206341680,
+        "seconds": 600.0432619166095
+      }
+    ],
+    "startup_full_scans": [
+      0,
+      0
+    ],
+    "entries": [
+      3101389,
+      1576562
+    ],
+    "tasks_at_start": [],
+    "last_progress_tasks": [
+      {
+        "kind": "compaction",
+        "queued_ms": 15407.913875067607,
+        "running_ms": null,
+        "urgency": "opportunistic",
+        "volume": "AD1F7410-AD8D-4FDC-AFDE-CD7C31C8D6BA"
+      }
+    ],
+    "last_progress_physical_bytes": 151012912,
+    "last_progress_pending": [
+      89453,
+      0
+    ],
+    "immediate_pre_quit_inventory": {
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsidx": {
+        "bytes": 261934972,
+        "sha256": "008fc80545a70f6a4f68842e6a9c9d010e1789cb2c86676b4c8d15a473de1fb7"
+      },
+      "9d07a288638233cf60b4ced1f64575ee4bfe619be7fa67aa970b1f5d8c8f9cd0.apfsmeta": {
+        "bytes": 49752231,
+        "sha256": "acf5b2a9fe06d99a7599782f4b2ee9a8b52855470e0b41c3bab112d120079b11"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsidx": {
+        "bytes": 148111447,
+        "sha256": "56f814b70a0fc5cd3473d1674ee2b9ae843a4d2a2e9395dd475baeff496e1752"
+      },
+      "d21fa308b0f4fb5b17dfe5f513f47a4537fddfc4c15408949217bfb3ca20cda4.apfsmeta": {
+        "bytes": 25454809,
+        "sha256": "21e464d8e05560b84a4da130cf142b40194ef53764c820446036c522f5d03277"
+      }
+    },
+    "termination": {
+      "exit": -15,
+      "seconds": 1173.290023959009,
+      "finished_epoch": 1791711607.791481,
+      "pid": 47448,
+      "label": "v063-lazy-diff-native-20261011"
+    },
+    "quit_status": "SIGTERM after Mac lock; not normal UI Quit",
+    "raw_sha256": "a7cb7ae8ab6e72369e14299b5fb8ed96be32653bcc97ebea4196baed1327d7a4",
+    "last_peak_seconds": 600.0432619166095,
+    "completed_gate": []
+  }
+}
