@@ -1,0 +1,56 @@
+{
+  "bytes": 314507746,
+  "external_to_external_ms": 18555.005708243698,
+  "full_scans": 0,
+  "locator_bytes": 273,
+  "namespace_records": 3118258,
+  "outbound_ms": 18869.251916650683,
+  "passed": true,
+  "query_metadata_equal": true,
+  "resources": {
+    "compressed_before_bytes": 0,
+    "compressed_bytes": 0,
+    "disk_bytes_read": 7294976,
+    "disk_bytes_written": 943570944,
+    "idle_wakeups": 0,
+    "interrupt_wakeups": 50,
+    "logical_bytes_read": null,
+    "logical_bytes_written": 632176640,
+    "major_faults": 3,
+    "minor_faults": 24146,
+    "pageins": 3,
+    "peak_compressed_bytes": 0,
+    "peak_rss_bytes": 336363520,
+    "rss_after_bytes": 76054528,
+    "rss_before_bytes": 9961472,
+    "system_cpu_seconds": 2.307471,
+    "user_cpu_seconds": 85.489315,
+    "wall_ms": 87382.9685417004
+  },
+  "return_ms": 11336.834833258763,
+  "rollback_copy_retained": true,
+  "warm_live_ms": 11415.904333349317,
+  "source_storage_distinct": true,
+  "storage_route": [
+    "owned internal",
+    "Data 1 APFS",
+    "owned second APFS image",
+    "owned internal"
+  ],
+  "cli_sha256": "3621517a8989c1d6ca942904a4e565a580edb8a5da4055a6a51335990ba89aea",
+  "outbound_MB_per_second": 16.66773793625972,
+  "return_MB_per_second": 27.74211238196147,
+  "preparation": {
+    "cursors": {
+      "metadata_base": 1489152469,
+      "metadata_processed": 1489152469,
+      "namespace_base": 1489169534,
+      "namespace_durable": 1489169534
+    },
+    "full_scans": 1,
+    "prepared": true,
+    "records": 3118258
+  },
+  "preparation_is_separate_from_zero_scan_migration": true,
+  "second_image_normal_detach_exit": 0
+}

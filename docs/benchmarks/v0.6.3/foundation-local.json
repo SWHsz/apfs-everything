@@ -1,0 +1,61 @@
+{
+  "status": "in_progress; production tiered storage not integrated",
+  "starting_head": "d3a7ffe051b6694c4edfa66371109dde7636600c",
+  "baseline_tests": 279,
+  "baseline_optional_skips": 1,
+  "new_focused_tests": 13,
+  "new_focused_ordinary": "passed",
+  "new_focused_asan": "passed",
+  "new_focused_tsan": "passed",
+  "new_test_seconds": {
+    "ordinary": 0.156,
+    "asan": 0.428,
+    "tsan": 0.559
+  },
+  "quiet_seconds": 60.00424599996768,
+  "controlled_quiet_passed": true,
+  "idle_cpu_seconds": 0.00013499999999999797,
+  "idle_disk_written": 0,
+  "idle_logical_written": 0,
+  "cpu_sampler_idle_wakeups": 0,
+  "issue_2": "OPEN",
+  "issue_3": "OPEN",
+  "raw_logs": {
+    "baseline-build": {
+      "sha256": "75f393904d235ed0ad9c3fdb1a795186a77e58e70ec6a50dfc3ed3ac7ef3dd2c",
+      "bytes": 91
+    },
+    "baseline-tests": {
+      "sha256": "d9b8a7572e34f236931ab07311c59f1514dc5d3378742e1952e8583b47775f37",
+      "bytes": 85845
+    },
+    "baseline-asan": {
+      "sha256": "4f033e2392dbe2a6c611867902771027cd2048020849f17f7cb118f61e468099",
+      "bytes": 85844
+    },
+    "baseline-tsan": {
+      "sha256": "993f848beec98bbbd68dd216c472e673eda7b6f8e8b7fb062570b557b99e69fb",
+      "bytes": 86043
+    },
+    "baseline-app": {
+      "sha256": "bfb64917d83ad7321ac6ec201915183f426d04b92bd9e57f53931602d20a2c84",
+      "bytes": 571
+    },
+    "storage-final-tests": {
+      "sha256": "1929cd75d736833d96ff873cfe958b05c256e2ed97024574bc1d7a485d8b5777",
+      "bytes": 8424
+    },
+    "storage-final-asan": {
+      "sha256": "2c259aa5fbbdf352dafb034907714e25584e4e92f8a893070c72ce7ceb61e725",
+      "bytes": 4761
+    },
+    "storage-final-tsan": {
+      "sha256": "cff25265745931c0ad8a9c2dce574a4b8bfd097565db5768a19e6e8ef9cce61c",
+      "bytes": 4820
+    },
+    "background-bench": {
+      "sha256": "76007bcad8abb70a182790a9769c0907cd170c57d7c363b2bb073e7b74646ffb",
+      "bytes": 2007
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "benchmark": "background",
+  "compaction_policy": "raised thresholds isolate namespace pause and idle from compaction",
+  "controlled_quiet_passed": true,
+  "cpu_sampler_idle_wakeups": 0,
+  "cpu_sampler_inactive_after": true,
+  "cpu_sampler_inactive_before": true,
+  "idle_compaction_scheduler_wakeups": 0,
+  "idle_deferred_reconcile_timer_after": 0,
+  "idle_deferred_reconcile_timer_before": 0,
+  "idle_metadata_scheduler_wakeups": 0,
+  "idle_resources": {
+    "compressed_before_bytes": 0,
+    "compressed_bytes": 0,
+    "disk_bytes_read": 0,
+    "disk_bytes_written": 0,
+    "idle_wakeups": 0,
+    "interrupt_wakeups": 2,
+    "logical_bytes_read": null,
+    "logical_bytes_written": 0,
+    "major_faults": 0,
+    "minor_faults": 0,
+    "pageins": 0,
+    "peak_compressed_bytes": 0,
+    "peak_rss_bytes": 11927552,
+    "rss_after_bytes": 11829248,
+    "rss_before_bytes": 11927552,
+    "system_cpu_seconds": 0.0001250000000000001,
+    "user_cpu_seconds": 4.80000000000003e-05,
+    "wall_ms": 60008.201583405025
+  },
+  "idle_seconds": 60.00821558339521,
+  "pause_mutations": 1000,
+  "paused_retained_stale": true,
+  "periodic_polling": 0,
+  "resume_converge_ms": 113.9543333556503,
+  "scope": "window-independent engine; native window lifecycle is validated separately",
+  "verify_consistent": true,
+  "visibility_ms": {
+    "create": {
+      "max": 1522.3130832891911,
+      "p50": 20.399791654199362,
+      "p90": 21.890291711315513,
+      "p95": 22.02358329668641,
+      "p99": 23.152000037953258
+    },
+    "delete": {
+      "max": 22.06412493251264,
+      "p50": 20.07958327885717,
+      "p90": 21.5045417426154,
+      "p95": 21.78337494842708,
+      "p99": 21.912749973125756
+    },
+    "rename": {
+      "max": 26.856166659854352,
+      "p50": 22.3290832946077,
+      "p90": 24.00391665287316,
+      "p95": 24.66979157179594,
+      "p99": 25.226416648365557
+    }
+  },
+  "visibility_samples_per_operation": 100,
+  "cli_sha256": "3621517a8989c1d6ca942904a4e565a580edb8a5da4055a6a51335990ba89aea"
+}

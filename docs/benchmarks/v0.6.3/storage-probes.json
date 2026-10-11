@@ -1,0 +1,66 @@
+{
+  "status": "isolated_backing_probe_only; production external storage not integrated",
+  "synthetic_namespace_records": 65537,
+  "index_formats": {
+    "namespace": 2,
+    "metadata": 1
+  },
+  "runs": [
+    {
+      "backing": "mmap",
+      "raw_report_sha256": "c429d13b0bfa57fb8e12f7c1b888c879fe58d075daa2b0d6cc9194290344be10",
+      "experiments": [
+        {
+          "mode": "safe",
+          "queries_before_detach": 2,
+          "post_detach": "detach_failed",
+          "child_exit_before_cleanup": null,
+          "child_final_exit": -15,
+          "detach_exit": 16,
+          "stdout_sha256": "ba977a721929a7ad67c1f5861fb7dd887755b7a58f9e19bd7d242501ee2401b1",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "structured_io_error": null
+        },
+        {
+          "mode": "forced",
+          "queries_before_detach": 2,
+          "post_detach": "child_exited",
+          "child_exit_before_cleanup": -10,
+          "child_final_exit": -10,
+          "detach_exit": 0,
+          "stdout_sha256": "a0cffcbdd4083b9f291daefabfd84ce8f2c1b2e85667ab4893f8a0fabfaf893c",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "structured_io_error": null
+        }
+      ]
+    },
+    {
+      "backing": "pread",
+      "raw_report_sha256": "7cfd98b4ddca4cc548b258eac81013cdc98f3e5d8ac749a807b07b45e66b007b",
+      "experiments": [
+        {
+          "mode": "safe",
+          "queries_before_detach": 2,
+          "post_detach": "detach_failed",
+          "child_exit_before_cleanup": null,
+          "child_final_exit": -15,
+          "detach_exit": 16,
+          "stdout_sha256": "b15005b3fa26f3d3a08ace16c94412af108ae5459b83b344c49fb07ae8864fb8",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "structured_io_error": null
+        },
+        {
+          "mode": "forced",
+          "queries_before_detach": 2,
+          "post_detach": "child_exited",
+          "child_exit_before_cleanup": 0,
+          "child_final_exit": 0,
+          "detach_exit": 0,
+          "stdout_sha256": "352c62e779c859ea8b321a7643c0c4b60d8fb75023e4decabbc897a7d3b92fff",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "structured_io_error": "storageIO(5)"
+        }
+      ]
+    }
+  ]
+}

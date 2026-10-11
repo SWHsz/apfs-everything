@@ -1,0 +1,122 @@
+{
+  "scope": "production readers/writers and post-migration actor lifecycle in isolated owned APFS sparse images",
+  "passed": true,
+  "namespace_records": 65537,
+  "cli_sha256": "3621517a8989c1d6ca942904a4e565a580edb8a5da4055a6a51335990ba89aea",
+  "experiments": [
+    {
+      "mode": "safe",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": true,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null,
+      "result": {
+        "state": "offline",
+        "storage_drained": true
+      }
+    },
+    {
+      "mode": "forced",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": null,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null,
+      "result": {
+        "full_scans": 0,
+        "query_hits": 0,
+        "state": "offline",
+        "structured_io_error": "Index storage: offline"
+      }
+    },
+    {
+      "mode": "reconnect",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": true,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null,
+      "result": {
+        "state": "offline",
+        "storage_drained": true
+      }
+    },
+    {
+      "mode": "metadata",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": null,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": true,
+      "result": {
+        "full_scans": 0,
+        "structured_io_error": "Index storage: offline",
+        "writer_mode": "metadata"
+      }
+    },
+    {
+      "mode": "compaction",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": null,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": true,
+      "result": {
+        "full_scans": 0,
+        "structured_io_error": "Index storage: offline",
+        "writer_mode": "compaction"
+      }
+    },
+    {
+      "mode": "bootstrap",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": null,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": true,
+      "result": {
+        "full_scans": 0,
+        "structured_io_error": "Index storage: offline",
+        "writer_mode": "bootstrap"
+      }
+    },
+    {
+      "mode": "migration",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": null,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": null,
+      "result": {
+        "locator_unchanged": true,
+        "old_index_usable": true,
+        "structured_io_error": "Index storage: offline"
+      }
+    },
+    {
+      "mode": "actor",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": true,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null,
+      "result": {
+        "receipt_retained": true,
+        "storage_drained": true
+      }
+    },
+    {
+      "mode": "actor-forced",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "safe_drain": null,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null,
+      "result": {
+        "query_hits": 0,
+        "structured_io_error": "index storage offline"
+      }
+    }
+  ]
+}

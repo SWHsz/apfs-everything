@@ -1,4 +1,4 @@
-# APFSFind — v0.6.2 Reconciliation Convergence
+# APFSFind — v0.6.3 Tiered Index Storage
 
 APFSFind 是一个 macOS 本地文件名搜索工具。按 Option+Space 打开搜索窗口，搜索系统卷与自己选择的本地卷。
 Swift 6 / macOS 14+，无第三方 Swift package；目前是可运行的桌面 Alpha。
@@ -7,9 +7,9 @@ Swift 6 / macOS 14+，无第三方 Swift package；目前是可运行的桌面 A
 
 v0.6 删除 namespace 和 metadata 两份全量目录路径表，改为按路径组件查找 mmap 中的父子关系。每份热目录缓存默认最多 8192 项，范围 1024–16384；内存压力下会缩小，不会永久记住全部目录。mmap 的文件大小不代表所有页面常驻 RAM。
 
-后台扫描、压缩和元数据重建会根据 CPU、内存、热状态、低电量模式及搜索交互让路。系统繁忙时普通维护可能延迟；搜索和实时小更新继续工作。达到更新层安全上限时会保留回放游标并进入恢复，不会无限增加 RAM。外置索引存储留到 Issue #3 收敛验收完成后（v0.6.3 / Issue #2）。
+后台扫描、压缩和元数据重建会根据 CPU、内存、热状态、低电量模式及搜索交互让路。系统繁忙时普通维护可能延迟；搜索和实时小更新继续工作。达到更新层安全上限时会保留回放游标并进入恢复，不会无限增加 RAM。v0.6.3 / Issue #2 提供可配置的外置 APFS 索引存储。
 
-Issue #1 已关闭：有界 resolver 与内存结构的目标已完成。Issue #3 的 v0.6.2 收敛验收进行中，完成全部门槛前不创建 v0.6 release tag。局部 reconciliation 的资源让步保留 frontier 和安全游标，稍后继续；不会把让步升级为全盘重建。资源诊断和复现命令见 [资源调度](docs/resource-scheduling.md)、[路径解析](docs/path-resolution.md)、[本轮验证记录](docs/v062-validation.md)、[v0.6.1 记录](docs/v061-validation.md) 、[v0.6 记录](docs/v06-validation.md) 和 [STATUS](STATUS.md)。`residency-bench` 只读打开现有缓存；真实 live/桌面 soak 单独记录，二者不可混称。
+Issue #1 已关闭：有界 resolver 与内存结构的目标已完成。Issue #3 的 v0.6.2 同 binary 桌面/引擎验收已完成并关闭。v0.6.3 增加按来源配置的分层索引存储；最终验收记录见 [存储验证](docs/v063-validation.md)。本轮不创建 release tag。局部 reconciliation 的资源让步保留 frontier 和安全游标，稍后继续；不会把让步升级为全盘重建。资源诊断和复现命令见 [资源调度](docs/resource-scheduling.md)、[路径解析](docs/path-resolution.md)、[本轮验证记录](docs/v062-validation.md)、[v0.6.1 记录](docs/v061-validation.md) 、[v0.6 记录](docs/v06-validation.md) 和 [STATUS](STATUS.md)。`residency-bench` 只读打开现有缓存；真实 live/桌面 soak 单独记录，二者不可混称。
 
 ## 构建与运行
 
@@ -23,7 +23,7 @@ open dist/APFSFind.app
 
 产物为 `dist/APFSFind.app`，脚本完成本地 ad-hoc 签名，无需 Apple Developer 账号。
 首次启动默认显示窗口，后台开始索引系统根目录 `/`；开启隐藏启动设置后，每次冷启动先在后台运行。首次扫描可能耗时并占用较多内存。
-有缓存时校验并映射 base 后立即开放搜索；“正在更新索引”表示仍在 replay，结果可能短暂陈旧。
+有缓存时校验并打开 base 后立即开放搜索；“正在更新索引”表示仍在 replay，结果可能短暂陈旧。
 打开或在 Finder 显示前会检查目标是否仍存在；失效结果会移除并修复对应父目录。
 
 ## 常驻后台
@@ -134,3 +134,31 @@ APFSFIND_RUN_MOUNT_TESTS=1 swift test --filter NativeMountSmokeTests
 ```
 
 CI 保留 deterministic、native integration、ASan，并新增桌面构建、bundle 和签名验证。
+
+## 索引存储
+
+未配置时继续使用 `~/Library/Application Support/apfsfind/indexes`，不会自动搬迁或重建旧 snapshot v2 / metadata v1。打开桌面端的“卷设置”，每个来源会显示存储卷、索引体积、迁移/压缩所需空间、剩余空间与状态。点击“移动索引…”选择本地 APFS 卷或目录；工具会创建专用 `APFSFindIndexes/v1/<source-uuid>/<root-identity>/` 子目录。迁移期间旧索引继续供查询，可取消；成功暖启动后可显式删除旧副本。
+
+设置保存在 `~/Library/Application Support/APFSFind/storage-locations.json`：schema v1，以来源卷 UUID、root file ID、volume-relative root 的 SHA-256 区分来源；保存存储卷 UUID 与卷内相对路径，挂载名称变化后仍按 UUID 定位。来源卷和存储卷可以不同。目录权限 0700、文件 0600；拒绝 network/autofs、只读卷、symlink 路径和不安全所有权。
+
+外置或无法确认不可移除的存储使用 `pread`：namespace 与 metadata 各自最多 4 MiB block cache，额外解码/排序缓存有界。确认不可移除的内部存储保留 mmap 查询。存储断开时停止该来源的 watcher、取消/排空查询和维护、释放 backing，保留 durable cursor；其他来源继续可搜索。重连后校验并回放；真实历史失效或新事件队列溢出仍使用既有恢复流程。
+
+迁移使用 1 MiB copy buffer 和维护 lease，完整校验目标后进入短切换阶段，最后原子发布 locator。失败保留旧索引和策略；空间预检包含当前文件、临时输出、64 KiB 迁移开销以及 `max(256 MiB, 10%)` 安全余量。不要在迁移时强制断开用户日用盘。
+
+```bash
+.build/release/apfsfind storage list
+.build/release/apfsfind storage status --source-volume <SOURCE_UUID>
+.build/release/apfsfind storage move --source-volume <SOURCE_UUID> \
+  --to-volume <STORAGE_UUID> --relative-directory APFSFindIndexes
+.build/release/apfsfind storage use-default --source-volume <SOURCE_UUID>
+```
+
+同卷多个 indexed root 可加 `--root PATH`。CLI 迁移不控制已运行的桌面实例；完成后重新打开相应来源。测试与 benchmark 使用显式 owned cache/locator，不污染日用设置。可复现的隔离 APFS 断开验证：
+
+```bash
+python3 scripts/probe_production_storage.py --cli .build/release/apfsfind
+.build/release/apfsfind storage-migration-bench roundtrip / \
+  <OWNED_INTERNAL_CACHE> <OWNED_EXTERNAL_DIRECTORY> <OWNED_LOCATOR_DIRECTORY>
+```
+
+`storage-probe prepare|query SOURCE OWNED_CACHE` 和 `storage-disconnect-bench metadata|compaction SOURCE OWNED_CACHE` 是 parent-controlled child 验证入口；强制断开仅由上述脚本对它创建的 APFS 映像执行。`_storage-performance SOURCE OWNED_CACHE mmap|pread` 只读比较已有 owned base；详细证据和已知限制见验证记录。

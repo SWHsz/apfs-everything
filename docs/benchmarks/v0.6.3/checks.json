@@ -1,0 +1,35 @@
+{
+  "asan": {
+    "exit": 0,
+    "seconds": 254.77868141594809
+  },
+  "tsan": {
+    "exit": 0,
+    "seconds": 396.53793949994724
+  },
+  "release": {
+    "exit": 0,
+    "seconds": 56.9373232080834
+  },
+  "app": {
+    "exit": 0,
+    "seconds": 1.4482523330952972
+  },
+  "signature": {
+    "exit": 0,
+    "seconds": 0.009841582970693707
+  },
+  "cli_sha256": "3621517a8989c1d6ca942904a4e565a580edb8a5da4055a6a51335990ba89aea",
+  "desktop_sha256": "5b2abf5b580afea275bc62e501f133c915d7dfb373538bc1233b3319bce8f042",
+  "ordinary": {
+    "exit": 0
+  },
+  "tests": {
+    "core": 312,
+    "desktop": 24,
+    "optional_mount_skipped": 1
+  },
+  "runtime_sources_sha256": "248aff09a4f974a66b9f03c29cb980ef253db58d40be461561a988c57039f884",
+  "runtime_source_files": 99,
+  "runtime_commit": "8b9464b388ca4dd9f3e41063791f5568ed5e324b"
+}
