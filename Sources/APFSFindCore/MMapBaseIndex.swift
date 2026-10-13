@@ -155,7 +155,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
       var nameEnd: UInt64 = 0
       var foldEnd: UInt64 = 0
       var childEnd: UInt64 = 0
-      var lengths = [UInt32](repeating: 0, count: Int(h.recordCount))
+      var ancestors: [(id:UInt32,end:UInt32,length:UInt32)] = []
       var fileCount = 0
       var dirCount = 0
       for i in 0..<Int(h.recordCount) {
@@ -174,7 +174,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
           guard r.parent == .max, r.kind == .directory, r.flags == 0, r.nameLength == 0,
             r.foldedLength == 0, r.subtreeEnd == h.recordCount
           else { throw SnapshotError.invalid("v2 root record") }
-          lengths[0] = UInt32(h.rootPathLength)
+          if r.childCount > 0 { ancestors.append((0,r.subtreeEnd,UInt32(h.rootPathLength))) }
         } else {
           guard r.parent < i, r.nameLength > 0, r.nameLength <= NAME_MAX else {
             throw SnapshotError.invalid("v2 parent/name")
@@ -188,10 +188,13 @@ public final class MMapBaseIndex: @unchecked Sendable {
             name != ".", name != "..",
             !name.utf8.contains(0), !name.utf8.contains(47),
             let folded = String(bytes: raw[b..<b + Int(r.foldedLength)], encoding: .utf8),
-            autoreleasepool { Array(FileEntry.fold(name).utf8) } == Array(folded.utf8)
+            autoreleasepool(invoking: { Array(FileEntry.fold(name).utf8) }) == Array(folded.utf8)
           else { throw SnapshotError.invalid("v2 name/fold") }
-          lengths[i] = lengths[Int(r.parent)] + UInt32(r.nameLength) + 1
-          guard lengths[i] < PATH_MAX else { throw SnapshotError.invalid("v2 path length") }
+          while let last = ancestors.last, UInt32(i) >= last.end { ancestors.removeLast() }
+          guard let last = ancestors.last, last.id == r.parent else { throw SnapshotError.invalid("v2 ancestor coverage") }
+          let pathLength = last.length + UInt32(r.nameLength) + 1
+          guard pathLength < PATH_MAX else { throw SnapshotError.invalid("v2 path length") }
+          if r.childCount > 0 { ancestors.append((UInt32(i),r.subtreeEnd,pathLength)) }
         }
         if r.kind == .file { fileCount += 1 }
         if r.kind == .directory { dirCount += 1 }
