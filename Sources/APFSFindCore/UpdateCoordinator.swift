@@ -66,6 +66,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var scanObserver: (@Sendable ([ScannedEntry], FileIndex) -> Void)?
     private var metadataEventHandler: (@Sendable ([FileSystemEvent]) -> Void)?
     private var baseInstaller: (@Sendable (FileIndex, UInt64, VolumeIdentity) throws -> Void)?
+    private var streamingBuilder: (@Sendable (VolumeIdentity, UInt64, CancellationToken, @escaping @Sendable () throws -> Void) throws -> PreparedStreamingBuild)?
     private var compactionID: UUID?
     private var compactionEvents: [FileSystemEvent] = []
     private var compactionOverflow = false
@@ -289,6 +290,39 @@ public final class UpdateCoordinator: @unchecked Sendable {
         writer.sync { liveHandler = live; recoveryHandler = recovery }
     }
 
+    func setStreamingBuilder(_ handler:@escaping @Sendable (VolumeIdentity,UInt64,CancellationToken,@escaping @Sendable ()throws->Void)throws->PreparedStreamingBuild) {
+        writer.sync {streamingBuilder=handler}
+    }
+    private func prepareStreaming(identity:VolumeIdentity,fence:UInt64,kind:MaintenanceKind) throws -> PreparedStreamingBuild {
+        let maintenance=try StreamingBuildMaintenance(scheduler:maintenanceScheduler,volume:identity.volumeUUID,kind:kind,
+            cancellation:maintenanceCancellation,metrics:metrics,
+            identityCheck:{[self] in guard try identityProvider(root)==identity else {throw SnapshotError.identity("streaming source changed")}},
+            changed:{[self] lease in stateLock.withLock {activeMaintenance=lease}})
+        var transferred=false
+        defer {if !transferred {maintenance.release()}}
+        metrics.record("full_scans")
+        let result=try streamingBuilder!(identity,fence,cancellation,{try maintenance.checkpoint()})
+        result.maintenance=maintenance;transferred=true
+        return result
+    }
+    private func startStreaming(identity:VolumeIdentity,fence:UInt64,progress:(@Sendable (String)->Void)?) throws {
+        setReadiness(.scanning);progress?("[info] Streaming initial scan: \(root) (1 worker)")
+        do {
+            let build=try prepareStreaming(identity:identity,fence:fence,kind:.coldScan)
+            defer {build.release()}
+            guard !cancellation.isCancelled else {setState(.stopped);return}
+            try build.install()
+            rootDevice=identity.deviceID
+            reconciler=DirectoryReconciler(scanner:reconcileReader ?? makeScanner(),index:index,rootDeviceID:rootDevice,metrics:metrics)
+            baseAvailable=true;setReadiness(.baseReady);setState(.replaying)
+            initialReplayStarted=ProcessInfo.processInfo.systemUptime;replayResources = .capture()
+            build.release()
+            progress?("[info] Streaming base ready: \(index.stats().liveEntries) entries; replay from \(fence)")
+            try startWatcher(since:fence)
+            if cancellation.isCancelled {watcher.stop();setState(.stopped)}
+        } catch {setState(.failed,error:String(describing:error));throw error}
+    }
+
     public func start(restored: (any NamespaceIndex)? = nil, cursor: UInt64? = nil,
                       streamStartCursor: UInt64? = nil, identity supplied: VolumeIdentity? = nil,
                       progress: (@Sendable (String) -> Void)? = nil) throws {
@@ -314,6 +348,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             if cancellation.isCancelled { watcher.stop(); setState(.stopped) }
             return
         }
+        if streamingBuilder != nil {try startStreaming(identity:identity,fence:e0,progress:progress);return}
         while !cancellation.isCancelled {
         metrics.set("maintenance_queued", to: 1)
         setReadiness(.scanning)
@@ -1059,6 +1094,11 @@ public final class UpdateCoordinator: @unchecked Sendable {
             guard let self else { return }
             let result = Result {
                 let identity = try self.identityProvider(self.root)
+                if self.streamingBuilder != nil {
+                    let fence=self.fenceProvider(identity)
+                    let streamed=try self.prepareStreaming(identity:identity,fence:fence,kind:.rebuild)
+                    return PreparedIndex(index:nil,streamed:streamed,rootDeviceID:identity.deviceID,cancelled:false,identity:identity,fence:fence,lease:nil)
+                }
                 let lease = try self.maintenanceScheduler.acquireBlocking(volumeID: identity.volumeUUID, kind: .rebuild, urgency:(self.index as? HybridIndex)?.requiresRecovery == true ? .emergency : .required, cancellation: self.maintenanceCancellation)
                 lease.validateIdentity { guard try self.identityProvider(self.root) == identity else { throw SnapshotError.identity("source identity changed") } }
                 self.stateLock.withLock { self.activeMaintenance = lease }
@@ -1073,7 +1113,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 guard !self.cancellation.isCancelled else { throw SnapshotError.cancelled }
                 self.scanObserver?(scan.scannedEntries,fresh)
                 transferred = true
-                return PreparedIndex(index: fresh, rootDeviceID: scan.rootDeviceID, cancelled: scan.cancelled,
+                return PreparedIndex(index: fresh, streamed:nil, rootDeviceID: scan.rootDeviceID, cancelled: scan.cancelled,
                     identity: identity, fence: e0, lease:lease)
             }
             self.writer.async { [weak self] in self?.completeRebuild(result) }
@@ -1081,18 +1121,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
         }
     }
     private struct PreparedIndex: Sendable {
-        let index: FileIndex
+        let index: FileIndex?
+        let streamed: PreparedStreamingBuild?
         let rootDeviceID: UInt64
         let cancelled: Bool
         let identity: VolumeIdentity
         let fence: UInt64
-        let lease: MaintenanceLease
+        let lease: MaintenanceLease?
     }
     private func completeRebuild(_ result: Result<PreparedIndex, Error>) {
         building = false
         defer {
             stateLock.withLock { activeMaintenance = nil }
-            if case .success(let scan) = result { scan.lease.release() }
+            if case .success(let scan) = result { scan.lease?.release();scan.streamed?.release() }
         }
         guard !cancellation.isCancelled else { return }
         do {
@@ -1101,20 +1142,15 @@ public final class UpdateCoordinator: @unchecked Sendable {
             let fresh = scan.index
             rootDevice = scan.rootDeviceID
             let scanner = makeScanner()
-            let freshReconciler = DirectoryReconciler(scanner: scanner, index: fresh, rootDeviceID: rootDevice, metrics: metrics)
-            let restart = needsStreamRestart
-            // A fresh stream replays every change since the pre-scan fence.
-            // Applying historical buffered hints to a newer scan can resurrect
-            // already vanished paths and needlessly re-walk large old scopes.
-            if !restart {
-                process(rebuildEvents, into: fresh, using: freshReconciler, countMetrics: false, mayRebuild: false)
+            let restart = needsStreamRestart || scan.streamed != nil
+            if let streamed=scan.streamed {
+                try streamed.install()
+            } else if let fresh {
+                let freshReconciler=DirectoryReconciler(scanner:scanner,index:fresh,rootDeviceID:rootDevice,metrics:metrics)
+                if !restart {process(rebuildEvents,into:fresh,using:freshReconciler,countMetrics:false,mayRebuild:false)}
+                if restart,let baseInstaller {try baseInstaller(fresh,scan.fence,scan.identity)}
+                else {index.replace(with:fresh)}
             }
-            if restart, let baseInstaller {
-                // Publish the validated scan under its existing maintenance
-                // lease before replay. Large recovery graphs must not become
-                // the searchable warm runtime while HistoryDone is pending.
-                try baseInstaller(fresh,scan.fence,scan.identity)
-            } else { index.replace(with: fresh) }
             reconciler = DirectoryReconciler(scanner: reconcileReader ?? scanner, index: index, rootDeviceID: rootDevice, metrics: metrics)
             rebuildEvents = []
             metrics.set("rebuild_buffer_estimated_bytes",to:0)

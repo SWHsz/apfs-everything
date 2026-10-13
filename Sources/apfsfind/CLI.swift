@@ -76,11 +76,12 @@ enum CLI {
         var ephemeral = false
         var rebuildIndex = false
         var cacheDirectory: String?
+        var referenceBuilder = false
         var help = false
     }
 
     static let usage = """
-    apfsfind v0.6.3 — macOS filename search with snapshot recovery
+    apfsfind v0.6.4 — macOS filename search with snapshot recovery
 
     Usage:
       apfsfind serve [--root PATH] [--latency-ms 20] [--workers 4]
@@ -104,6 +105,8 @@ enum CLI {
       apfsfind multivolume-bench --entries-per-volume 100000 --volumes 2
       apfsfind background-bench [--idle-seconds 60]
       apfsfind lightweight-bench [--entries 1000000]
+      apfsfind cold-build-bench --entries 1000000 [--reference]
+      apfsfind recovery-build-bench [--entries 3000000]
       apfsfind metadata-bench [--entries 100000]
       apfsfind metadata-bench --root PATH [--second-root PATH] [--cache-dir EXISTING_CACHE]
 
@@ -127,10 +130,11 @@ enum CLI {
         var options = Options()
         var cursor = 0
         if let first = arguments.first, !first.hasPrefix("-") {
-            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench", "background-bench", "metadata-bench", "residency-bench", "lightweight-bench"].contains(first) else {
+            guard ["serve", "bench", "persistence-bench", "hybrid-bench", "real-disk-bench", "usability-bench", "multivolume-bench", "background-bench", "metadata-bench", "residency-bench", "lightweight-bench", "cold-build-bench", "recovery-build-bench"].contains(first) else {
                 throw CLIError.usage("Unknown command: \(first)")
             }
             options.command = first
+            if first == "recovery-build-bench" {options.entries=3_000_000}
             cursor = 1
         }
         while cursor < arguments.count {
@@ -139,6 +143,10 @@ enum CLI {
             if flag == "--help" || flag == "-h" {
                 options.help = true
                 continue
+            }
+            if flag == "--reference" {
+                guard options.command == "cold-build-bench" else {throw CLIError.usage("--reference is only for cold-build-bench")}
+                options.referenceBuilder=true;continue
             }
             if flag == "--ephemeral" || flag == "--rebuild-index" {
                 guard options.command == "serve" else { throw CLIError.usage("\(flag) is only accepted by serve.") }
@@ -157,7 +165,7 @@ enum CLI {
             case "--entries-per-volume":
                 guard options.command == "multivolume-bench", let n = Int(value), (100...1_000_000).contains(n) else { throw CLIError.usage("--entries-per-volume requires 100...1000000") }; options.entries = n
             case "--entries":
-                guard ["persistence-bench", "hybrid-bench", "metadata-bench", "lightweight-bench"].contains(options.command), let number = Int(value), (102...1_000_000).contains(number) else {
+                guard ["persistence-bench", "hybrid-bench", "metadata-bench", "lightweight-bench", "cold-build-bench", "recovery-build-bench"].contains(options.command), let number = Int(value), (102...(["cold-build-bench", "recovery-build-bench"].contains(options.command) ? 3_000_000 : 1_000_000)).contains(number) else {
                     throw CLIError.usage("--entries must be in 102...1000000 for persistence-bench or hybrid-bench.")
                 }
                 options.entries = number
@@ -199,6 +207,7 @@ enum CLI {
     }
 
     static func run(arguments: [String]) throws -> Int32 {
+        if arguments.first == "_streaming-storage-probe" {return try StreamingStorageProbe.run(Array(arguments.dropFirst()))}
         if arguments.first == "_storage-refresh" {return try StorageMigrationProbe.refresh(Array(arguments.dropFirst()))}
         if ["_storage-migration","storage-migration-bench"].contains(arguments.first ?? "") { return try StorageMigrationProbe.run(Array(arguments.dropFirst())) }
         if arguments.first == "_storage-performance" { return try StoragePerformanceProbe.run(Array(arguments.dropFirst())) }
@@ -229,6 +238,7 @@ enum CLI {
         if arguments.first == "_prepare-resource-smoke", arguments.count == 2 { return try prepareResourceSmokeCache(arguments[1]) }
         let options = try parse(arguments)
         if options.help { print(usage); return 0 }
+        if ["cold-build-bench", "recovery-build-bench"].contains(options.command) {return try StreamingBuildBenchmarkRunner(entries:options.entries,reference:options.referenceBuilder,recovery:options.command == "recovery-build-bench").run()}
         if options.command == "lightweight-bench" { return try LightweightBenchmarkRunner(entries:options.entries).run() }
         if options.command == "residency-bench" { return try ResidencyBenchmarkRunner(roots:[options.root]+(options.secondRoot.map { [$0] } ?? []),cacheDirectory:options.cacheDirectory ?? SnapshotStore.defaultDirectory,idleSeconds:options.idleSeconds).run() }
         if options.command == "metadata-bench" {

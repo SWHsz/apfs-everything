@@ -30,7 +30,6 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
   private let metadataCancellation = CancellationToken()
   private var metadataBootstrapActive = false
   private var metadataCheckpointActive = false
-  private var metadataSeeds: MetadataBuildBuffer?
   private let metadataScheduler: CompactionScheduler
   private let metadataPolicy: MetadataCheckpointPolicy
   private var lastMetadataCheckpoint: Double = -.infinity
@@ -96,7 +95,9 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     metadataIndex:MetadataIndexCoordinator = .init(),
     storagePolicy: IndexStoragePolicy? = nil,
     storageProvider: any IndexStorageVolumeProviding = LocalIndexStorageVolumeProvider(),
-    locatorStore: IndexStorageLocatorStore? = nil
+    locatorStore: IndexStorageLocatorStore? = nil,
+    streamingSource:(any StreamingDirectorySource)? = nil,
+    streamingBuildFault:(@Sendable (StreamingBuildFailurePoint,SnapshotBuildWorkspace)throws->Void)? = nil
   ) throws {
     metadata = metadataIndex
     persistenceEnabled = !ephemeral
@@ -136,11 +137,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
       index:metadata,namespace:runtime,metrics:core.metrics,policy:metadataUpdatePolicy,
       invalidated:{ [weak self] in self?.scheduleMetadataBootstrap(urgency:.required) },
       changed:{ [weak self] in self?.metadataChanged() })
-    core.setMetadataHandlers(scan:{ [weak self] entries,initial in
-      guard let self, self.persistenceEnabled else { return }
-      let seed = try? initial.metadataSeed(entries,directory:self.cacheDirectory,temporaryInMemory:self.storageMonitor?.usePRead == true)
-      self.lock.withLock { self.metadataSeeds = seed }
-    },events:{ [weak self] events in self?.metadataUpdater?.enqueue(events) })
+    core.setMetadataHandlers(scan:{ _,_ in },events:{ [weak self] events in self?.metadataUpdater?.enqueue(events) })
     core.setLifecycleHandlers(
       live: { [weak self] in self?.becameLive() },
       recovery: { [weak self] reason in self?.beganRecovery(reason) })
@@ -177,38 +174,26 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     core.setStorageFailureHandler { [weak self] in DispatchQueue.global(qos:.utility).async { [weak self] in self?.storageWillUnmount() } }
     core.setMutationHandler { [weak self] in self?.namespaceChanged() }
     if !ephemeral {
-      core.setBaseInstaller { [weak self] initial, cursor, identity in
-        guard let self, let hybrid = self.index as? HybridIndex else { return }
-        defer { self.lock.withLock { self.metadataSeeds = nil } }
-        let cache = try self.makeStore(identity:identity)
-        var staged: StagedMetadataFile?
-        let generation = self.core.currentState == .rebuilding ? max(hybrid.stats().generation,initial.stats().generation) &+ 1 : hybrid.stats().generation
-        let result = try SnapshotV2Writer.write(
-          source: .ram(initial, initial.stats().generation), identity: identity,
-          generation: generation, cursor: cursor, store: cache,
-          cancellation: self.checkpointCancellation,
-          beforePublish:{
-              guard try self.identityProvider(self.root)==identity else{throw SnapshotError.identity("root changed during initial scan")}
-          },
-          install: { base, map, publish in
-            try publish()
-            hybrid.install(base: base, directoryMap: map)
-          }, prepareMetadata: { refs,header in
-            let seed = self.lock.withLock { let values = self.metadataSeeds; self.metadataSeeds = nil; return values }
-            do { staged = try MetadataWriter.stage(store:cache,base:header,cursor:cursor,value:{ ordinal in
-              if case .base(let id) = refs[Int(ordinal)], let seed, Int(id) < seed.count { return seed.value(Int(id)) }
-              return .unknown
-            },fault:self.metadataFault,checkpoint:{ try self.core.maintenanceCheckpoint() }) }
-            catch {
-              self.metrics.record("metadata_stage_failures")
-              // A storage fault must abort the paired publication. Publishing
-              // namespace while silently replacing unreadable metadata with
-              // unknown values would advance its durable recovery fence.
-              throw error
-            }
-          }, completed: { _,header in self.installStagedMetadata(staged,cache:cache,header:header,cursor:cursor)
-          }, resourceMetrics: self.metrics, resourceStage: "initial_snapshot", checkpoint:{ try self.core.maintenanceCheckpoint() })
-        self.recordSnapshot(result, cache: cache, identity: identity)
+      core.setStreamingBuilder { [weak self] identity,cursor,cancellation,checkpoint in
+        guard let self,let hybrid=self.index as? HybridIndex else {throw SnapshotError.cancelled}
+        let cache=try self.makeStore(identity:identity)
+        let generation=hybrid.stats().generation &+ 1
+        let sealed=try DiskBackedNamespaceBuilder(identity:identity,store:cache,source:streamingSource,metrics:self.metrics,
+          signals:self.maintenanceScheduler.signals,cancellation:cancellation,checkpoint:checkpoint,fault:streamingBuildFault,metadataFault:self.metadataFault)
+          .build(generation:generation,cursor:cursor)
+        return PreparedStreamingBuild(identity:identity,fence:cursor,install:{[weak self] in
+          guard let self else {throw SnapshotError.cancelled}
+          try checkpoint()
+          try sealed.publish(beforePublish:{
+            guard !cancellation.isCancelled else {throw SnapshotError.cancelled}
+            guard try self.identityProvider(self.root)==identity else {throw SnapshotError.identity("source changed before streaming publication")}
+          },fault:self.metadataFault)
+          hybrid.install(base:sealed.namespace,directoryMap:[:])
+          self.metadata.bind(namespace:sealed.namespace,mapped:sealed.metadata,cursor:cursor)
+          self.lock.withLock {self.metadataError=nil;self.lastMetadataCheckpoint=ProcessInfo.processInfo.systemUptime}
+          self.metrics.record("metadata_checkpoints")
+          self.recordSnapshot(sealed.result,cache:cache,identity:identity)
+        })
       }
     }
   }
@@ -280,7 +265,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     core.waitForQueries()
     (index as? HybridIndex)?.releaseStorage()
     metadata.releaseStorage()
-    lock.withLock { store = nil; metadataSeeds = nil }
+    lock.withLock { store = nil }
   }
   func adoptValidatedStorage(_ transfer:ValidatedIndexStorage) throws {
     let expected = try identityProvider(root),header = transfer.namespace.header
@@ -729,7 +714,7 @@ public final class PersistentIndexCoordinator: @unchecked Sendable {
     }
     shutdownMetrics.measure("shutdown_metadata_updater_ms") { metadataUpdater?.stop() }
     shutdownMetrics.measure("shutdown_session_teardown_ms") { core.stop() }
-    lock.withLock { metadataSeeds = nil; validatedTransfer = nil }
+    lock.withLock { validatedTransfer = nil }
     shutdownMetrics.measure("shutdown_wait_metadata_group_ms") { metadataGroup.wait() }
     shutdownMetrics.measure("shutdown_state_write_ms") { if (try? validateStorage()) != nil { saveMetadataStateIfClean() } }
     shutdownMetrics.measure("shutdown_wait_checkpoint_group_ms") { group.wait() }
