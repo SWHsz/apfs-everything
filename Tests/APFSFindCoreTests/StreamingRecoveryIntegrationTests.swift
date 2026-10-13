@@ -47,6 +47,13 @@ final class StreamingRecoveryIntegrationTests:XCTestCase {
     try FileManager.default.moveItem(atPath:root+"/kept",toPath:root+"/renamed")
     gate.resume.signal()
     waitFor("recovery replay returns live",timeout:15) {c.currentState == .live && c.metrics.snapshot()["full_rebuilds"]==1}
+    // HistoryDone finishes historical replay, but recent filesystem mutations
+    // can still be in FSEvents' live delivery latency window. Assert their
+    // actual convergence before verifying or persisting the restart cursor.
+    waitFor("recovery fence catches concurrent mutations",timeout:15) {
+      c.index.entry(at:root+"/deleted")==nil && c.index.entry(at:root+"/kept")==nil &&
+      c.index.entry(at:root+"/during") != nil && c.index.entry(at:root+"/renamed") != nil
+    }
     XCTAssertTrue(try c.verify().isConsistent)
     XCTAssertEqual(c.metrics.snapshot()["full_scans"],2);XCTAssertEqual(c.metrics.snapshot()["streaming_builds"],2)
     XCTAssertEqual(try old.name(at:1),"deleted") // pinned inode remains valid after publication

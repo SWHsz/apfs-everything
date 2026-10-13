@@ -122,6 +122,8 @@ final class StorageMultiVolumeTests:XCTestCase,@unchecked Sendable {
       if await c.sessionsSnapshot().contains(where:{$0.id == id && $0.state == .live && $0.metadataAvailable}) {return}
       try await Task.sleep(for:.milliseconds(20))
     }
-    XCTFail("source did not become live with metadata")
+    let states = await c.sessionsSnapshot()
+    let diagnostics = states.map { "\($0.id):\($0.state.description), metadata=\($0.metadataAvailable), error=\($0.metadataError ?? "none")" }
+    XCTFail("source \(id) did not become live with metadata: \(diagnostics)")
   }
 }

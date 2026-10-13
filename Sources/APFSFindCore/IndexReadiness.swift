@@ -27,19 +27,31 @@ public struct IndexReadinessSnapshot: Sendable {
 final class SnapshotObservation<Value: Sendable>: @unchecked Sendable {
   private let lock = NSLock()
   private var continuations: [UUID: AsyncStream<Value>.Continuation] = [:]
-  func stream(initial: Value) -> AsyncStream<Value> {
+  private var revision: UInt64 = 0
+  func stream(initial: @autoclosure () -> Value) -> AsyncStream<Value> {
     let id = UUID()
     return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
-      lock.withLock { continuations[id] = continuation }
-      continuation.yield(initial)
       continuation.onTermination = { [weak self] _ in
         _ = self?.lock.withLock { self?.continuations.removeValue(forKey: id) }
+      }
+      // Subscribe before reading the producer. If an update arrives during
+      // that read, it has already supplied a newer value to this subscriber.
+      // A stale initial value must not overwrite it in the one-element buffer.
+      let subscribedRevision = lock.withLock { continuations[id] = continuation; return revision }
+      let value = initial()
+      lock.withLock {
+        if revision == subscribedRevision { continuation.yield(value) }
       }
     }
   }
   func send(_ value: Value) {
-    let clients = lock.withLock { Array(continuations.values) }
-    for client in clients { client.yield(value) }
+    // AsyncStream.yield enqueues a value; it does not invoke consumer code.
+    // Serialize delivery with registration so an initial value cannot win a
+    // race with the final Live notification.
+    lock.withLock {
+      revision &+= 1
+      for client in continuations.values { client.yield(value) }
+    }
   }
 }
 public enum ShutdownPolicy: Sendable { case fast, compactIfThresholdReached, forceCompact }
