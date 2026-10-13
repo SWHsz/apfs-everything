@@ -1,0 +1,97 @@
+{
+  "runtime_commit": "d8e7f3b6f00d6dad634bd8a6e4ba5b5893344ce2",
+  "checks": [
+    {
+      "label": "phase-a-ordinary",
+      "exit": 0,
+      "seconds": 139.50575233402196
+    },
+    {
+      "label": "phase-a-asan",
+      "exit": 0,
+      "seconds": 249.2249339580303
+    },
+    {
+      "label": "phase-a-tsan",
+      "exit": 0,
+      "seconds": 403.7009271660354
+    },
+    {
+      "label": "phase-a-detach",
+      "exit": 0,
+      "seconds": 17.581535666948184
+    }
+  ],
+  "tests": 338,
+  "core_tests": 314,
+  "desktop_tests": 24,
+  "optional_skips": 1,
+  "failures": 0,
+  "production_probe_passed": true,
+  "raw_report_sha256": "cb212d36319483a009309ac16237ce239329ff16cfa3a8f6053d8071b81eaf11",
+  "modes": [
+    {
+      "mode": "safe",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null
+    },
+    {
+      "mode": "forced",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null
+    },
+    {
+      "mode": "reconnect",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null
+    },
+    {
+      "mode": "metadata",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": true
+    },
+    {
+      "mode": "compaction",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": true
+    },
+    {
+      "mode": "bootstrap",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": true
+    },
+    {
+      "mode": "migration",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 1,
+      "base_hashes_unchanged": null
+    },
+    {
+      "mode": "actor",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null
+    },
+    {
+      "mode": "actor-forced",
+      "child_exit": 0,
+      "detach_exit": 0,
+      "queries_before_detach": 2,
+      "base_hashes_unchanged": null
+    }
+  ]
+}

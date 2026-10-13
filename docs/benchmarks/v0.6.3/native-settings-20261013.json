@@ -1,0 +1,962 @@
+{
+  "ui_passed": true,
+  "head": "d8e7f3b6f00d6dad634bd8a6e4ba5b5893344ce2",
+  "product_executable_sha256": "f73bba073f0cab119c6f42c793b431eedf20580223b2e1ec482b5a4ac811a4f5",
+  "owned_executable_sha256": "e05eca6de2ecf1bc84487b3c3f5d9e4d4af12a840ea7bdd15d4cc7e891384bd5",
+  "cli_sha256": "fc6ec4f1650a2ad2f41cde79831a9bfb0050c4e644e7541ea1d7ad3f9b18f3d1",
+  "fixture_count": 12,
+  "namespace_records": 13,
+  "metadata_exact_nanoseconds": true,
+  "index_bytes": 1984,
+  "immutable_hashes_preserved": true,
+  "internal_old_copy_retained": true,
+  "external_old_copy_retained": true,
+  "external_locator_bytes": 424,
+  "default_locator_bytes": 280,
+  "default_policy": {
+    "defaultInternal": {}
+  },
+  "distinct_source_storage_uuids": true,
+  "actions": "real Settings Move NSOpenPanel and Use Default; no CLI migration substitutes",
+  "runs": [
+    {
+      "label": "ui-fixed-reset",
+      "startup": {
+        "backing": "pread",
+        "state": "Live",
+        "full_scans": 0,
+        "resource_yield_rebuilds": 0,
+        "search_ready_ms": 5,
+        "live_ms": 236,
+        "metadata_available": true
+      },
+      "queries": {
+        "storage_ui_startup_queries": {
+          "expected": 12,
+          "sorts": [
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.499208272434771,
+              "sort": "relevance"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.4699166640639305,
+              "sort": "name"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 1.0744583560153842,
+              "sort": "size"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 0.9540833998471498,
+              "sort": "modificationTime"
+            }
+          ]
+        },
+        "storage_ui_after_migration_queries": {
+          "expected": 12,
+          "sorts": [
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 5.991458427160978,
+              "sort": "relevance"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 11.631375062279403,
+              "sort": "name"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 6.142416619695723,
+              "sort": "size"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 2.189916674979031,
+              "sort": "modificationTime"
+            }
+          ]
+        }
+      },
+      "migrations": [
+        {
+          "bytes": 2272,
+          "milliseconds": 94.04054167680442
+        }
+      ],
+      "progress_bytes": [
+        0,
+        0,
+        1500,
+        2112,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272
+      ],
+      "progress_monotonic": true,
+      "during_migration_queries": [
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.930083407089114
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.4767082650214434
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.880916676484048
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.8989999555051327
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 3.402291680686176
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 3.039625007659197
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.840624984353781
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.882000058889389
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.3742084158584476
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.3597499821335077
+        }
+      ],
+      "shutdown": {
+        "00000000-0000-0000-0000-000000000001": {
+          "shutdown_cancel_maintenance_ms": 0.24566659703850746,
+          "shutdown_cancel_queries_ms": 0.00024994369596242905,
+          "shutdown_metadata_updater_ms": 0.006166752427816391,
+          "shutdown_namespace_drain_ms": 0.6636666366830468,
+          "shutdown_session_teardown_ms": 0.005749985575675964,
+          "shutdown_state_write_ms": 5.253624985925853,
+          "shutdown_stop_watcher_ms": 0.07041660137474537,
+          "shutdown_total_ms": 7.742708316072822,
+          "shutdown_wait_checkpoint_group_ms": 0.001250067725777626,
+          "shutdown_wait_metadata_group_ms": 4.156026989221573e-05
+        },
+        "multi_volume": {
+          "shutdown_total_ms": 12.629166594706476
+        }
+      },
+      "normal_exit": 0,
+      "raw_stdout_sha256": "3ae09519fc69aa4360258c626c67afb22dfcfaa5748e63bfec64b3f177ab6dc0"
+    },
+    {
+      "label": "ui-fixed-internal",
+      "startup": {
+        "backing": "mmap",
+        "state": "Live",
+        "full_scans": 0,
+        "resource_yield_rebuilds": 0,
+        "search_ready_ms": 4,
+        "live_ms": 225,
+        "metadata_available": true
+      },
+      "queries": {
+        "storage_ui_startup_queries": {
+          "expected": 12,
+          "sorts": [
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.4027917059138417,
+              "sort": "relevance"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.690999954007566,
+              "sort": "name"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 3.5084583796560764,
+              "sort": "size"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 1.2584166834130883,
+              "sort": "modificationTime"
+            }
+          ]
+        },
+        "storage_ui_after_migration_queries": {
+          "expected": 12,
+          "sorts": [
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 2.225333242677152,
+              "sort": "relevance"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.2579166796058416,
+              "sort": "name"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 1.0763750178739429,
+              "sort": "size"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 1.0242500575259328,
+              "sort": "modificationTime"
+            }
+          ]
+        }
+      },
+      "migrations": [
+        {
+          "bytes": 2272,
+          "milliseconds": 73.18433339241892
+        }
+      ],
+      "progress_bytes": [
+        0,
+        0,
+        1500,
+        1984,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272
+      ],
+      "progress_monotonic": true,
+      "during_migration_queries": [
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 3.771041752770543
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.081666702404618
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 3.3839166862890124
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.9968750681728125
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.070541588589549
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.523125011473894
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.3402500450611115
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 3.5627083852887154
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 4.416249925270677
+        }
+      ],
+      "shutdown": {
+        "00000000-0000-0000-0000-000000000001": {
+          "shutdown_cancel_maintenance_ms": 0.026999972760677338,
+          "shutdown_cancel_queries_ms": 0.0002916203811764717,
+          "shutdown_metadata_updater_ms": 0.003041699528694153,
+          "shutdown_namespace_drain_ms": 0.1015000743791461,
+          "shutdown_session_teardown_ms": 0.004875008016824722,
+          "shutdown_state_write_ms": 30.17395839560777,
+          "shutdown_stop_watcher_ms": 0.7279166020452976,
+          "shutdown_total_ms": 41.49337497074157,
+          "shutdown_wait_checkpoint_group_ms": 0.0016666017472743988,
+          "shutdown_wait_metadata_group_ms": 0.00020826701074838638
+        },
+        "multi_volume": {
+          "shutdown_total_ms": 45.83499999716878
+        }
+      },
+      "normal_exit": 0,
+      "raw_stdout_sha256": "f2be6b7bb45947539aa8c15f09b0a89afcdc56238e5053d2cbde90d66c002e4d"
+    },
+    {
+      "label": "ui-fixed-external",
+      "startup": {
+        "backing": "pread",
+        "state": "Live",
+        "full_scans": 0,
+        "resource_yield_rebuilds": 0,
+        "search_ready_ms": 5,
+        "live_ms": 223,
+        "metadata_available": true
+      },
+      "queries": {
+        "storage_ui_startup_queries": {
+          "expected": 12,
+          "sorts": [
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.6059166518971324,
+              "sort": "relevance"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.4824166428297758,
+              "sort": "name"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 0.9045833721756935,
+              "sort": "size"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 0.8411250310018659,
+              "sort": "modificationTime"
+            }
+          ]
+        },
+        "storage_ui_after_migration_queries": {
+          "expected": 12,
+          "sorts": [
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 2.609875053167343,
+              "sort": "relevance"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.449874951504171,
+              "sort": "name"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 1.416750019416213,
+              "sort": "size"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 0.9975832654163241,
+              "sort": "modificationTime"
+            }
+          ]
+        }
+      },
+      "migrations": [
+        {
+          "bytes": 2272,
+          "milliseconds": 35.76245834119618
+        }
+      ],
+      "progress_bytes": [
+        0,
+        0,
+        1500,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272,
+        2272
+      ],
+      "progress_monotonic": true,
+      "during_migration_queries": [
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.658375073224306
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.4523333413526416
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.0880833035334945
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 1.8033749656751752
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.231916645541787
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 1.3302082661539316
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 2.56416667252779
+        },
+        {
+          "count": 12,
+          "metadata_complete": true,
+          "query_ms": 1.64470833260566
+        }
+      ],
+      "shutdown": {
+        "00000000-0000-0000-0000-000000000001": {
+          "shutdown_cancel_maintenance_ms": 0.012333388440310955,
+          "shutdown_cancel_queries_ms": 0.00037497375160455704,
+          "shutdown_metadata_updater_ms": 0.003500026650726795,
+          "shutdown_namespace_drain_ms": 0.0556666636839509,
+          "shutdown_session_teardown_ms": 0.0022082822397351265,
+          "shutdown_state_write_ms": 2.481625066138804,
+          "shutdown_stop_watcher_ms": 0.034541706554591656,
+          "shutdown_total_ms": 3.477583290077746,
+          "shutdown_wait_checkpoint_group_ms": 0.0007499475032091141,
+          "shutdown_wait_metadata_group_ms": 0.00012491364032030106
+        },
+        "multi_volume": {
+          "shutdown_total_ms": 3.6104166647419333
+        }
+      },
+      "normal_exit": 0,
+      "raw_stdout_sha256": "ad2c99a2a16e707258cde569b2a917145372666cc5ed4fd5a4150e4bcd3700b0"
+    },
+    {
+      "label": "ui-fixed-return",
+      "startup": {
+        "backing": "mmap",
+        "state": "Live",
+        "full_scans": 0,
+        "resource_yield_rebuilds": 0,
+        "search_ready_ms": 5,
+        "live_ms": 243,
+        "metadata_available": true
+      },
+      "queries": {
+        "storage_ui_startup_queries": {
+          "expected": 12,
+          "sorts": [
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 2.2946250392124057,
+              "sort": "relevance"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-0",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-9"
+              ],
+              "p95_ms": 1.1645833728834987,
+              "sort": "name"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 0.9240834042429924,
+              "sort": "size"
+            },
+            {
+              "correct": true,
+              "metadata_complete": true,
+              "order": [
+                "apfsfind-storage-smoke-11",
+                "apfsfind-storage-smoke-10",
+                "apfsfind-storage-smoke-9",
+                "apfsfind-storage-smoke-8",
+                "apfsfind-storage-smoke-7",
+                "apfsfind-storage-smoke-6",
+                "apfsfind-storage-smoke-5",
+                "apfsfind-storage-smoke-4",
+                "apfsfind-storage-smoke-3",
+                "apfsfind-storage-smoke-2",
+                "apfsfind-storage-smoke-1",
+                "apfsfind-storage-smoke-0"
+              ],
+              "p95_ms": 0.8497916860505939,
+              "sort": "modificationTime"
+            }
+          ]
+        }
+      },
+      "migrations": [],
+      "progress_bytes": [],
+      "progress_monotonic": true,
+      "during_migration_queries": [],
+      "shutdown": {
+        "00000000-0000-0000-0000-000000000001": {
+          "shutdown_cancel_maintenance_ms": 0.4412082489579916,
+          "shutdown_cancel_queries_ms": 0.000250060111284256,
+          "shutdown_metadata_updater_ms": 0.0024583423510193825,
+          "shutdown_namespace_drain_ms": 0.05254172720015049,
+          "shutdown_session_teardown_ms": 0.0027084024623036385,
+          "shutdown_state_write_ms": 3.024458303116262,
+          "shutdown_stop_watcher_ms": 0.417666626162827,
+          "shutdown_total_ms": 5.044541670940816,
+          "shutdown_wait_checkpoint_group_ms": 0.0012083910405635834,
+          "shutdown_wait_metadata_group_ms": 0.00016670674085617065
+        },
+        "multi_volume": {
+          "shutdown_total_ms": 5.235958378762007
+        }
+      },
+      "normal_exit": 0,
+      "raw_stdout_sha256": "cc2f3e73219e34c6d7b846abebaffdad3befff4f44eea949e2b6883c633f7f06"
+    }
+  ]
+}

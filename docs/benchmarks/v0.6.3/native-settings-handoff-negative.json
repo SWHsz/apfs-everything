@@ -1,0 +1,17 @@
+{
+  "passed": false,
+  "reason": "one query returned zero hits while retiring the old session",
+  "during_migration_counts": [
+    12,
+    12,
+    12,
+    12,
+    12,
+    0
+  ],
+  "old_handoff_regression_expected_failure": {
+    "old_stop_before_swap_exit": 1,
+    "expected_failure": true
+  },
+  "source_namespace_and_metadata_restored_correctly": true
+}

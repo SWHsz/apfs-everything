@@ -1015,6 +1015,10 @@ base 216,137,950 bytes（216.14 MB、89.88 bytes/entry），运行 210.44 s；�
 
 v0.6.3 分层存储已接入生产 namespace/metadata reader、原子迁移、UUID 重连、Settings 与 CLI。默认内部位置兼容；外置/不可确认不可移除的卷使用有界 pread，真实 owned APFS 的九种正常/强制移除场景通过，旧 mmap 的 SIGBUS 仅发生在隔离预研 child 中。最终 336 项（312 Core + 24 Desktop，1 可选挂载 skip）普通/ASan/TSan通过，release/app/strict signature通过。439.6 万条原始验收记录的查询路径一致，最慢内置/外置 p95 为92.32/177.69ms；外置进程峰值约30.2/24.9MiB。真实 System 3,189,278 条、320,227,546 字节索引完成内部→Data 1→第二 APFS 映像→内部，迁移后暖 Live 10.50s，迁移阶段0扫描，准备阶段另行记录1扫描。返回默认策略后的 locator 为273字节。日用索引未移动。Settings 字段和目录选择器已原生观察，最终候选设置操作复验因锁屏待完成；实现及验收记录已推送，runtime/test 提交 ae6e410 的四项 [CI](https://github.com/SWHsz/apfs-everything/actions/runs/38163714821) 全绿；文档 HEAD 的最终 CI 结果见 Issue #2 更新，#2 仍 OPEN，无 tag。详见 [验收记录](docs/v063-validation.md)。
 
+### 2026-10-13：Issue #2 最终原生 Settings 验收完成
+
+最终 runtime `d8e7f3b` 修复真实 Move 暴露的查询交接空窗，保留失败收据和旧排序负对照。独立实例通过真实 Settings/NSOpenPanel 完成外迁、正常 Quit/外置暖重启、Use Default 回迁、正常 Quit/内部暖重启；全程 12 条路径、大小、精确纳秒 mtime 和四种排序正确。外迁/回迁 2,272 bytes，73.184/35.762ms；暖重启生产 backing 为 pread/mmap，均 0 full scans、0 resource-yield rebuilds。locator 返回 defaultInternal，280 bytes，旧副本保留。此小 fixture 与此前 319 万条实盘测量分别记录；日用索引未改动。最终 338 项普通/ASan/TSan 与九种 owned APFS 移除复验通过，release/app/strict signature 通过，runtime 四项 [CI](https://github.com/SWHsz/apfs-everything/actions/runs/38334819518) 全绿。详见 [记录](docs/v063-validation.md) 和 [收据](docs/benchmarks/v0.6.3/native-settings-20261013.json)。#2 关闭及 roadmap 更新在文档 HEAD CI 确认后执行；无 tag/release。
+
 ## 限制与后续边界
 
 - required path 已实现，无 TODO/stub。数据来自单次本机 benchmark，不是多机器统计保证。
