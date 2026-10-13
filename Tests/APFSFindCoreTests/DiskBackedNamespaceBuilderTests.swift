@@ -29,6 +29,13 @@ final class DiskBackedNamespaceBuilderTests:XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath:stale+"/records"))
     try active.checkIdentity()
   }
+  func testDuplicateRaceHintsDoNotCreateDuplicateChildren() throws {
+    let tree=try TemporaryTree(),cache=try TemporaryTree(cache:true),v=try VolumeIdentity.discover(root:tree.root),metrics=Metrics()
+    let sealed=try DiskBackedNamespaceBuilder(identity:v,store:SnapshotStore(directory:cache.root,identity:v),source:DuplicateBuildSource(),metrics:metrics).build(generation:1,cursor:1)
+    XCTAssertEqual(sealed.namespace.count,3)
+    XCTAssertEqual(try sealed.namespace.directChildren(of:0).count,2)
+    XCTAssertGreaterThan(metrics.snapshot()["streaming_duplicate_race_hints",default:0],0)
+  }
   func testWideDirectoryUsesBoundedRuns() throws {
     let tree=try TemporaryTree(),cache=try TemporaryTree(cache:true),v=try VolumeIdentity.discover(root:tree.root),metrics=Metrics()
     let store=try SnapshotStore(directory:cache.root,identity:v)
@@ -55,6 +62,15 @@ struct WideBuildSource:StreamingDirectorySource {
         return .init(namespace:.init(path:path+String(format:"/item-%06d",id),kind:.file,deviceID:identity.deviceID,fileID:UInt64(id+1)),
                      metadata:.init(logicalSize:UInt64(id),modificationTimeNanoseconds:Int64(id)*1000000000+123456789))
       })
+    }
+  }
+}
+
+private struct DuplicateBuildSource:StreamingDirectorySource {
+  func rootEntry(identity:VolumeIdentity)throws->ScannedEntry {.init(namespace:.init(path:identity.root,kind:.directory,deviceID:identity.deviceID,fileID:identity.rootFileID))}
+  func pages(path:String,identity:VolumeIdentity,cancellation:CancellationToken,checkpoint:@escaping @Sendable ()throws->Void,visit:@escaping @Sendable ([ScannedEntry])throws->Void)throws {
+    for names in [["same","same"],["other","same"],["same"]] {
+      try visit(names.map {.init(namespace:.init(path:path+"/"+$0,kind:.file,deviceID:identity.deviceID))})
     }
   }
 }

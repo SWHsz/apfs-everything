@@ -118,9 +118,15 @@ final class BuildDirectorySorter: @unchecked Sendable {
         let items=try page[start..<min(start+4096,page.count)].map {try BuildItem($0,identity:identity)}.sorted(by:BuildItem.less)
         metrics.maximum("streaming_listing_entries_max",items.count)
         let begin=scratch.length
-        for item in items {try scratch.append(item.encoded)}
+        var unique:[BuildItem]=[]
+        for item in items {
+          if let previous=unique.last,previous.name.utf8.elementsEqual(item.name.utf8) {
+            unique[unique.count-1]=item;metrics.record("streaming_duplicate_race_hints")
+          } else {unique.append(item)}
+        }
+        for item in unique {try scratch.append(item.encoded)}
         try scratch.flush()
-        var run=BuildRun(start:begin,end:scratch.length,count:UInt32(items.count)),level=0
+        var run=BuildRun(start:begin,end:scratch.length,count:UInt32(unique.count)),level=0
         while let old=levels[level] {
           levels[level]=nil;run=try merge(old,run);level+=1
           guard level<64 else {throw SnapshotError.invalid("directory sort run limit")}
@@ -135,13 +141,15 @@ final class BuildDirectorySorter: @unchecked Sendable {
     var x=try ar.next(),y=try br.next(),count=0
     while x != nil || y != nil {
       if count%4096==0 {try check()}
-      if let left=x, y == nil || BuildItem.less(left,y!) {try scratch.append(left.encoded);x=try ar.next()}
+      if let left=x,let right=y,left.name.utf8.elementsEqual(right.name.utf8) {
+        try scratch.append(right.encoded);x=try ar.next();y=try br.next();metrics.record("streaming_duplicate_race_hints")
+      } else if let left=x, y == nil || BuildItem.less(left,y!) {try scratch.append(left.encoded);x=try ar.next()}
       else if let right=y {try scratch.append(right.encoded);y=try br.next()}
       count+=1
     }
     try scratch.flush()
     guard UInt64(a.count)+UInt64(b.count)<=SnapshotFormat.maxRecords else {throw SnapshotError.invalid("directory entry limit")}
-    return .init(start:begin,end:scratch.length,count:a.count+b.count)
+    return .init(start:begin,end:scratch.length,count:UInt32(count))
   }
   func finish() throws -> BuildRun {
     var merged:BuildRun?
