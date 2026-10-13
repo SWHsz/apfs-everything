@@ -413,6 +413,7 @@ public final class HybridIndex: NamespaceIndex, @unchecked Sendable {
   public func hybridStats() -> [String: Any] {
     lock.withLock {
       var v: [String: Any] = [
+        "base_backing": base == nil ? "none" : (base is PReadNamespaceIndex ? "pread" : "mmap"),
         "base_mapped_bytes": base?.mappedBytes ?? 0, "base_records": base?.count ?? 0,
         "base_directories": base?.directories ?? 0,
         "materialized_file_entries": bootstrap?.stats().files ?? 0,

@@ -86,6 +86,9 @@ final class StorageMultiVolumeTests:XCTestCase,@unchecked Sendable {
       XCTAssertEqual(retained.hits.count,1)
     }
     let receipt = try await c.moveStorage(sourceID,to:policy)
+    let completed = await c.storageProgress()[sourceID]
+    XCTAssertEqual(completed?.phase,"completed")
+    XCTAssertEqual(completed?.copiedBytes,receipt.bytes)
     // Both the actor's rollback receipt and the public copy must relinquish
     // ownership of readers at handoff, before the storage volume is ejected.
     XCTAssertFalse(receipt.hasValidatedStorage)

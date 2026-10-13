@@ -61,6 +61,7 @@ public actor MultiVolumeCoordinator {
   private var migrationTargets:[UUID:String] = [:]
   private var activeQueries:[UUID:SearchCancellationToken]=[:]
   public private(set) var shutdownReport:[String:[String:Double]]=[:]
+  private var sessionQueries: [ObjectIdentifier:Int] = [:]
   private var revision: UInt64 = 0
   private let observations = SnapshotObservation<[VolumeSessionSnapshot]>()
   public init(provider: any MountedVolumeProvider = LocalMountedVolumeProvider(),
@@ -93,7 +94,9 @@ public actor MultiVolumeCoordinator {
     let target = try resolver.resolve(policy,source:identity)
     guard target.state == .available else { throw IndexStorageError(target.state) }
     let token = CancellationToken(), locator = try storageLocator ?? IndexStorageLocatorStore(), scheduler = maintenance
+    let totalBytes = try source.indexFileBytes()
     migrationTokens[id] = token; migrationTargets[id] = target.storageMountPath
+    migrationProgress[id] = .init(copiedBytes:0,totalBytes:totalBytes,file:"",phase:"preparing")
     old.setStorageMigrating(true); publish()
     defer { migrationTokens.removeValue(forKey:id); migrationTargets.removeValue(forKey:id); old.setStorageMigrating(false); publish() }
     let receipt = try await Task.detached(priority:.utility) { [weak self] in
@@ -104,7 +107,7 @@ public actor MultiVolumeCoordinator {
           // Snapshot the weak capture before sending it into another task.
           // Swift 6.0 otherwise treats the shared weak box as mutable state.
           let coordinator = self
-          Task { await coordinator?.recordStorageProgress(id,value:value) }
+          Task { await coordinator?.recordStorageProgress(id,token:token,value:value) }
         },
         withSwitchBarrier:{ operation in
           old.coordinator.pause()
@@ -137,16 +140,42 @@ public actor MultiVolumeCoordinator {
       throw error
     }
     guard let replacement = preparedReplacement else {throw SnapshotError.busy}
-    await old.stop(policy:.fast)
-    (replacement as? VolumeIndexSession)?.coordinator.renewResourceRegistration()
-    sessions[id] = replacement; observers[id]?.cancel()
-    observers[id] = Task { [weak self] in for await _ in replacement.changes() { if Task.isCancelled { break }; await self?.publish() } }
     for reason in globalPauseReasons { await replacement.setPauseReason(reason,enabled:true) }
     if individuallyPaused.contains(id) { await replacement.setPauseReason(.userVolume,enabled:true) }
+    (replacement as? VolumeIndexSession)?.setStorageMigrating(true)
+    await replaceSessionForMigration(replacement,id:id,old:old)
+    if !stopping { (replacement as? VolumeIndexSession)?.coordinator.renewResourceRegistration() }
+    (replacement as? VolumeIndexSession)?.setStorageMigrating(false)
+    migrationProgress[id] = .init(copiedBytes:receipt.bytes,totalBytes:receipt.bytes,file:"",phase:"completed")
     oldIndexCopies[id] = receipt
     return receipt
   }
-  private func recordStorageProgress(_ id:UUID,value:IndexStorageMigrationProgress) { migrationProgress[id] = value; publish() }
+  /// Expose the validated replacement before retiring the old session. Queries
+  /// already dispatched to the old session must finish before stop marks it
+  /// offline; otherwise both new and in-flight queries can briefly lose hits.
+  func replaceSessionForMigration(_ replacement:any VolumeSearching,id:UUID,old:any VolumeSearching) async {
+    sessions[id] = replacement; observers[id]?.cancel()
+    observers[id] = Task { [weak self] in for await _ in replacement.changes() { if Task.isCancelled { break }; await self?.publish() } }
+    publish()
+    let oldID = ObjectIdentifier(old)
+    while sessionQueries[oldID,default:0] > 0 {
+      // Actor reentrancy lets completed queries release their session pin.
+      // New queries select the replacement and cannot prolong this drain.
+      do {try await Task.sleep(for:.milliseconds(1))}
+      catch {await Task.yield()} // Cancellation must still let reader pins drain.
+    }
+    await old.stop(policy:.fast)
+  }
+  private func recordStorageProgress(_ id:UUID,token:CancellationToken,value:IndexStorageMigrationProgress) {
+    // Detached copy callbacks can reach the actor after a newer phase/job.
+    guard migrationTokens[id] === token else {return}
+    let phases = ["preparing":0,"copying":1,"validating":2,"switching":3,"completed":4]
+    if let prior = migrationProgress[id] {
+      guard value.copiedBytes >= prior.copiedBytes,
+        phases[value.phase,default:0] >= phases[prior.phase,default:0] else {return}
+    }
+    migrationProgress[id] = value; publish()
+  }
   public func mountedVolumes() -> [VolumeDescriptor] { mounted }
   public func selectedVolumes() -> Set<UUID> { selected }
   public func sessionsSnapshot() -> [VolumeSessionSnapshot] {
@@ -244,6 +273,13 @@ public actor MultiVolumeCoordinator {
     let started = ProcessInfo.processInfo.systemUptime
     let snapshots = sessionsSnapshot()
     let available = sessions.values.filter { $0.snapshot().searchAvailable }
+    for session in available { sessionQueries[ObjectIdentifier(session),default:0] += 1 }
+    defer {
+      for session in available {
+        let key = ObjectIdentifier(session), remaining = sessionQueries[key,default:1]-1
+        if remaining == 0 {sessionQueries.removeValue(forKey:key)} else {sessionQueries[key] = remaining}
+      }
+    }
     let groups = await withTaskGroup(of: [VolumeSearchHit].self, returning: [[VolumeSearchHit]].self) { tasks in
       if !request.query.isEmpty, request.limit > 0, !request.cancellation.isCancelled {
         for session in available {

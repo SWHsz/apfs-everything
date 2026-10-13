@@ -60,7 +60,13 @@ final class VolumeSettingsViewModel: ObservableObject {
   }
   func move(_ id:UUID,to policy:IndexStoragePolicy) async {
     storageErrors[id] = nil
-    do { _ = try await coordinator.moveStorage(id,to:policy) }
+    do {
+      if StorageNativeSmokeValidation.enabled {
+        _ = try await StorageNativeSmokeValidation.move(coordinator,id:id,policy:policy)
+      } else {
+        _ = try await coordinator.moveStorage(id,to:policy)
+      }
+    }
     catch { storageErrors[id] = String(describing:error) }
     await refresh()
   }

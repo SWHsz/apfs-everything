@@ -57,6 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     guard Bundle.main.bundleIdentifier?.hasPrefix("local.apfsfind.desktop.smoke.") == true,
       Bundle.main.object(forInfoDictionaryKey:"APFSFindResourceSmoke") as? Bool == true else { return }
     resourceSmokeTask = Task { [weak self] in
+      if StorageNativeSmokeValidation.enabled {
+        await StorageNativeSmokeValidation.ready(coordinator,stage:"startup")
+        return
+      }
       self?.panel?.hide()
       if Bundle.main.object(forInfoDictionaryKey:"APFSFindSmokeRestart") as? Bool == true
         || ProcessInfo.processInfo.environment["APFSFIND_SMOKE_RESTART"] == "1" {
