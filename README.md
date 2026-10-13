@@ -1,4 +1,4 @@
-# APFSFind — v0.6.3 Tiered Index Storage
+# APFSFind — v0.6.4 Disk-backed Cold & Recovery Builder
 
 APFSFind 是一个 macOS 本地文件名搜索工具。按 Option+Space 打开搜索窗口，搜索系统卷与自己选择的本地卷。
 Swift 6 / macOS 14+，无第三方 Swift package；目前是可运行的桌面 Alpha。
@@ -9,7 +9,11 @@ v0.6 删除 namespace 和 metadata 两份全量目录路径表，改为按路径
 
 后台扫描、压缩和元数据重建会根据 CPU、内存、热状态、低电量模式及搜索交互让路。系统繁忙时普通维护可能延迟；搜索和实时小更新继续工作。达到更新层安全上限时会保留回放游标并进入恢复，不会无限增加 RAM。v0.6.3 / Issue #2 提供可配置的外置 APFS 索引存储。
 
-Issue #1 已关闭：有界 resolver 与内存结构的目标已完成。Issue #3 的 v0.6.2 同 binary 桌面/引擎验收已完成并关闭。v0.6.3 增加按来源配置的分层索引存储；最终验收记录见 [存储验证](docs/v063-validation.md)。本轮不创建 release tag。局部 reconciliation 的资源让步保留 frontier 和安全游标，稍后继续；不会把让步升级为全盘重建。资源诊断和复现命令见 [资源调度](docs/resource-scheduling.md)、[路径解析](docs/path-resolution.md)、[本轮验证记录](docs/v062-validation.md)、[v0.6.1 记录](docs/v061-validation.md) 、[v0.6 记录](docs/v06-validation.md) 和 [STATUS](STATUS.md)。`residency-bench` 只读打开现有缓存；真实 live/桌面 soak 单独记录，二者不可混称。
+v0.6.4 将 persistent cold/recovery 的完整 RAM FileIndex 替换为磁盘流式构建，保持 namespace v2 / metadata v1。恢复期间保留旧 base 可查询；资源让步继续同一工作区和事件 fence。RAM FileIndex 仅保留在 ephemeral/test/reference 路径。具体测量及限制见 [构建验证](docs/v064-validation.md)。
+
+Issue #2 已完成真实 Settings 外迁/回迁及两次暖重启并关闭；roadmap #12 已更新。Issue #1 已关闭：有界 resolver 与内存结构的目标已完成。Issue #3 的 v0.6.2 同 binary 桌面/引擎验收已完成并关闭。v0.6.3 增加按来源配置的分层索引存储；最终验收记录见 [存储验证](docs/v063-validation.md)。本轮不创建 release tag。局部 reconciliation 的资源让步保留 frontier 和安全游标，稍后继续；不会把让步升级为全盘重建。资源诊断和复现命令见 [资源调度](docs/resource-scheduling.md)、[路径解析](docs/path-resolution.md)、[本轮验证记录](docs/v062-validation.md)、[v0.6.1 记录](docs/v061-validation.md) 、[v0.6 记录](docs/v06-validation.md) 和 [STATUS](STATUS.md)。`residency-bench` 只读打开现有缓存；真实 live/桌面 soak 单独记录，二者不可混称。
+
+persistent cold/recovery 固定使用一个 DFS worker；`--workers` 仍用于 ephemeral 扫描等旧路径。首次构建的临时磁盘成本和恢复资源测量可分别运行 `cold-build-bench --entries 3000000` 与 `recovery-build-bench`，最后一行是 JSON。
 
 ## 构建与运行
 
@@ -22,7 +26,7 @@ open dist/APFSFind.app
 ```
 
 产物为 `dist/APFSFind.app`，脚本完成本地 ad-hoc 签名，无需 Apple Developer 账号。
-首次启动默认显示窗口，后台开始索引系统根目录 `/`；开启隐藏启动设置后，每次冷启动先在后台运行。首次扫描可能耗时并占用较多内存。
+首次启动默认显示窗口，后台开始索引系统根目录 `/`；开启隐藏启动设置后，每次冷启动先在后台运行。首次扫描可能耗时；persistent cold/recovery 使用磁盘临时 section 与有界分页/DFS，临时磁盘空间明显高于最终索引。
 有缓存时校验并打开 base 后立即开放搜索；“正在更新索引”表示仍在 replay，结果可能短暂陈旧。
 打开或在 Finder 显示前会检查目标是否仍存在；失效结果会移除并修复对应父目录。
 

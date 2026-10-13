@@ -1,3 +1,17 @@
+# v0.6.4 — Disk-backed Cold and Recovery Builder
+
+本轮从 `68ae8998fcaf1848b2b83943fe661353711b5743` 按 Phase A → B 完成。详细实现、测量、边界与精确命令见 [v0.6.4 validation](docs/v064-validation.md)。
+
+- Phase A：修复实际 Settings 外迁时短暂丢结果的 session handoff；真实 Move/default、两次正常 Quit/暖重启、12 条路径/精确 size/nsmtime/四种排序、进度与查询连续性均通过。保留旧副本且哈希不变，0 full scans；外置 pread / 内置 mmap；locator 回到 defaultInternal（280 bytes）。#2 已关闭，#12 已勾选 #2；此前失败和大数据记录仍保留，无 tag/Release。
+- Phase B：默认 persistent cold/recovery 改为安全 0700/0600 selected-storage workspace、getattrlistbulk 分页、外部归并排序、有界 DFS、分段列写入、流式 CRC/assembly、只读完整验证、发布。namespace v2 / metadata v1 不变，不建立完整 FileIndex、path map、ordinal/record 数组或完整 Data。内部/外部验证的路径长度检查也使用祖先栈。RAM FileIndex 仅保留于 ephemeral/test/reference；现有 compaction planning 和显式 verify 仍另有 O(N) 工作。
+- 冷扫描前 E0、恢复前 fence、旧 base 搜索和保守 cursor 保持；yield 保留同一 workspace/epoch，查询/thermal 让路，critical 取消，warning 缩小 buffer；required 单 worker，opportunistic CPU/低电量门控，无永久 idle timer。
+- 同一最终 `26c8d3e` release：1M/3M cold peak physical 6.63/6.47 MiB，RSS 92.44/249.23 MiB；临时逻辑峰值 254.24/762.71 MiB，final pair 93.72/281.16 MiB；wall 9.211/27.249 s，RAM reference 10.438/31.554 s（比值 0.882/0.864）。physical 500/300 MiB 门槛均通过；此为等价分页数据，不冒充真实全盘枚举时间。
+- 3M recovery build/replay 27.900 s，physical 7.55 MiB / RSS 420.62 MiB；213 次旧 base 查询全对、最大 26.839 ms，旧 reader 发布后仍有效；actual FSEvents mutation/restart 正确性单独由集成测试覆盖。recovery 临时峰值另加旧 pair，约 1.095 GB 逻辑占用。
+- 实际 owned APFS image cold/recovery 强制卸载：子进程 exit0，重挂后 immutable hashes 不变，没有发布 partial base；cold 返回 workspace identity 错误，recovery 返回 storage offline。不是物理 SSD 掉电试验。
+- CI 曾捕获两个普通断言失败（ASan job，无 ASan memory report）：订阅时旧初始快照可覆盖最后 Live 通知，以及 recovery test 在 live 事件交付前立即 verify。确定性旧实现负对照失败、修复通过；现有失败数据保留。最终 359 项普通/ASan/TSan（335 Core + 24 Desktop，1 项 optional mount skip）、release、app、严格签名和实际卸载验证全部通过；最终 runtime 的四项 required CI 全绿（[38344287117 attempt 2](https://github.com/SWHsz/apfs-everything/actions/runs/38344287117/attempts/2)）。attempt 1 有 13 个真实事件方法收敛失败并触发测试强制解包；同 HEAD 重跑通过，根因未证明，失败保留且未跳过测试。#13 与 roadmap #12 的最终发布/关闭记录在 Issue 中。
+
+---
+
 # v0.6.2 — Reconciliation Convergence（验收进行中）
 
 本轮从 `d3a7ffe051b6694c4edfa66371109dde7636600c` 继续 Phase A（#3 最终同 binary 桌面/资源验收），通过后进入 Phase B（#2 分层存储）。当前 9de 签名候选 297 项普通/ASan/TSan、G/E/B、真实热键/全局与单卷菜单、正常 Quit 已通过；暖重启也通过，`16472f9` 的四项 required CI（38140923147）全部成功，#3 已关闭、roadmap #12 已勾选。#1 已关闭，#2 保持 OPEN，无 release tag。历史 binary 的结果按 SHA 分开保留。
@@ -1026,7 +1040,7 @@ v0.6.3 分层存储已接入生产 namespace/metadata reader、原子迁移、UU
   不宣称所有查询低于 100 ms，也不把 RAM patch 的时间冒充真实百万文件 FSEvents 搜索可见性。
 - mmap 查询已移除全量目录路径 map；RAM 保留有界热目录 cache 和 live overlay。
   replay 大量变更仍会占用 overlay 和 repair 内存；overlay bytes 是保守估算，不是 allocator 的精确账单，最终同 binary 的真实 E physical 门槛已通过；历史失败保留在验收记录中。
-- cold/rebuild 暂时拥有完整 RAM 索引；compaction planning arrays 是 O(N)，观测 peak RSS 不是绝对瞬时上界。
+- persistent cold/rebuild 已改为有界分页与磁盘 section；ephemeral/reference 保留 RAM FileIndex。compaction planning arrays 仍是 O(N)，观测 peak RSS 不是绝对瞬时上界。
   scoped reconciliation 可临时构造该范围的 paths；:verify 全量 fresh path sets 也会增加内存，需要静止目录。
 - 单次大目录子树删除仍可较长占用更新锁；已测普通文件 writer 与并发查询，未验证所有百万平面目录/超深树分布。
 - 整体写入/校验不持更新锁，但原子发布包含目录 fsync，慢/故障存储仍可影响该短阶段。

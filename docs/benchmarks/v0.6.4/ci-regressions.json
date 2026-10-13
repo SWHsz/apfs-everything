@@ -1,0 +1,54 @@
+{
+  "failed_ci": {
+    "head": "dc411fc6d02a3c3548fe418edd04256f36275afc",
+    "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38342143303",
+    "job": "address-sanitizer",
+    "failures": [
+      "StorageMultiVolume readiness timeout",
+      "StreamingRecovery actual mutation convergence checked before live delivery settled"
+    ],
+    "asan_memory_report_observed": false
+  },
+  "readiness_negative": {
+    "old_implementation_exit": 1,
+    "expected_failure": true
+  },
+  "negative_log_sha256": "4bbd64cb6f45fb01d90c7469ae7abe95b96452bf147f515aee130ff9ea200cbb",
+  "positive_related_tests": 9,
+  "bounded_validator_related_tests": 33,
+  "fixes": [
+    "Subscribe before capturing initial state and suppress stale initial values after a notification",
+    "Wait for actual create/delete/rename convergence before verification/restart",
+    "Replace mmap full-record path-length array with DFS ancestor lengths"
+  ],
+  "second_ci_attempt1": {
+    "head": "26c8d3ef354e541ced1074305db5d5ccb51f4c3e",
+    "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38344287117/attempts/1",
+    "failed_test_methods": [
+      "APFSFindCoreTests.BackgroundLifecycleTests testPausedChangesNativeReplayAndFastExitDoNotForceCompaction",
+      "APFSFindCoreTests.BurstIntegrationTests testThousandFileBurstAndDeletionAgreeWithFreshScan",
+      "APFSFindCoreTests.CursorStateTests testStateCannotSkipUnpublishedNamespace",
+      "APFSFindCoreTests.EngineUsabilityTests testFastExitLeavesBaseAndConservativeCursorThenRestartRecovers",
+      "APFSFindCoreTests.HybridRecoveryTests testAutomaticQuietCompactionReleasesOverlay",
+      "APFSFindCoreTests.HybridRecoveryTests testManagedCompactionSuppressesDuplicatesWhileWriterKeepsUpdating",
+      "APFSFindCoreTests.LiveUpdateIntegrationTests testContentWriteDoesNotMutateOrReconcileNamespace",
+      "APFSFindCoreTests.LiveUpdateIntegrationTests testInitialCreateDeleteAndBothRenameForms",
+      "APFSFindCoreTests.LiveUpdateIntegrationTests testNewNonemptyDirectoryAndSubtreeDelete",
+      "APFSFindCoreTests.LiveUpdateIntegrationTests testReplayClosesScanToWatcherGap",
+      "APFSFindCoreTests.MetadataIntegrationTests testBootstrapWithNamespaceDeltaRetainsConservativeDurableCursor",
+      "APFSFindCoreTests.MetadataIntegrationTests testColdContentDebouncePauseAndFastRestart",
+      "APFSFindCoreTests.MetadataIntegrationTests testCreateDeleteRenameCompactionOrdinalAndMetadataOnlyCheckpoint"
+    ],
+    "failure_log_sha256": "c79d32cbe19346232ce24a5b7f438611c237d3528dbfce183e255d87b350e55e",
+    "asan_memory_report_observed": false,
+    "test_harness_fatal_nil_unwrap": true,
+    "same_head_failed_job_rerun_requested": true,
+    "same_head_rerun_result": "all four required jobs passed at attempt 2",
+    "cause": "not established; same source/binaries passed locally and remote rerun"
+  },
+  "readiness_fix_ci": {
+    "head": "67f47a58d40510b957f588883d9bc480aa16ea10",
+    "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38343896732",
+    "conclusion": "success"
+  }
+}

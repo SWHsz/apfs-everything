@@ -1,0 +1,41 @@
+{
+  "candidate": {
+    "head": "26c8d3ef354e541ced1074305db5d5ccb51f4c3e",
+    "cli_sha256": "bc633a0e2d65e1931ff15ce5d2275dd7a472d80a0bc68a922d0ac9d21f06ed9b",
+    "desktop_sha256": "4db12f634d83f76e14b6d9ff140bdebe0be157ae1f2d16681ff8f24375e76aba"
+  },
+  "source": "equivalent paged 65,537-record production coordinator",
+  "passed": true,
+  "raw_report_sha256": "0065b1f7dc662ee4688047a450198914545753b4be4f79f0c41c709103120f05",
+  "create_exit": 0,
+  "modes": [
+    {
+      "mode": "cold",
+      "immutable_files_before": 0,
+      "immutable_hashes_unchanged": true,
+      "child_exit": 0,
+      "output": [
+        "{\"mode\":\"cold\",\"streaming_before_assembly\":true}\n",
+        "{\"crashed\":false,\"mode\":\"cold\",\"structured_io_error\":\"Unsafe snapshot\\/cache path: build workspace identity changed\"}\n"
+      ],
+      "attach_exit": 0,
+      "detach_exit": 0,
+      "reattach_exit": 0,
+      "cleanup_detach_exit": 0
+    },
+    {
+      "mode": "recovery",
+      "immutable_files_before": 2,
+      "immutable_hashes_unchanged": true,
+      "child_exit": 0,
+      "output": [
+        "{\"mode\":\"recovery\",\"streaming_before_assembly\":true}\n",
+        "{\"crashed\":false,\"mode\":\"recovery\",\"structured_io_error\":\"Index storage: offline\"}\n"
+      ],
+      "attach_exit": 0,
+      "detach_exit": 0,
+      "reattach_exit": 0,
+      "cleanup_detach_exit": 0
+    }
+  ]
+}

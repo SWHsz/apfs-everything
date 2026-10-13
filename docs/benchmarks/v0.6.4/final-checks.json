@@ -1,0 +1,394 @@
+{
+  "candidate": {
+    "head": "26c8d3ef354e541ced1074305db5d5ccb51f4c3e",
+    "cli_sha256": "bc633a0e2d65e1931ff15ce5d2275dd7a472d80a0bc68a922d0ac9d21f06ed9b",
+    "desktop_sha256": "4db12f634d83f76e14b6d9ff140bdebe0be157ae1f2d16681ff8f24375e76aba"
+  },
+  "environment": {
+    "architecture": "arm64",
+    "macos": "27.0.1 (26A434)",
+    "xcode": "27.0 (27A266a)"
+  },
+  "checks": [
+    {
+      "label": "release",
+      "exit": 0,
+      "seconds": 56.817589374957606,
+      "log_sha256": "77e6b71caf25e94174a6ae48e80650c4f66c2ed09d031f666df017050fcfdbeb"
+    },
+    {
+      "label": "app",
+      "exit": 0,
+      "seconds": 1.3464702079072595,
+      "log_sha256": "d08792a6e2d27c9c154223cf8c3f983b3b908faa4549da87deac5a56ab9c340e"
+    },
+    {
+      "label": "signature",
+      "exit": 0,
+      "seconds": 0.009746790979988873,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "streaming-detach",
+      "exit": 0,
+      "seconds": 5.9298880409915,
+      "log_sha256": "6a9dcf13d3050999b30ab0d7f89f0a707547b27f0f7cfbde504c982c83581c4f"
+    },
+    {
+      "label": "ordinary",
+      "exit": 0,
+      "seconds": 144.08701262495015,
+      "log_sha256": "ea129b850d92ab3a6eb0670df5f920b09dec8bc1f15bfb10772d19cb2af2151d"
+    },
+    {
+      "label": "asan",
+      "exit": 0,
+      "seconds": 278.2831250829622,
+      "log_sha256": "585f4b8cb1efd3be2699b79b220dfcd934af9c2260d2e806c383ad5a94963ee7"
+    },
+    {
+      "label": "tsan",
+      "exit": 0,
+      "seconds": 427.9514644580195,
+      "log_sha256": "4e0189ac7c65b1270945bd0201e2e903f71b443ecd77258ef162a0f014bc8fdc"
+    }
+  ],
+  "ordinary_tests": 359,
+  "core_tests": 335,
+  "desktop_tests": 24,
+  "optional_mount_skips": 1,
+  "required_ci": {
+    "attempt": 2,
+    "conclusion": "success",
+    "databaseId": 38344287117,
+    "headSha": "26c8d3ef354e541ced1074305db5d5ccb51f4c3e",
+    "jobs": [
+      {
+        "completedAt": "2026-10-13T04:25:21Z",
+        "conclusion": "success",
+        "databaseId": 115125377976,
+        "name": "address-sanitizer",
+        "startedAt": "2026-10-13T04:12:56Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-13T04:12:57Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-13T04:12:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:12:59Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-13T04:12:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:25:14Z",
+            "conclusion": "success",
+            "name": "Run swift test --sanitize=address",
+            "number": 3,
+            "startedAt": "2026-10-13T04:12:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:25:15Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 6,
+            "startedAt": "2026-10-13T04:25:14Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:25:19Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 7,
+            "startedAt": "2026-10-13T04:25:15Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38344287117/job/115125377976"
+      },
+      {
+        "completedAt": "2026-10-13T04:02:04Z",
+        "conclusion": "success",
+        "databaseId": 115125379541,
+        "name": "desktop-build",
+        "startedAt": "2026-10-13T04:00:55Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-13T04:00:57Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-13T04:00:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:00:58Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-13T04:00:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:01:58Z",
+            "conclusion": "success",
+            "name": "Run swift build -c release --product APFSFindDesktop",
+            "number": 3,
+            "startedAt": "2026-10-13T04:00:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:00Z",
+            "conclusion": "success",
+            "name": "Run bash scripts/build_app.sh",
+            "number": 4,
+            "startedAt": "2026-10-13T04:01:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:00Z",
+            "conclusion": "success",
+            "name": "Run codesign --verify --deep --strict dist/APFSFind.app",
+            "number": 5,
+            "startedAt": "2026-10-13T04:02:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:00Z",
+            "conclusion": "success",
+            "name": "Run plutil -lint dist/APFSFind.app/Contents/Info.plist",
+            "number": 6,
+            "startedAt": "2026-10-13T04:02:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:01Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 12,
+            "startedAt": "2026-10-13T04:02:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:01Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-10-13T04:02:01Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38344287117/job/115125379541"
+      },
+      {
+        "completedAt": "2026-10-13T04:07:58Z",
+        "conclusion": "success",
+        "databaseId": 115125380308,
+        "name": "integration",
+        "startedAt": "2026-10-13T04:00:56Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-13T04:00:58Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-13T04:00:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:01:00Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-13T04:00:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:21Z",
+            "conclusion": "success",
+            "name": "Run swift test --filter SnapshotAtomicityTests",
+            "number": 3,
+            "startedAt": "2026-10-13T04:01:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:26Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build --filter LiveUpdateIntegrationTests",
+            "number": 4,
+            "startedAt": "2026-10-13T04:02:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:48Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build --filter HybridRecoveryTests",
+            "number": 5,
+            "startedAt": "2026-10-13T04:02:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:56Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build --filter MetadataIntegrationTests",
+            "number": 6,
+            "startedAt": "2026-10-13T04:02:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:02:58Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build --filter MetadataCursorTests",
+            "number": 7,
+            "startedAt": "2026-10-13T04:02:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:03:01Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build --filter BackgroundLifecycleTests",
+            "number": 8,
+            "startedAt": "2026-10-13T04:02:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:03:08Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build --filter PersistentRecoveryTests",
+            "number": 9,
+            "startedAt": "2026-10-13T04:03:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:03:16Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build --filter HybridIndexTests",
+            "number": 10,
+            "startedAt": "2026-10-13T04:03:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:07:53Z",
+            "conclusion": "success",
+            "name": "Run swift test --skip-build",
+            "number": 11,
+            "startedAt": "2026-10-13T04:03:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:07:53Z",
+            "conclusion": "skipped",
+            "name": "Crash reports",
+            "number": 12,
+            "startedAt": "2026-10-13T04:07:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:07:54Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 24,
+            "startedAt": "2026-10-13T04:07:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:07:55Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 25,
+            "startedAt": "2026-10-13T04:07:54Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38344287117/job/115125380308"
+      },
+      {
+        "completedAt": "2026-10-13T04:05:36Z",
+        "conclusion": "success",
+        "databaseId": 115125404192,
+        "name": "deterministic",
+        "startedAt": "2026-10-13T03:59:33Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-13T03:59:35Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-13T03:59:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T03:59:40Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-13T03:59:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T03:59:44Z",
+            "conclusion": "success",
+            "name": "Run swift --version; sw_vers; xcodebuild -version",
+            "number": 3,
+            "startedAt": "2026-10-13T03:59:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:01:10Z",
+            "conclusion": "success",
+            "name": "Run swift build -c release",
+            "number": 4,
+            "startedAt": "2026-10-13T03:59:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:05:32Z",
+            "conclusion": "success",
+            "name": "Run swift test",
+            "number": 5,
+            "startedAt": "2026-10-13T04:01:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:05:32Z",
+            "conclusion": "skipped",
+            "name": "Crash reports",
+            "number": 6,
+            "startedAt": "2026-10-13T04:05:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:05:33Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 12,
+            "startedAt": "2026-10-13T04:05:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-13T04:05:35Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-10-13T04:05:33Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38344287117/job/115125404192"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/SWHsz/apfs-everything/actions/runs/38344287117"
+  }
+}
