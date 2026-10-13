@@ -1017,7 +1017,7 @@ v0.6.3 分层存储已接入生产 namespace/metadata reader、原子迁移、UU
 
 ### 2026-10-13：Issue #2 最终原生 Settings 验收完成
 
-最终 runtime `d8e7f3b` 修复真实 Move 暴露的查询交接空窗，保留失败收据和旧排序负对照。独立实例通过真实 Settings/NSOpenPanel 完成外迁、正常 Quit/外置暖重启、Use Default 回迁、正常 Quit/内部暖重启；全程 12 条路径、大小、精确纳秒 mtime 和四种排序正确。外迁/回迁 2,272 bytes，73.184/35.762ms；暖重启生产 backing 为 pread/mmap，均 0 full scans、0 resource-yield rebuilds。locator 返回 defaultInternal，280 bytes，旧副本保留。此小 fixture 与此前 319 万条实盘测量分别记录；日用索引未改动。最终 338 项普通/ASan/TSan 与九种 owned APFS 移除复验通过，release/app/strict signature 通过，runtime 四项 [CI](https://github.com/SWHsz/apfs-everything/actions/runs/38334819518) 全绿。详见 [记录](docs/v063-validation.md) 和 [收据](docs/benchmarks/v0.6.3/native-settings-20261013.json)。#2 关闭及 roadmap 更新在文档 HEAD CI 确认后执行；无 tag/release。
+最终 runtime `d8e7f3b` 修复真实 Move 暴露的查询交接空窗，保留失败收据和旧排序负对照。独立实例通过真实 Settings/NSOpenPanel 完成外迁、正常 Quit/外置暖重启、Use Default 回迁、正常 Quit/内部暖重启；全程 12 条路径、大小、精确纳秒 mtime 和四种排序正确。外迁/回迁 2,272 bytes，73.184/35.762ms；暖重启生产 backing 为 pread/mmap，均 0 full scans、0 resource-yield rebuilds。locator 返回 defaultInternal，280 bytes，旧副本保留。此小 fixture 与此前 319 万条实盘测量分别记录；日用索引未改动。最终 338 项普通/ASan/TSan 与九种 owned APFS 移除复验通过，release/app/strict signature 通过，runtime 四项 [CI](https://github.com/SWHsz/apfs-everything/actions/runs/38334819518) 全绿。详见 [记录](docs/v063-validation.md) 和 [收据](docs/benchmarks/v0.6.3/native-settings-20261013.json)。#2 已关闭，roadmap #12 已勾选；文档 HEAD `70a6d57` 四项 CI 全绿。下一阶段为 [#13](https://github.com/SWHsz/apfs-everything/issues/13)；无 tag/release。
 
 ## 限制与后续边界
 
