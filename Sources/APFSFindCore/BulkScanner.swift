@@ -143,7 +143,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
     }
 
     public func readScannedDirectory(_ path: String, rootDeviceID: UInt64,
-                               cancellation: CancellationToken? = nil, collectEntries:Bool = true, visit:(@Sendable ([ScannedEntry])->Void)? = nil, maximumEntries:Int? = nil, yieldToQueries:Bool = false, collectDirectories:Bool = true) throws -> [ScannedEntry] {
+                               cancellation: CancellationToken? = nil, collectEntries:Bool = true, visit:(@Sendable ([ScannedEntry])->Void)? = nil, maximumEntries:Int? = nil, yieldToQueries:Bool = false, collectDirectories:Bool = true, visitThrowing:(@Sendable ([ScannedEntry])throws->Void)? = nil) throws -> [ScannedEntry] {
         applyThreadPolicy()
         var error: Int32 = 0
         guard let reader = apfs_bulk_reader_open(path, rootDeviceID, 1, &error) else {
@@ -196,6 +196,7 @@ public final class BulkScanner: DirectoryReading, @unchecked Sendable {
                                              isMountPoint: record.is_mount_point != 0), metadata: FileMetadataValue(record)))
             }
             visit?(page)
+            try visitThrowing?(page)
             if collectEntries { result += page }
             else if collectDirectories { result += page.filter { Self.shouldTraverse(entry:$0.namespace,rootDeviceID:rootDeviceID) } }
             visitedEntries += page.count

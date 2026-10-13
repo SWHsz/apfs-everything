@@ -171,6 +171,58 @@ public final class SnapshotStore: @unchecked Sendable {
         try publish(name: filename + ".state", write: { try snapshotWriteAll($0, data) }, beforePublish: beforePublish, fault: fault)
     }
 
+    func checkBuildStorage() throws { try validateStorage() }
+    func createBuildWorkspace() throws -> SnapshotBuildWorkspace {
+        try beforeTransaction(); try validateStorage()
+        let name = ".build-" + UUID().uuidString.lowercased()
+        guard mkdirat(directoryFD,name,0o700) == 0 else { throw SnapshotError.io("create build workspace",errno) }
+        let fd = openat(directoryFD,name,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW)
+        guard fd >= 0 else { let code=errno; _=unlinkat(directoryFD,name,AT_REMOVEDIR); throw SnapshotError.io("pin build workspace",code) }
+        let parent = dup(directoryFD)
+        guard parent >= 0 else { let code=errno; close(fd); _=unlinkat(directoryFD,name,AT_REMOVEDIR); throw SnapshotError.io("pin build parent",code) }
+        return try SnapshotBuildWorkspace(parentFD:parent,directoryFD:fd,name:name,store:self)
+    }
+    /// Both immutable files have already been sealed and validated. Ordinary
+    /// errors restore both previous names. A crash between renames can expose a
+    /// complete new namespace with mismatched optional metadata; base UUID checks
+    /// reject that sidecar and recover it, never accept partial columns.
+    func publishBuild(_ workspace:SnapshotBuildWorkspace, beforePublish:()throws->Void,
+                      fault:((SnapshotFailurePoint)throws->Void)? = nil) throws {
+        guard workspace.store === self else { throw SnapshotError.unsafePath("foreign build store") }
+        guard activityLock.withLock({ if publishing { return false }; publishing=true; return true }) else {throw SnapshotError.busy}
+        defer {activityLock.withLock {publishing=false}}
+        guard flock(lockFD,LOCK_EX|LOCK_NB) == 0 else {throw SnapshotError.busy}
+        defer {_=flock(lockFD,LOCK_UN)}
+        let finals = [filename,metadataFilename], inputs = ["namespace","metadata"]
+        let backups = finals.map {$0+"."+UUID().uuidString+".backup.tmp"}
+        var linked = [false,false], renamed = [false,false]
+        do {
+            try beforeTransaction();try workspace.checkIdentity();try beforePublish();try fault?(.beforeRename)
+            for i in 0..<2 {
+                if try hasSafeFinal(finals[i]) {
+                    guard linkat(directoryFD,finals[i],directoryFD,backups[i],0)==0 else {throw SnapshotError.io("backup build base",errno)}
+                    linked[i]=true
+                }
+            }
+            for i in 0..<2 {
+                guard renameat(workspace.directoryFD,inputs[i],directoryFD,finals[i])==0 else {throw SnapshotError.io("publish build section",errno)}
+                renamed[i]=true
+                if i==0 {try fault?(.afterRename)}
+            }
+            try fault?(.directorySync);try validateStorage()
+            guard fsync(directoryFD)==0 else {throw SnapshotError.io("sync build publication",errno)}
+            for i in 0..<2 where linked[i] {_=unlinkat(directoryFD,backups[i],0)}
+        } catch {
+            for i in (0..<2).reversed() {
+                if renamed[i] {
+                    if linked[i] {_=renameat(directoryFD,backups[i],directoryFD,finals[i])}
+                    else {_=unlinkat(directoryFD,finals[i],0)}
+                } else if linked[i] {_=unlinkat(directoryFD,backups[i],0)}
+            }
+            _=fsync(directoryFD);throw error
+        }
+    }
+
     private func cleanupTemps() {
         // dup shares a directory offset with directoryFD: later cleanup would
         // resume at EOF. Open a separate description and close it on failure.
@@ -182,6 +234,9 @@ public final class SnapshotStore: @unchecked Sendable {
             let name = withUnsafeBytes(of: record.pointee.d_name) {
                 String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self)
             }
+            if name.hasPrefix(".build-"), UUID(uuidString:String(name.dropFirst(7))) != nil {
+                cleanupAbandonedBuild(name);continue
+            }
             guard (name.hasPrefix(filename + ".") || name.hasPrefix(metadataFilename + ".")), name.hasSuffix(".tmp") else { continue }
             var metadata = stat()
             if fstatat(directoryFD, name, &metadata, AT_SYMLINK_NOFOLLOW) == 0,
@@ -189,6 +244,22 @@ public final class SnapshotStore: @unchecked Sendable {
                 _ = unlinkat(directoryFD, name, 0)
             }
         }
+    }
+    private func cleanupAbandonedBuild(_ name:String) {
+        var st=stat()
+        guard fstatat(directoryFD,name,&st,AT_SYMLINK_NOFOLLOW)==0,st.st_uid==geteuid(),
+          st.st_mode & S_IFMT==S_IFDIR,st.st_mode & 0o7777==0o700 else {return}
+        let fd=openat(directoryFD,name,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW)
+        guard fd>=0 else {return};defer {close(fd)}
+        let owner=openat(fd,"owner-lock",O_RDWR|O_CLOEXEC|O_NOFOLLOW)
+        guard owner>=0 else {return};defer {close(owner)}
+        guard fstat(owner,&st)==0,st.st_uid==geteuid(),st.st_mode & S_IFMT==S_IFREG,st.st_mode & 0o7777==0o600,
+          flock(owner,LOCK_EX|LOCK_NB)==0 else {return}
+        defer {_=flock(owner,LOCK_UN)}
+        // Unknown files keep the directory in place. Only our fixed sections
+        // are unlinked, without following symlinks or recursively traversing.
+        for file in SnapshotBuildWorkspace.sectionNames {_=unlinkat(fd,file,0)}
+        _=unlinkat(directoryFD,name,AT_REMOVEDIR)
     }
     private func hasSafeFinal(_ name: String) throws -> Bool {
         var metadata = stat()

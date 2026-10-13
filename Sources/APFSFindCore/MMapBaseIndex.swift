@@ -188,7 +188,7 @@ public final class MMapBaseIndex: @unchecked Sendable {
             name != ".", name != "..",
             !name.utf8.contains(0), !name.utf8.contains(47),
             let folded = String(bytes: raw[b..<b + Int(r.foldedLength)], encoding: .utf8),
-            Array(FileEntry.fold(name).utf8) == Array(folded.utf8)
+            autoreleasepool { Array(FileEntry.fold(name).utf8) } == Array(folded.utf8)
           else { throw SnapshotError.invalid("v2 name/fold") }
           lengths[i] = lengths[Int(r.parent)] + UInt32(r.nameLength) + 1
           guard lengths[i] < PATH_MAX else { throw SnapshotError.invalid("v2 path length") }

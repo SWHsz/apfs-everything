@@ -134,7 +134,7 @@ public final class PReadNamespaceIndex: ImmutableNamespaceBase, @unchecked Senda
             name != ".", name != "..",
             !name.utf8.contains(0), !name.utf8.contains(47),
             let folded = String(bytes: (try raw.slice(b..<b + Int(r.foldedLength))), encoding: .utf8),
-            Array(FileEntry.fold(name).utf8) == Array(folded.utf8)
+            autoreleasepool { Array(FileEntry.fold(name).utf8) } == Array(folded.utf8)
           else { throw SnapshotError.invalid("v2 name/fold") }
           while let last = ancestors.last, UInt32(i) >= last.end { ancestors.removeLast() }
           guard let last = ancestors.last, last.id == r.parent else { throw SnapshotError.invalid("v2 ancestor coverage") }
